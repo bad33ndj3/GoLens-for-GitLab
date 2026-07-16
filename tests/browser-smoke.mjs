@@ -81,6 +81,7 @@ async function runBrowser(url, completionExpression, profile) {
     '--remote-debugging-port=0',
     url,
   ];
+  if (process.env.CHROME_NO_SANDBOX === '1') args.push('--no-sandbox');
   const child = spawn(chrome, args, { cwd: root, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   let endpointResolved = false;
@@ -101,8 +102,8 @@ async function runBrowser(url, completionExpression, profile) {
   let connection;
   let html = '';
   try {
-    const deadline = Date.now() + 30000;
     const endpointURL = new URL(await endpoint);
+    const deadline = Date.now() + 30000;
     const target = await devToolsTarget(endpointURL.port, url, deadline);
     connection = await connectDevTools(target.webSocketDebuggerUrl);
     while (Date.now() < deadline) {
