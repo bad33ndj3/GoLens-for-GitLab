@@ -20,6 +20,7 @@ jobs:
     env:
       CHROME_BIN: ${{ github.workspace }}/.chrome/chrome-linux64/chrome
       CHROME_FOR_TESTING_VERSION: 151.0.7922.34
+      CHROME_NO_SANDBOX: 1
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

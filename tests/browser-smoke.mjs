@@ -81,6 +81,7 @@ async function runBrowser(url, completionExpression, profile) {
     '--remote-debugging-port=0',
     url,
   ];
+  if (process.env.CHROME_NO_SANDBOX === '1') args.push('--no-sandbox');
   const child = spawn(chrome, args, { cwd: root, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   let endpointResolved = false;
