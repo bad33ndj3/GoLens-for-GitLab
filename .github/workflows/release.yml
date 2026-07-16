@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CHROME_BIN: /usr/bin/google-chrome
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Verify release version
+        run: |
+          manifest_version="$(node -p "JSON.parse(require('node:fs').readFileSync('manifest.json')).version")"
+          package_version="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json')).version")"
+          if [ "$manifest_version" != "$package_version" ]; then
+            echo "::error::manifest version $manifest_version does not match package version $package_version"
+            exit 1
+          fi
+          if ! printf '%s' "$manifest_version" | grep -Eq '^[0-9]+(\.[0-9]+){0,3}$'; then
+            echo "::error::$manifest_version is not a valid Chrome extension version"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_NAME" != "v${manifest_version}" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version v${manifest_version}"
+            exit 1
+          fi
+
+      - name: Verify tag commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify vendored parser assets
+        run: |
+          npm run vendor:parser
+          git diff --exit-code -- vendor/
+
+      - name: Verify Chrome is available
+        run: test -x "$CHROME_BIN"
+
+      - name: Run project checks
+        run: npm run check
+
+      - name: Build and verify extension archive
+        run: |
+          npm run package
+          unzip -t "dist/golens-for-gitlab-${GITHUB_REF_NAME}.zip"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/golens-for-gitlab-${GITHUB_REF_NAME}.zip" \
+            --verify-tag \
+            --title "GoLens for GitLab ${GITHUB_REF_NAME}" \
+            --generate-notes
