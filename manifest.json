@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "GoLens for GitLab",
+  "version": "0.1.0",
+  "description": "GoLens for GitLab adds Go-aware review tools and keyboard shortcuts to merge requests.",
+  "permissions": ["storage", "unlimitedStorage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "background": {
+    "service_worker": "go-semantic-worker.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "assets/icons/golens-16.png",
+    "32": "assets/icons/golens-32.png",
+    "48": "assets/icons/golens-48.png",
+    "128": "assets/icons/golens-128.png"
+  },
+  "action": {
+    "default_title": "GoLens for GitLab",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "assets/icons/golens-16.png",
+      "32": "assets/icons/golens-32.png",
+      "48": "assets/icons/golens-48.png",
+      "128": "assets/icons/golens-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["go-navigation.js", "content.js"],
+      "css": ["gitlab-lens.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/golens-icon.png",
+        "assets/golens-eyestrain.png"
+      ],
+      "matches": ["http://*/*", "https://*/*"]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="popup.css">
+    <title>GoLens for GitLab</title>
+  </head>
+  <body>
+    <main>
+      <label class="plugin-switch">
+        <span>GoLens for GitLab</span>
+        <input type="checkbox" data-setting="enabled" aria-label="Enable GoLens for GitLab">
+      </label>
+      <section class="guide" aria-labelledby="guide-title">
+        <div>
+          <strong id="guide-title">New to GoLens?</strong>
+          <p>See the controls and Go review shortcuts.</p>
+        </div>
+        <button type="button" data-action="show-onboarding">Show quick tour</button>
+        <p class="guide-status" data-onboarding-status role="status"></p>
+      </section>
+      <section class="cache" aria-labelledby="cache-title">
+        <div class="cache-summary">
+          <span id="cache-title">Source cache</span>
+          <output data-cache-size aria-live="polite">Loading…</output>
+        </div>
+        <div class="full-cache">
+          <button type="button" data-action="cache-full-project">Cache full project</button>
+          <progress data-full-cache-progress max="100" value="0" hidden></progress>
+          <p class="cache-status" data-full-cache-status role="status">Checking active MR…</p>
+        </div>
+        <button type="button" data-action="clear-cache">Clear cache</button>
+        <p class="cache-status" data-cache-status role="status"></p>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

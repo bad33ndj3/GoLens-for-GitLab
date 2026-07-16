@@ -1,0 +1,89 @@
+/* Merge-request focus: remove GitLab chrome and let the diff occupy the screen. */
+html.gitlab-lens-review-focus .super-sidebar,
+html.gitlab-lens-review-focus [data-testid="super-sidebar"],
+html.gitlab-lens-review-focus .nav-sidebar,
+html.gitlab-lens-review-focus .sidebar-wrapper,
+html.gitlab-lens-review-focus .layout-page .nav-sidebar,
+html.gitlab-lens-review-focus #js-truncated-nav,
+html.gitlab-lens-review-focus #js-top-bar,
+html.gitlab-lens-review-focus .top-bar,
+html.gitlab-lens-review-focus .navbar-gitlab,
+html.gitlab-lens-review-focus [data-testid="top-bar"],
+html.gitlab-lens-review-focus [aria-label="File browser"],
+html.gitlab-lens-review-focus [data-testid="file-browser"],
+html.gitlab-lens-review-focus .file-tree-holder,
+html.gitlab-lens-review-focus .diff-file-tree { display: none !important; }
+
+html.gitlab-lens-review-focus .layout-page,
+html.gitlab-lens-review-focus .page-with-sidebar,
+html.gitlab-lens-review-focus #js-body { padding-left: 0 !important; margin-left: 0 !important; }
+
+html.gitlab-lens-review-focus .diffs,
+html.gitlab-lens-review-focus .mr-diffs { grid-template-columns: minmax(0, 1fr) !important; }
+
+html.gitlab-lens-review-focus :is(
+  pre,
+  code,
+  td.line_content,
+  td[class*="line-content"],
+  [data-testid="diff-line-content"],
+  [data-testid="rd-diff-line-content"],
+  .rd-diff-code,
+  .rd-diff-line-code
+),
+html.gitlab-lens-review-focus :is(
+  pre,
+  code,
+  td.line_content,
+  td[class*="line-content"],
+  [data-testid="diff-line-content"],
+  [data-testid="rd-diff-line-content"],
+  .rd-diff-code,
+  .rd-diff-line-code
+) * { font-size: 14px !important; }
+
+#gitlab-lens-focus-button {
+  position: fixed;
+  z-index: 2147483645;
+  right: 18px;
+  bottom: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 48px;
+  padding: 5px 13px 5px 5px;
+  border: 1px solid rgba(0, 173, 216, .48);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #092f3d, #171b24);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .34);
+  color: #eefbff;
+  cursor: pointer;
+  font: 700 12px/1 Inter, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: .01em;
+  transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+#gitlab-lens-focus-button:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 15px 38px rgba(0, 0, 0, .46); }
+#gitlab-lens-focus-button:focus-visible { outline: 3px solid #fc6d26; outline-offset: 3px; }
+#gitlab-lens-focus-button.is-active { border-color: #fc6d26; background: linear-gradient(135deg, #0b5970, #44251d); }
+#gitlab-lens-focus-button img { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; object-position: center; background: #092f3d; }
+#gitlab-lens-focus-button .gitlab-lens-focus-copy { display: grid; gap: 2px; text-align: left; }
+#gitlab-lens-focus-button small { color: #a8dce8; font-size: 10px; font-weight: 600; }
+
+@media (max-width: 760px) {
+  #gitlab-lens-focus-button { right: 10px; bottom: 10px; padding-right: 7px; }
+  #gitlab-lens-focus-button .gitlab-lens-focus-copy { display: none; }
+}
+
+.gitlab-lens-file-reviewed { opacity: .62; }
+
+/* Match IDE navigation affordances: recognized symbols become link-like
+   without adding a box that changes the visual shape of the code. */
+[data-golens-go-target] {
+  color: #4fc1ff !important;
+  text-decoration-line: underline !important;
+  text-decoration-color: #3794ff !important;
+  text-decoration-thickness: 1px !important;
+  text-underline-offset: 2px !important;
+  cursor: pointer;
+}
