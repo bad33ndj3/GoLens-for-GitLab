@@ -1,4 +1,8 @@
-# GoLens for GitLab
+# GoLens for GitLab™
+
+> This extension is not affiliated, endorsed, sponsored, or approved with or by GitLab Inc.
+>
+> GITLAB is a trademark of GitLab Inc. in the United States and other countries and regions
 
 <p align="center">
   <strong>A calmer, Go-aware code review experience for GitLab.</strong><br>
@@ -44,3 +48,9 @@ npm run check
 ```
 
 The extension deliberately favors safe, browser-native Go navigation over speculative results: missing or ambiguous symbols do not navigate.
+
+## Legal
+
+GoLens is available under the [MIT License](LICENSE). See the
+[privacy policy](PRIVACY.md), [security policy](SECURITY.md), and
+[third-party notices](THIRD_PARTY_NOTICES.md) for more information.
