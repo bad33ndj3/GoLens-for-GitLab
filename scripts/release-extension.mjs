@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,6 +34,12 @@ if (run('git', ['status', '--porcelain'])) {
   fail('commit or stash all working-tree changes first.');
 }
 
+const branch = run('git', ['branch', '--show-current']);
+
+if (branch !== 'main') {
+  fail(`releases must be started from main, not ${branch || 'a detached HEAD'}.`);
+}
+
 const commit = run('git', ['rev-parse', 'HEAD']);
 let upstreamCommit;
 
@@ -48,25 +54,19 @@ if (commit !== upstreamCommit) {
 }
 
 run('npm', ['run', 'check'], { stdio: 'inherit' });
-run('npm', ['run', 'package'], { stdio: 'inherit' });
 
 const tag = `v${manifest.version}`;
-const archive = join(rootDirectory, 'dist', `golens-for-gitlab-${tag}.zip`);
+run('git', ['tag', '--annotate', tag, '--message', `GoLens for GitLab ${tag}`, commit]);
 
-if (!existsSync(archive)) {
-  fail(`expected package was not created at ${archive}.`);
+try {
+  run('git', ['push', 'origin', `refs/tags/${tag}`], { stdio: 'inherit' });
+} catch (error) {
+  try {
+    run('git', ['tag', '--delete', tag], { stdio: 'inherit' });
+  } catch {
+    console.error(`Warning: failed to remove local tag ${tag} after the push failed.`);
+  }
+  throw error;
 }
 
-run('gh', [
-  'release',
-  'create',
-  tag,
-  archive,
-  '--target',
-  commit,
-  '--title',
-  `GoLens for GitLab ${tag}`,
-  '--generate-notes',
-], { stdio: 'inherit' });
-
-console.log(`Published GitHub release ${tag} with ${archive}`);
+console.log(`Pushed ${tag}. GitHub Actions will validate and publish the release.`);
