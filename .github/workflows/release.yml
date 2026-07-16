@@ -18,7 +18,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      CHROME_BIN: /usr/bin/google-chrome
+      CHROME_BIN: ${{ github.workspace }}/.chrome/chrome-linux64/chrome
+      CHROME_FOR_TESTING_VERSION: 151.0.7922.34
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -53,13 +54,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Chrome for Testing
+        run: |
+          mkdir -p .chrome
+          curl --fail --location --retry 3 --silent --show-error \
+            --output /tmp/chrome-for-testing.zip \
+            "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_FOR_TESTING_VERSION}/linux64/chrome-linux64.zip"
+          unzip -q /tmp/chrome-for-testing.zip -d .chrome
+          "$CHROME_BIN" --version
+
       - name: Verify vendored parser assets
         run: |
           npm run vendor:parser
           git diff --exit-code -- vendor/
-
-      - name: Verify Chrome is available
-        run: test -x "$CHROME_BIN"
 
       - name: Run project checks
         run: npm run check
