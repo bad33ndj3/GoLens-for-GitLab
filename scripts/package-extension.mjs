@@ -9,6 +9,10 @@ const outputDirectory = join(rootDirectory, 'dist');
 const outputFile = join(outputDirectory, `golens-for-gitlab-v${manifest.version}.zip`);
 
 const extensionFiles = [
+  'LICENSE',
+  'PRIVACY.md',
+  'SECURITY.md',
+  'THIRD_PARTY_NOTICES.md',
   'manifest.json',
   'content.js',
   'gitlab-lens.css',
