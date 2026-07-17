@@ -1,0 +1,77 @@
+:root,
+#gitlab-lens-root,
+#golens-onboarding-root,
+#golens-celebration-root,
+#golens-go-intelligence-root {
+  --golens-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --golens-font-sans: var(--golens-font-ui);
+  --golens-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --golens-surface-canvas: #16191d;
+  --golens-surface-panel: #1d2126;
+  --golens-surface-raised: #242a31;
+  --golens-surface-hover: #2c333b;
+  --golens-surface-pressed: #343c45;
+  --golens-surface-inset: #13161a;
+  --golens-border-subtle: #353d46;
+  --golens-border-default: #46515d;
+  --golens-border-strong: #55616e;
+
+  --golens-text-primary: #f4f1ed;
+  --golens-text-secondary: #c7c2bb;
+  --golens-text-muted: #9f9a93;
+  --golens-text-inverse: #1b100b;
+
+  --golens-accent-primary: #e97840;
+  --golens-accent-primary-hover: #f28a54;
+  --golens-accent-primary-pressed: #cf6332;
+  --golens-accent-info: #58b8d6;
+  --golens-accent-focus: #68c5e1;
+  --golens-accent-success: #7fc58c;
+  --golens-accent-error: #e48787;
+  --golens-accent-warning: #dfaa66;
+  --golens-primary: var(--golens-accent-primary);
+  --golens-primary-hover: var(--golens-accent-primary-hover);
+  --golens-primary-pressed: var(--golens-accent-primary-pressed);
+  --golens-primary-soft: rgba(233, 120, 64, .12);
+  --golens-info: var(--golens-accent-info);
+  --golens-info-hover: #77cce5;
+  --golens-info-soft: rgba(88, 184, 214, .12);
+  --golens-focus-ring: var(--golens-accent-focus);
+  --golens-success: var(--golens-accent-success);
+  --golens-success-soft: rgba(127, 197, 140, .12);
+  --golens-error: var(--golens-accent-error);
+  --golens-error-soft: rgba(228, 135, 135, .12);
+
+  --golens-space-1: 4px;
+  --golens-space-2: 8px;
+  --golens-space-3: 12px;
+  --golens-space-4: 16px;
+  --golens-space-5: 24px;
+  --golens-space-6: 32px;
+
+  --golens-radius-xs: 4px;
+  --golens-radius-sm: var(--golens-radius-control);
+  --golens-radius-md: 7px;
+  --golens-radius-lg: var(--golens-radius-panel);
+  --golens-radius-xl: var(--golens-radius-overlay);
+  --golens-radius-control: 5px;
+  --golens-radius-panel: 9px;
+  --golens-radius-overlay: 14px;
+
+  --golens-shadow-control: 0 5px 14px rgba(4, 15, 25, .28);
+  --golens-shadow-sm: var(--golens-shadow-control);
+  --golens-shadow-md: 0 12px 36px rgba(3, 13, 23, .42);
+  --golens-shadow-lg: var(--golens-shadow-overlay);
+  --golens-shadow-overlay: 0 24px 72px rgba(2, 12, 21, .58);
+  --golens-shadow-focus: 0 0 0 3px rgba(104, 197, 225, .22);
+
+  --golens-motion-fast: 140ms;
+  --golens-motion-base: 180ms;
+  --golens-ease-out: cubic-bezier(.2, .8, .2, 1);
+
+  --golens-z-rail: 2147483645;
+  --golens-z-overlay: 2147483647;
+  --golens-z-popover: var(--golens-z-overlay);
+  --golens-z-modal: var(--golens-z-overlay);
+}

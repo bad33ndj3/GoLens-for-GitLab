@@ -15,6 +15,7 @@ const extensionFiles = [
   'THIRD_PARTY_NOTICES.md',
   'manifest.json',
   'content.js',
+  'golens-theme.css',
   'gitlab-lens.css',
   'go-navigation.js',
   'go-semantic-cache.js',
@@ -23,8 +24,7 @@ const extensionFiles = [
   'popup.css',
   'popup.html',
   'popup.js',
-  'assets/golens-icon.png',
-  'assets/golens-eyestrain.png',
+  'assets/celebrations',
   'assets/icons',
   'vendor',
 ];

@@ -603,6 +603,45 @@
     return location.pathname.match(/\/-\/merge_requests\/(\d+)/)?.[1] || '';
   }
 
+  async function mergeRequestCelebrationStatus() {
+    const { project } = projectContext();
+    const mergeRequest = mergeRequestIID();
+    if (!mergeRequest) throw new Error('GitLab merge request context is unavailable.');
+    const encodedProject = encodeURIComponent(project);
+    const response = await authenticatedFetch(
+      `${location.origin}/api/v4/projects/${encodedProject}/merge_requests/${encodeURIComponent(mergeRequest)}/approvals`,
+    );
+    if (!response.ok) throw new Error(`GitLab approval API returned ${response.status}`);
+    const result = await response.json();
+    const approvers = Array.isArray(result.approved_by)
+      ? result.approved_by.map((approval) => approval?.user?.id || approval?.user?.username).filter(Boolean).map(String)
+      : [];
+    return { state: result.state || '', approvers };
+  }
+
+  async function mergeRequestDiscussionStatus() {
+    const { project } = projectContext();
+    const mergeRequest = mergeRequestIID();
+    if (!mergeRequest) throw new Error('GitLab merge request context is unavailable.');
+    const encodedProject = encodeURIComponent(project);
+    let unresolved = 0;
+    for (let page = 1; page;) {
+      if (page > 20) throw new Error('Merge request has too many discussion pages');
+      const response = await authenticatedFetch(
+        `${location.origin}/api/v4/projects/${encodedProject}/merge_requests/${encodeURIComponent(mergeRequest)}/discussions?per_page=100&page=${page}`,
+      );
+      if (!response.ok) throw new Error(`GitLab discussions API returned ${response.status}`);
+      const discussions = await response.json();
+      if (!Array.isArray(discussions)) throw new Error('GitLab returned invalid merge request discussions');
+      unresolved += discussions.filter((discussion) =>
+        Array.isArray(discussion?.notes)
+        && discussion.notes.some((note) => note?.resolvable && !note?.resolved)
+      ).length;
+      page = nextPageNumber(response, page, discussions);
+    }
+    return { unresolved };
+  }
+
   async function listMergeRequestChangedFiles() {
     const { project } = projectContext();
     const mergeRequest = mergeRequestIID();
@@ -1089,42 +1128,44 @@
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `
       <style>
-        :host { all:initial; position:fixed; z-index:2147483647; inset:0; pointer-events:none; font:12px/1.45 Inter,ui-sans-serif,system-ui,sans-serif; color-scheme:dark; }
+        :host { all:initial; position:fixed; z-index:var(--golens-z-popover); inset:0; pointer-events:none; font:12px/1.45 var(--golens-font-sans); color-scheme:dark; }
         * { box-sizing:border-box; }
-        .popover { position:fixed; display:none; width:min(460px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow:hidden; border:1px solid #454545; border-radius:6px; background:#1f1f1f; box-shadow:0 12px 38px rgba(0,0,0,.56); color:#d4d4d4; pointer-events:auto; }
+        .popover { position:fixed; display:none; width:min(460px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-lg); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); color:var(--golens-text-primary); pointer-events:auto; }
         .popover.show { display:grid; grid-template-rows:auto minmax(0,1fr); }
-        .popover-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:9px; align-items:center; min-height:46px; padding:8px 9px; border-bottom:1px solid #343434; background:#252526; }
+        .popover-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-2); align-items:center; min-height:46px; padding:var(--golens-space-2) var(--golens-space-3); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
         .popover-heading { min-width:0; }
-        .popover-title { overflow:hidden; color:#f0f0f0; font-size:12px; font-weight:650; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-        .location { overflow:hidden; margin-top:2px; color:#9d9d9d; font:10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace; text-overflow:ellipsis; white-space:nowrap; }
-        .popover-body { min-height:0; overflow:auto; padding:10px 11px 11px; }
-        .symbol-badge { display:inline-flex; min-width:20px; height:20px; align-items:center; justify-content:center; padding:0 4px; border:1px solid currentColor; border-radius:4px; background:rgba(255,255,255,.035); font:700 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:-.02em; }
+        .popover-title { overflow:hidden; color:var(--golens-text-primary); font-size:12px; font-weight:700; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
+        .location { overflow:hidden; margin-top:2px; color:var(--golens-text-muted); font:10px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+        .popover-body { min-height:0; overflow:auto; padding:var(--golens-space-3); }
+        .symbol-badge { display:inline-flex; min-width:20px; height:20px; align-items:center; justify-content:center; padding:0 var(--golens-space-1); border:1px solid currentColor; border-radius:var(--golens-radius-xs); background:color-mix(in srgb,currentColor 7%,transparent); font:700 9px/1 var(--golens-font-mono); letter-spacing:-.02em; }
         .symbol-interface,.symbol-interface-method { color:#c586c0; } .symbol-struct { color:#d7ba7d; } .symbol-function { color:#dcdcaa; } .symbol-method,.symbol-type { color:#4ec9b0; } .symbol-variable,.symbol-parameter,.symbol-field { color:#9cdcfe; } .symbol-constant { color:#4fc1ff; } .symbol-package { color:#fc9b6b; } .symbol-external { color:#3794ff; }
-        .close-button { display:inline-flex; width:26px; height:26px; align-items:center; justify-content:center; padding:0; border:0; border-radius:4px; background:transparent; color:#bdbdbd; cursor:pointer; }
-        .close-button:hover { background:#3a3d41; color:#fff; } .close-button[hidden] { display:none; } .close-button svg { width:14px; height:14px; }
-        .signature-block { margin:0 0 9px; overflow:hidden; border:1px solid #343434; border-radius:4px; background:#181818; } .signature-block[hidden] { display:none; }
-        .signature { margin:0; padding:8px 9px; overflow-wrap:anywhere; color:#dcdcaa; font:600 11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; }
-        .signature-toggle { width:100%; padding:5px 9px; border:0; border-top:1px solid #343434; background:#222; color:#9cdcfe; font:600 10px/1.4 Inter,ui-sans-serif,system-ui,sans-serif; text-align:left; cursor:pointer; } .signature-toggle:hover { background:#2a2d2e; color:#fff; } .signature-toggle[hidden] { display:none; }
+        .header-actions { display:flex; align-items:center; gap:2px; }
+        .header-action { display:inline-flex; width:28px; height:28px; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:var(--golens-radius-sm); background:transparent; color:var(--golens-text-secondary); cursor:pointer; transition:background-color var(--golens-motion-fast),border-color var(--golens-motion-fast),color var(--golens-motion-fast),transform var(--golens-motion-fast); }
+        .header-action:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); } .header-action:active { background:var(--golens-surface-pressed); transform:translateY(1px); } .header-action:disabled { cursor:not-allowed; opacity:.45; } .header-action[hidden] { display:none; } .header-action svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
+        .copy-button .check-icon { display:none; } .copy-button[data-state="copied"] { border-color:var(--golens-success); background:var(--golens-success-soft); color:var(--golens-success); } .copy-button .copy-icon { display:block; } .copy-button[data-state="copied"] .copy-icon { display:none; } .copy-button[data-state="copied"] .check-icon { display:block; }
+        .signature-block { margin:0 0 var(--golens-space-3); overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-inset); } .signature-block[hidden] { display:none; }
+        .signature { margin:0; padding:var(--golens-space-2) var(--golens-space-3); overflow-wrap:anywhere; color:#dcdcaa; font:600 11px/1.5 var(--golens-font-mono); white-space:pre-wrap; }
+        .signature-toggle { width:100%; padding:var(--golens-space-2) var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); color:var(--golens-info-hover); font:650 10px/1.4 var(--golens-font-sans); text-align:left; cursor:pointer; } .signature-toggle:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .signature-toggle:active { background:var(--golens-surface-pressed); } .signature-toggle:disabled { cursor:not-allowed; opacity:.45; } .signature-toggle[hidden] { display:none; }
         .docs:empty,.shortcut-hint[hidden] { display:none; }
-        .docs { margin:0 0 10px; color:#c8c8c8; line-height:1.5; white-space:pre-wrap; }
+        .docs { margin:0 0 var(--golens-space-3); color:var(--golens-text-secondary); line-height:1.5; white-space:pre-wrap; }
         .choices { display:grid; gap:5px; }
-        .choice { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:9px; width:100%; min-height:40px; align-items:center; padding:7px 8px; border:1px solid transparent; border-radius:4px; background:#2a2d2e; color:#d4d4d4; text-align:left; cursor:pointer; }
-        .choice:hover { border-color:#454545; background:#34373a; } .choice:focus-visible,.close-button:focus-visible,.signature-toggle:focus-visible,summary:focus-visible { outline:2px solid #3794ff; outline-offset:1px; }
+        .choice { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-2); width:100%; min-height:40px; align-items:center; padding:var(--golens-space-2); border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-raised); color:var(--golens-text-primary); text-align:left; cursor:pointer; transition:background-color var(--golens-motion-fast),border-color var(--golens-motion-fast),transform var(--golens-motion-fast); }
+        .choice:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); } .choice:active { background:var(--golens-surface-pressed); transform:translateY(1px); } .choice:disabled { cursor:not-allowed; opacity:.45; } .choice:focus-visible,.header-action:focus-visible,.signature-toggle:focus-visible,summary:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:1px; }
         .choice-copy { min-width:0; } .choice-heading { display:flex; min-width:0; align-items:center; gap:7px; }
-        .choice-title { overflow:hidden; color:#f0f0f0; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
-        .choice-context { display:block; margin-top:2px; overflow:hidden; color:#9d9d9d; font:10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace; text-overflow:ellipsis; white-space:nowrap; }
-        .choice-doc { display:block; margin-top:3px; overflow:hidden; color:#bdbdbd; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+        .choice-title { overflow:hidden; color:var(--golens-text-primary); font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+        .choice-context { display:block; margin-top:2px; overflow:hidden; color:var(--golens-text-muted); font:10px/1.35 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+        .choice-doc { display:block; margin-top:3px; overflow:hidden; color:var(--golens-text-secondary); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
         .destination-icon { position:relative; display:inline-flex; width:22px; height:22px; flex:0 0 auto; align-items:center; justify-content:center; border-radius:4px; }
-        .destination-icon svg { width:15px; height:15px; } .destination-in-diff { color:#fc6d26; } .destination-new-tab { color:#3794ff; }
-        .choice:hover .destination-icon::after,.choice:focus-visible .destination-icon::after { position:absolute; z-index:2; right:-4px; bottom:calc(100% + 7px); width:max-content; max-width:180px; padding:4px 6px; border:1px solid #555; border-radius:3px; background:#252526; box-shadow:0 5px 16px rgba(0,0,0,.45); color:#eee; content:attr(data-tooltip); font:10px/1.3 Inter,ui-sans-serif,system-ui,sans-serif; pointer-events:none; }
-        details { margin-top:3px; } summary { padding:6px 3px; border-radius:3px; color:#bdbdbd; cursor:pointer; } .test-double-choices { display:grid; gap:5px; margin-top:4px; }
-        .shortcut-hint { display:flex; align-items:center; gap:5px; margin:10px 0 0; color:#9d9d9d; font-size:10px; } kbd { display:inline-flex; min-width:17px; min-height:17px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid #555; border-bottom-color:#888; border-radius:3px; background:#2d2d2d; color:#ddd; font:700 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace; }
-        .loading-progress { display:grid; gap:6px; margin:0 0 9px; padding:8px 9px; border:1px solid rgba(252,109,38,.28); border-radius:4px; background:rgba(252,109,38,.07); } .loading-progress[hidden] { display:none; } .loading-progress-meta { display:flex; justify-content:space-between; gap:8px; color:#d4d4d4; font-size:10px; } .loading-progress-phase { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; } .loading-progress-count { flex:0 0 auto; color:#fc9b6b; font-variant-numeric:tabular-nums; } .loading-track { height:4px; overflow:hidden; border-radius:999px; background:#3a3a3a; } .loading-track > i { display:block; width:0; height:100%; border-radius:inherit; background:#fc6d26; transition:width .2s ease-out; }
-        .toast { position:fixed; right:18px; bottom:18px; display:none; max-width:360px; padding:9px 11px; border:1px solid #454545; border-radius:6px; background:#252526; color:#d4d4d4; box-shadow:0 10px 30px rgba(0,0,0,.45); } .toast.show { display:block; }
-        @media (prefers-reduced-motion:reduce) { .loading-track > i { transition:none; } }
+        .destination-icon svg { width:15px; height:15px; } .destination-in-diff { color:var(--golens-primary); } .destination-new-tab { color:var(--golens-info); }
+        .choice:hover .destination-icon::after,.choice:focus-visible .destination-icon::after { position:absolute; z-index:2; right:-4px; bottom:calc(100% + 7px); width:max-content; max-width:180px; padding:var(--golens-space-1) var(--golens-space-2); border:1px solid var(--golens-border-strong); border-radius:var(--golens-radius-xs); background:var(--golens-surface-raised); box-shadow:var(--golens-shadow-sm); color:var(--golens-text-primary); content:attr(data-tooltip); font:10px/1.3 var(--golens-font-sans); pointer-events:none; }
+        details { margin-top:var(--golens-space-1); } summary { padding:var(--golens-space-2) var(--golens-space-1); border-radius:var(--golens-radius-xs); color:var(--golens-text-secondary); cursor:pointer; } summary:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .test-double-choices { display:grid; gap:5px; margin-top:var(--golens-space-1); }
+        .shortcut-hint { display:flex; align-items:center; gap:5px; margin:var(--golens-space-3) 0 0; color:var(--golens-text-muted); font-size:10px; } kbd { display:inline-flex; min-width:17px; min-height:17px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
+        .loading-progress { display:grid; gap:var(--golens-space-2); margin:0 0 var(--golens-space-3); padding:var(--golens-space-2) var(--golens-space-3); border:1px solid color-mix(in srgb,var(--golens-primary) 35%,var(--golens-border-subtle)); border-radius:var(--golens-radius-sm); background:var(--golens-primary-soft); } .loading-progress[hidden] { display:none; } .loading-progress-meta { display:flex; justify-content:space-between; gap:var(--golens-space-2); color:var(--golens-text-primary); font-size:10px; } .loading-progress-phase { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; } .loading-progress-count { flex:0 0 auto; color:var(--golens-primary-hover); font:700 10px/1.45 var(--golens-font-mono); font-variant-numeric:tabular-nums; } .loading-track { height:4px; overflow:hidden; border-radius:999px; background:var(--golens-surface-pressed); } .loading-track > i { display:block; width:0; height:100%; border-radius:inherit; background:var(--golens-primary); transition:width var(--golens-motion-base); }
+        .toast { position:fixed; right:18px; bottom:18px; display:none; max-width:360px; padding:var(--golens-space-2) var(--golens-space-3); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-md); background:var(--golens-surface-raised); color:var(--golens-text-primary); box-shadow:var(--golens-shadow-md); } .toast.show { display:block; }
+        @media (prefers-reduced-motion:reduce) { .header-action,.choice,.loading-track > i { transition:none; } .header-action:active,.choice:active { transform:none; } }
       </style>
       <section class="popover" role="tooltip" aria-labelledby="golens-popover-title">
-        <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><button class="close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3.7 2.3 8 6.6l4.3-4.3 1.4 1.4L9.4 8l4.3 4.3-1.4 1.4L8 9.4l-4.3 4.3-1.4-1.4L6.6 8 2.3 3.7z"/></svg></button></header>
+        <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><div class="header-actions"><button class="header-action copy-button" type="button" aria-label="Copy source location" title="Copy source location" hidden><svg class="copy-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg><svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.25 3.15 3.15L13 4.6"/></svg></button><button class="header-action close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></header>
         <div class="popover-body"><div class="loading-progress" hidden role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase"></span><span class="loading-progress-count"></span></div><div class="loading-track" role="progressbar" aria-label="Go intelligence loading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="docs"></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
       </section>
       <div class="toast" role="status"></div>
@@ -1136,8 +1177,77 @@
     popover.addEventListener('pointerdown', () => pinPopover());
     popover.addEventListener('focusin', () => pinPopover());
     popover.addEventListener('keydown', onKeyDown);
+    popover.querySelector('.copy-button').addEventListener('click', (event) => copySourceLocation(event.currentTarget));
     popover.querySelector('.close-button').addEventListener('click', hidePopover);
     return shadow;
+  }
+
+  function sourceLocationText(sourceLocation) {
+    if (!sourceLocation?.path || !Number.isInteger(sourceLocation.line) || !Number.isInteger(sourceLocation.character)) return '';
+    if (sourceLocation.line < 1 || sourceLocation.character < 1) return '';
+    return `${sourceLocation.path}:${sourceLocation.line}:${sourceLocation.character}`;
+  }
+
+  function sourceLocationForTarget(target) {
+    if (!target?.cell || !Number.isInteger(target.character)) return null;
+    const file = fileContextFor(target.cell);
+    const line = lineContextFor(target.cell);
+    if (!file || !line) return null;
+    return {
+      path: line.side === 'old' ? file.oldPath : file.newPath,
+      line: line.line,
+      character: target.character + 1,
+    };
+  }
+
+  function configureSourceCopy(button, sourceLocation = null) {
+    const text = sourceLocationText(sourceLocation);
+    button.hidden = !text;
+    button.dataset.copyText = text;
+    button.dataset.state = 'idle';
+    button.setAttribute('aria-label', text ? `Copy source location ${text}` : 'Copy source location');
+    button.title = text ? `Copy ${text}` : 'Copy source location';
+  }
+
+  function fallbackCopyText(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
+    document.body.append(textarea);
+    textarea.select();
+    const copied = document.execCommand?.('copy') === true;
+    textarea.remove();
+    if (!copied) throw new Error('Clipboard access is unavailable.');
+  }
+
+  async function writeClipboardText(text) {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API is unavailable.');
+      await navigator.clipboard.writeText(text);
+    } catch {
+      fallbackCopyText(text);
+    }
+  }
+
+  async function copySourceLocation(button) {
+    const text = button.dataset.copyText;
+    if (!text) return;
+    try {
+      await writeClipboardText(text);
+      button.dataset.state = 'copied';
+      button.setAttribute('aria-label', `Copied source location ${text}`);
+      button.title = `Copied ${text}`;
+      toast(`Copied ${text}`);
+      setTimeout(() => {
+        if (button.dataset.copyText !== text) return;
+        button.dataset.state = 'idle';
+        button.setAttribute('aria-label', `Copy source location ${text}`);
+        button.title = `Copy ${text}`;
+      }, 1800);
+    } catch {
+      toast('Could not copy the source location.');
+    }
   }
 
   function positionPopover(popover, x, y) {
@@ -1315,6 +1425,7 @@
     const docs = popover.querySelector('.docs');
     const choices = popover.querySelector('.choices');
     const location = popover.querySelector('.location');
+    const copyButton = popover.querySelector('.copy-button');
     const shortcut = popover.querySelector('.shortcut-hint');
     const shortcutHint = shortcut.querySelector('span');
     loadingProgress.hidden = true;
@@ -1322,6 +1433,7 @@
     renderSignature(popover);
     docs.textContent = '';
     location.textContent = '';
+    configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
     choices.replaceChildren();
     shortcut.hidden = true;
     let shouldPin = false;
@@ -1456,6 +1568,7 @@
     const docs = popover.querySelector('.docs');
     const choices = popover.querySelector('.choices');
     const location = popover.querySelector('.location');
+    const copyButton = popover.querySelector('.copy-button');
     const shortcutHint = popover.querySelector('.shortcut-hint');
     if (progress) {
       loadingProgress.hidden = false;
@@ -1474,6 +1587,7 @@
     docs.textContent = '';
     choices.replaceChildren();
     location.textContent = '';
+    configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
     shortcutHint.hidden = true;
     popover.setAttribute('aria-busy', 'true');
     popover.classList.add('show');
@@ -1743,9 +1857,11 @@
     teardown,
     preloadMergeRequest,
     mergeRequestPreloadStatus,
+    mergeRequestCelebrationStatus,
+    mergeRequestDiscussionStatus,
     preloadFullProject,
     fullProjectPreloadStatus,
     invalidateCacheState,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, symbolPresentation, implementationGroups, isProjectGoPath, nextPageNumber, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, isProjectGoPath, nextPageNumber, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown },
   };
 })();

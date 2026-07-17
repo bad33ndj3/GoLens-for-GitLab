@@ -19,6 +19,7 @@ GoLens for GitLab is a dependency-light Manifest V3 extension for GitLab.com and
 - `Cmd/Ctrl`-click to find definitions, usages, and interface implementations.
 - Enter review focus to hide GitLab chrome and give the diff more room.
 - Cache related packages—or the full project—for broader navigation.
+- Let the mascot mark review focus, a completed cache pitstop, the final resolved discussion, confirmed approvals and merges, plus an extra-long Friday-after-16:00 beer-kart lap with confetti.
 - Keep source local, same-origin, and pinned to the merge-request commit.
 
 ## In action

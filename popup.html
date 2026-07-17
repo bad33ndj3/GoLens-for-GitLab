@@ -3,37 +3,66 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="golens-theme.css">
     <link rel="stylesheet" href="popup.css">
     <title>GoLens for GitLab</title>
   </head>
   <body>
-    <main>
-      <label class="plugin-switch">
-        <span>GoLens for GitLab</span>
+    <header class="popup-header">
+      <div class="identity">
+        <img src="assets/icons/golens-32.png" alt="">
+        <div>
+          <p>GoLens for GitLab</p>
+          <h1>Review controls</h1>
+        </div>
+      </div>
+      <label class="plugin-switch" title="Enable GoLens for GitLab">
+        <span class="visually-hidden">GoLens for GitLab</span>
         <input type="checkbox" data-setting="enabled" aria-label="Enable GoLens for GitLab">
       </label>
-      <section class="guide" aria-labelledby="guide-title">
-        <div>
-          <strong id="guide-title">New to GoLens?</strong>
-          <p>See the controls and Go review shortcuts.</p>
+    </header>
+    <main>
+      <section class="preferences" aria-labelledby="preferences-title">
+        <div class="section-heading">
+          <h2 id="preferences-title">Review preferences</h2>
+          <p>Applied to every open GitLab tab.</p>
         </div>
-        <button type="button" data-action="show-onboarding">Show quick tour</button>
-        <p class="guide-status" data-onboarding-status role="status"></p>
+        <label class="preference-switch">
+          <span>
+            <strong>Hide generated files</strong>
+            <small>Uses GitLab’s <code>.gitattributes</code> marker; large collapsed files remain visible.</small>
+          </span>
+          <input type="checkbox" data-setting="hideGeneratedFiles" aria-label="Hide .gitattributes generated files">
+        </label>
       </section>
-      <section class="cache" aria-labelledby="cache-title">
+      <section class="cache" aria-labelledby="cache-title" data-cache-panel data-state="idle">
         <div class="cache-summary">
-          <span id="cache-title">Source cache</span>
+          <div>
+            <h2 id="cache-title">Source cache</h2>
+            <p>Stored only in this browser.</p>
+          </div>
           <output data-cache-size aria-live="polite">Loading…</output>
         </div>
         <div class="full-cache">
-          <button type="button" data-action="cache-full-project">Cache full project</button>
+          <button class="primary-action" type="button" data-action="cache-full-project">Cache full project</button>
           <progress data-full-cache-progress max="100" value="0" hidden></progress>
           <p class="cache-status" data-full-cache-status role="status">Checking active MR…</p>
         </div>
-        <button type="button" data-action="clear-cache">Clear cache</button>
+        <button class="destructive-action" type="button" data-action="clear-cache">Clear cached source</button>
         <p class="cache-status" data-cache-status role="status"></p>
       </section>
     </main>
+    <footer class="guide" aria-labelledby="guide-title" data-state="idle">
+      <div>
+        <strong id="guide-title">Need a refresher?</strong>
+        <p>Replay the complete feature tour.</p>
+      </div>
+      <button class="tertiary-action" type="button" data-action="show-onboarding">
+        Show quick tour
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9m-3.5-3.5L12 8l-3.5 3.5"></path></svg>
+      </button>
+      <p class="guide-status" data-onboarding-status role="status"></p>
+    </footer>
     <script src="popup.js"></script>
   </body>
 </html>

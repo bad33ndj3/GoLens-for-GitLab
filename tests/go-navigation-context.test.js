@@ -30,6 +30,82 @@ test('builds version-pinned Go documentation URLs for root and nested standard p
   }
 });
 
+test('reads merge and approval state from the authenticated GitLab endpoint', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (input, options) => {
+    request = { input, options };
+    return {
+      ok: true,
+      async json() {
+        return {
+          state: 'merged',
+          approved_by: [
+            { user: { id: 17, username: 'reviewer' } },
+            { user: { username: 'fallback-reviewer' } },
+          ],
+        };
+      },
+    };
+  };
+  try {
+    assert.deepEqual(
+      await globalThis.GoLensGoNavigation.mergeRequestCelebrationStatus(),
+      { state: 'merged', approvers: ['17', 'fallback-reviewer'] },
+    );
+    assert.equal(
+      request.input,
+      'https://gitlab.example/api/v4/projects/group%2Fproject/merge_requests/42/approvals',
+    );
+    assert.equal(request.options.credentials, 'include');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('counts unresolved merge request discussions across GitLab API pages', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  const pages = [
+    {
+      next: '2',
+      discussions: [
+        { notes: [{ resolvable: true, resolved: false }] },
+        { notes: [{ resolvable: true, resolved: true }] },
+      ],
+    },
+    {
+      next: '',
+      discussions: [
+        { notes: [{ resolvable: false, resolved: false }] },
+        { notes: [{ resolvable: true, resolved: false }, { resolvable: true, resolved: true }] },
+      ],
+    },
+  ];
+  globalThis.fetch = async (input, options) => {
+    requests.push({ input, options });
+    const page = pages[requests.length - 1];
+    return {
+      ok: true,
+      headers: { get(name) { return name === 'x-next-page' ? page.next : ''; } },
+      async json() { return page.discussions; },
+    };
+  };
+  try {
+    assert.deepEqual(
+      await globalThis.GoLensGoNavigation.mergeRequestDiscussionStatus(),
+      { unresolved: 2 },
+    );
+    assert.deepEqual(requests.map((request) => request.input), [
+      'https://gitlab.example/api/v4/projects/group%2Fproject/merge_requests/42/discussions?per_page=100&page=1',
+      'https://gitlab.example/api/v4/projects/group%2Fproject/merge_requests/42/discussions?per_page=100&page=2',
+    ]);
+    assert.ok(requests.every((request) => request.options.credentials === 'include'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('builds a Go documentation URL for versioned third-party modules', () => {
   assert.equal(helpers.packageDocumentationURL('github.com/gofrs/uuid/v5'), 'https://pkg.go.dev/github.com/gofrs/uuid/v5');
 });
@@ -149,6 +225,15 @@ test('chooses the needed Rapid Diffs expansion direction for a hidden destinatio
 test('opens a sole usage directly and shows a list for multiple usages', () => {
   assert.equal(helpers.referenceNavigationAction({ status: 'references', locations: [{}] }), 'open');
   assert.equal(helpers.referenceNavigationAction({ status: 'references', locations: [{}, {}] }), 'show');
+});
+
+test('formats concrete source locations for compact LLM context', () => {
+  assert.equal(
+    helpers.sourceLocationText({ path: 'svc/snapshot/pkg/search.go', line: 24, character: 7 }),
+    'svc/snapshot/pkg/search.go:24:7',
+  );
+  assert.equal(helpers.sourceLocationText({ path: 'svc/snapshot/pkg/search.go', line: 24 }), '');
+  assert.equal(helpers.sourceLocationText({ path: 'svc/snapshot/pkg/search.go', line: 0, character: 7 }), '');
 });
 
 test('shows usages rather than a definition preview when hovering a declaration', () => {
@@ -274,18 +359,33 @@ test('maps every Go symbol kind to a readable IDE-style badge', () => {
 
 test('renders stable IDE-style GoDoc, implementation, and navigation popovers', async () => {
   const window = new Window({ url: globalThis.location.href });
+  const sha = 'a'.repeat(40);
   globalThis.document = window.document;
   globalThis.innerWidth = 1000;
   globalThis.innerHeight = 800;
   window.document.body.innerHTML = `
+    <section class="diff-file" data-file-path="service/current.go">
+      <a href="/group/project/-/blob/${sha}/service/current.go">service/current.go</a>
+      <table><tbody><tr><td class="new_line"><a href="#L44" aria-label="Added line 44">44</a></td><td class="line_content">current target</td></tr></tbody></table>
+    </section>
     <section class="diff-file" data-file-path="service/run.go"></section>
     <section class="diff-file" data-file-path="service/runner.go"></section>
   `;
-  helpers.showLoading('Loading pkg/search · 60% · 2 / 3 files', { x: 10, y: 10 }, {
+  const currentPointer = {
+    x: 10,
+    y: 10,
+    cell: window.document.querySelector('.line_content'),
+    character: 8,
+  };
+  helpers.showLoading('Loading pkg/search · 60% · 2 / 3 files', currentPointer, {
     phase: 'fetching', completed: 2, total: 3, percentage: 60,
   });
   const shadow = window.document.querySelector('#golens-go-intelligence-root').shadowRoot;
   const popover = shadow.querySelector('.popover');
+  const visualContract = shadow.querySelector('style').textContent;
+  assert.match(visualContract, /var\(--golens-surface-panel\)/);
+  assert.match(visualContract, /var\(--golens-focus-ring\)/);
+  assert.doesNotMatch(visualContract, /Inter/);
   assert.equal(popover.getAttribute('aria-busy'), 'true');
   assert.match(shadow.querySelector('.popover-title').textContent, /Loading pkg\/search/);
   assert.equal(popover.getAttribute('role'), 'tooltip');
@@ -313,9 +413,10 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
       documentation: 'Run performs the operation.',
       path: 'service/run.go',
       line: 12,
+      column: 6,
       ref: 'b'.repeat(40),
     },
-  }, { x: 10, y: 10 });
+  }, currentPointer);
   const docs = shadow.querySelector('.docs');
   const signature = shadow.querySelector('.signature');
   assert.equal(docs.textContent, 'Run performs the operation.');
@@ -326,6 +427,22 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
   assert.equal(shadow.querySelector('.destination-icon').getAttribute('aria-label'), 'Jump in this MR diff');
   assert.equal(helpers.definitionDestination({ path: 'service/run.go' }).kind, 'inDiff');
   assert.equal(helpers.definitionDestination({ path: 'service/elsewhere.go' }).kind, 'newTab');
+  const copyButton = shadow.querySelector('.copy-button');
+  const closeButton = shadow.querySelector('.close-button');
+  assert.equal(copyButton.hidden, false);
+  assert.equal(copyButton.dataset.copyText, 'service/current.go:44:9');
+  assert.equal(copyButton.nextElementSibling, closeButton, 'copy action stays immediately left of close');
+  let copiedText = '';
+  window.document.execCommand = (command) => {
+    if (command !== 'copy') return false;
+    copiedText = window.document.querySelector('textarea').value;
+    return true;
+  };
+  copyButton.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(copiedText, 'service/current.go:44:9');
+  assert.equal(copyButton.dataset.state, 'copied');
+  assert.match(shadow.querySelector('.toast').textContent, /Copied service\/current\.go:44:9/);
 
   const fullSignature = 'func NewContractService(db *gorm.DB, invoiceCreditor InvoiceCreditor, emailClient EmailClient, metrics ContractMetrics, legacyContractRepository LegacyContractRepository) *ContractService';
   const compactSignature = 'func NewContractService(db *gorm.DB, invoiceCreditor InvoiceCreditor, … +3 parameters) *ContractService';
@@ -342,7 +459,7 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
       line: 20,
       ref: 'b'.repeat(40),
     },
-  }, { x: 10, y: 10 });
+  }, currentPointer);
   const signatureToggle = shadow.querySelector('.signature-toggle');
   assert.equal(signature.textContent, compactSignature);
   assert.equal(signature.title, fullSignature);
@@ -358,7 +475,7 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
     definition: { name: 'NewContractService', kind: 'function', signature: fullSignature, compactSignature, path: 'service/contracts.go', line: 20 },
     locations: [],
     hasMore: false,
-  }, { x: 10, y: 10 });
+  }, currentPointer);
   assert.equal(signature.textContent, compactSignature, 'usage results reset long signatures to collapsed');
   assert.equal(signatureToggle.getAttribute('aria-expanded'), 'false');
 
@@ -371,7 +488,7 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
     status: 'resolved',
     isDefinition: false,
     definition: { name: 'Run', kind: 'function', signature: 'func Run() error', documentation: '', path: 'service/run.go', line: 12, ref: 'b'.repeat(40) },
-  }, { x: 10, y: 10 });
+  }, currentPointer);
   shadow.querySelector('.choice').dispatchEvent(new window.Event('focusin', { bubbles: true }));
   assert.equal(popover.getAttribute('role'), 'dialog');
   helpers.onKeyDown(new window.KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
@@ -379,16 +496,17 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
 
   helpers.showResult({
     status: 'implementations',
-    interfaceDefinition: { name: 'Runner', signature: 'type Runner interface { Run() error }' },
+    interfaceDefinition: { name: 'Runner', signature: 'type Runner interface { Run() error }', path: 'service/runner.go', line: 1, column: 6 },
     methodCount: 1,
     candidates: [
       { displayName: 'service.Runner', kind: 'struct', matchedMethods: 1, methodCount: 1, confidence: 'asserted', path: 'service/runner.go', ref: 'b'.repeat(40), line: 4, documentationLine: 3, documentation: 'Runner handles production work.', isTestDouble: false },
       { displayName: '*mocks.Runner', kind: 'struct', matchedMethods: 1, methodCount: 1, confidence: 'structural', path: 'internal/mocks/runner.go', ref: 'b'.repeat(40), line: 5, documentationLine: 0, documentation: '', isTestDouble: true },
     ],
-  }, { x: 10, y: 10 });
+  }, currentPointer);
   assert.equal(popover.hasAttribute('aria-busy'), false);
   assert.equal(shadow.querySelector('.loading-progress').hidden, true);
   assert.equal(shadow.querySelector('.popover-title').textContent, 'Implementations of Runner');
+  assert.equal(copyButton.dataset.copyText, 'service/current.go:44:9');
   assert.equal(shadow.querySelector('.popover-header .symbol-badge').textContent, 'I');
   assert.match(shadow.querySelector('.choices button').textContent, /service\.Runner.*service\/runner\.go:3.*Explicit assertion/s);
   assert.match(shadow.querySelector('.choice-doc').textContent, /production work/);
@@ -409,8 +527,9 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
     importPath: 'gitlab.com/energyzero/backend/backend/svc/snapshot/internal/core/entity',
     packagePath: 'svc/snapshot/internal/core/entity',
     ref: 'b'.repeat(40),
-  }, { x: 10, y: 10 });
+  }, currentPointer);
   assert.equal(shadow.querySelector('.popover-header .symbol-badge').textContent, 'PKG');
+  assert.equal(copyButton.dataset.copyText, 'service/current.go:44:9');
   assert.equal(shadow.querySelector('.popover-title').textContent, 'entity');
   assert.equal(shadow.querySelector('.choices button .choice-title').textContent, 'Open package directory');
   assert.match(shadow.querySelector('.choice-context').textContent, /^svc\/snapshot\/internal\/core\/entity/);
@@ -419,7 +538,7 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
     status: 'unsupportedImplementations',
     reason: 'typeSetConstraint',
     interfaceDefinition: { name: 'Number' },
-  }, { x: 10, y: 10 });
+  }, currentPointer);
   assert.match(shadow.querySelector('.docs').textContent, /type-set constraint/);
 });
 

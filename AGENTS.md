@@ -38,6 +38,8 @@ Follow GitLab pagination headers when present and retain the documented page-siz
 
 The first supported GitLab MR shows onboarding once per installation. The popup's **Show quick tour** button must always be able to replay it. Keep the modal isolated in `#golens-onboarding-root` Shadow DOM, keyboard accessible as an ARIA modal dialog, dismissible with Escape, and visually aligned with the compact dark/orange/cyan extension UI. Keep its copy synchronized with shipped controls and shortcuts; do not document legacy checklist, dock, dashboard, or `?` help behavior that is not present in production.
 
+Treat onboarding as the complete user-facing feature inventory, including small helpers and popup-only controls. Every added, removed, or changed user-visible behavior must update the relevant onboarding chapter and `tests/content-onboarding.test.js` in the same change; if a behavior genuinely should not be taught, record the reason in the PR description. Keep related capabilities grouped into short navigable chapters rather than one dense screen. When the tour changes materially, increment `ONBOARDING_VERSION` in `content.js` so existing installations see the updated tour once.
+
 ## Coding Style & Naming Conventions
 
 Use modern JavaScript modules where supported, two-space indentation, semicolons, single quotes, and `camelCase` identifiers. Use `UPPER_SNAKE_CASE` for module constants and descriptive kebab-case asset names such as `golens-icon.png`. Keep browser integration in `go-navigation.js` and semantic logic DOM-independent in `go-semantic-core.js`. There is no automatic formatter; match surrounding code and keep changes narrowly scoped.

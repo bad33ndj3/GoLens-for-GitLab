@@ -173,7 +173,12 @@ const html = `<!doctype html>
   <div class="layout-page is-merge-request"><div class="ai-panels"><div><nav><div><button>AI</button></div></nav></div></div></div>
   <diff-file data-testid="rd-diff-file" data-file-data='{"viewer":"text_inline","old_path":"contracts/runner.go","new_path":"contracts/runner.go"}'>
     <article class="rd-diff-file">
-      <header class="rd-diff-file-header" data-testid="rd-diff-file-header"><h2><a class="rd-diff-file-link" href="/group/project/-/blob/${sha}/contracts/runner.go">contracts/runner.go</a></h2></header>
+      <header class="rd-diff-file-header" data-testid="rd-diff-file-header">
+        <h2><a class="rd-diff-file-link" href="/group/project/-/blob/${sha}/contracts/runner.go">contracts/runner.go</a></h2>
+        <div class="rd-diff-file-info">
+          <div class="rd-diff-file-options-menu"><div data-options-menu><script type="application/json">[{"text":"Show full file","extraAttrs":{"data-click":"showFullFile"}}]</script></div></div>
+        </div>
+      </header>
       <table><tbody><tr><td class="new_line"><a href="#line_hash_A4" aria-label="Added line 4">4</a></td><td class="line_content">type <span id="go-target">Runner</span> interface { Run() error }</td></tr></tbody></table>
     </article>
   </diff-file>
@@ -196,6 +201,27 @@ const html = `<!doctype html>
     let completionTested = false;
     let popoverTested = false;
     let sharingStarted = false;
+    let fullFileTested = false;
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest?.('[data-golens-full-file][data-click="showFullFile"]');
+      if (!button || fullFileTested) return;
+      fullFileTested = true;
+      const before = location.href;
+      const row = document.createElement('tr');
+      row.dataset.fullFileContext = 'true';
+      row.innerHTML = '<td class="new_line"><a aria-label="Line 1">1</a></td><td class="line_content">package contracts</td>';
+      button.closest('diff-file').querySelector('tbody').prepend(row);
+      document.body.dataset.fullFileInline = String(Boolean(document.querySelector('[data-full-file-context]')));
+      document.body.dataset.fullFileStayedInDiff = String(location.href === before);
+      document.body.dataset.fullFileLabel = button.getAttribute('aria-label') || '';
+      document.body.dataset.fullFileButtonCount = String(document.querySelectorAll('[data-golens-full-file]').length);
+    });
+    const fullFileWatch = setInterval(() => {
+      const button = document.querySelector('diff-file [data-golens-full-file]');
+      if (!button || fullFileTested) return;
+      button.click();
+      clearInterval(fullFileWatch);
+    }, 20);
     const startPreloadWhenReady = (preload) => {
       if (!preload || (preload.dataset.state !== 'idle' && preload.dataset.state !== 'error')) {
         setTimeout(() => startPreloadWhenReady(preload), 50);
@@ -284,6 +310,10 @@ const html = `<!doctype html>
         document.body.dataset.controlCount = String(controls.querySelectorAll('button').length);
         document.body.dataset.dockPresent = String(Boolean(controls.querySelector('.dock')));
         document.body.dataset.focusTitle = focus?.title || '';
+        document.body.dataset.focusIconSvg = String(Boolean(focus?.querySelector('svg')));
+        document.body.dataset.focusIconRaster = String(Boolean(focus?.querySelector('img')));
+        document.body.dataset.brandIconSmall = String(toggle?.querySelector('img')?.src.endsWith('/assets/icons/golens-32.png'));
+        document.body.dataset.themeSurface = getComputedStyle(document.getElementById('gitlab-lens-root')).getPropertyValue('--golens-surface-panel').trim();
         document.body.dataset.preloadLast = String(controls.querySelector('.controls')?.lastElementChild === preload);
         if (!reloaded && !sharing) {
           focus?.click();
@@ -332,8 +362,31 @@ const html = `<!doctype html>
   </script>
 </body></html>`;
 
+const overviewHtml = `<!doctype html>
+<html><head><meta name="csrf-token" content="fixture"></head>
+<body>
+  <div class="layout-page is-merge-request">
+    <div class="ai-panels"><div><nav><div><button type="button">AI</button></div></nav></div></div>
+    <div data-testid="discussion-content" class="js-discussion-container">
+      <div class="discussion-header">
+        <div class="note-header-info">
+          <a href="/group/project/-/merge_requests/44/diffs?diff_id=77&amp;start_sha=abc#filehash_0_12">an old version of the diff</a>
+        </div>
+      </div>
+      <div class="diff-file">
+        <table><tbody><tr class="line_holder"><td>12</td><td>commented line</td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+</body></html>`;
+
 const server = createServer((request, response) => {
   const url = new URL(request.url, 'http://localhost');
+  if (url.pathname === '/group/project/-/merge_requests/44') {
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.end(overviewHtml);
+    return;
+  }
   if (url.pathname === '/group/project/-/merge_requests/42/diffs' || url.pathname === '/group/project/-/merge_requests/43/diffs') {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(html);
@@ -419,17 +472,36 @@ const port = server.address().port;
 const profile = await mkdtemp(resolve(tmpdir(), 'golens-smoke-'));
 
 try {
+  const overviewURL = `http://127.0.0.1:${port}/group/project/-/merge_requests/44`;
+  const overview = await runBrowser(overviewURL, `
+    document.querySelector('[data-golens-discussion-line-link]')?.href.includes('#filehash_0_12')
+  `, profile);
+  assert.match(
+    overview.stdout,
+    /data-golens-discussion-line-link=""[^>]+href="http:\/\/127\.0\.0\.1:\d+\/group\/project\/-\/merge_requests\/44\/diffs\?diff_id=77&amp;start_sha=abc#filehash_0_12"/,
+    `overview discussion button did not preserve GitLab's exact line target\n${overview.stderr}`
+  );
+
   const firstURL = `http://127.0.0.1:${port}/group/project/-/merge_requests/42/diffs`;
   const { stdout, stderr } = await runBrowser(firstURL, `
     document.body?.dataset.preloadAfterReload === 'true'
       && document.body?.dataset.enabledToggle === 'true'
       && document.body?.dataset.goChoiceClosedPopover === 'true'
+      && document.body?.dataset.fullFileInline === 'true'
   `, profile);
   assert.match(stdout, /id="gitlab-lens-root"/, `extension shell was not injected\n${stderr}`);
   assert.match(stdout, /data-control-count="3"/, `the three direct controls were not injected\n${stderr}`);
   assert.match(stdout, /data-preload-last="true"/, `preload is not the bottom sidebar control\n${stderr}`);
   assert.match(stdout, /data-dock-present="false"/, `expandable dock is still present\n${stderr}`);
   assert.match(stdout, /data-focus-title="Full screen mode"/, `focus button is missing its tooltip\n${stderr}`);
+  assert.match(stdout, /data-focus-icon-svg="true"/, `focus button is missing its semantic SVG icon\n${stderr}`);
+  assert.match(stdout, /data-focus-icon-raster="false"/, `focus button still uses a raster image\n${stderr}`);
+  assert.match(stdout, /data-brand-icon-small="true"/, `control rail is not using the optimized mascot asset\n${stderr}`);
+  assert.match(stdout, /data-theme-surface="#[0-9a-f]{6}"/, `shared GoLens theme tokens were not injected\n${stderr}`);
+  assert.match(stdout, /data-full-file-inline="true"/, `full-file control did not reveal inline context\n${stderr}`);
+  assert.match(stdout, /data-full-file-stayed-in-diff="true"/, `full-file control navigated away from the diff\n${stderr}`);
+  assert.match(stdout, /data-full-file-label="Show full file"/, `full-file control is missing its accessible label\n${stderr}`);
+  assert.match(stdout, /data-full-file-button-count="1"/, `full-file control was injected more than once\n${stderr}`);
   assert.match(stdout, /data-focus-active="true"/, `focus button did not enable focus mode\n${stderr}`);
   assert.match(stdout, /data-focus-code-font-size="14px"/, `focus mode did not set code to 14px\n${stderr}`);
   assert.match(stdout, /data-restored-code-font-size="16px"/, `leaving focus mode did not restore the code font size\n${stderr}`);
@@ -448,7 +520,7 @@ try {
   assert.match(stdout, /data-go-popover-close-visible="true"/, `the pinned Go popover did not expose a close button\n${stderr}`);
   assert.match(stdout, /data-go-in-diff-destination="true"/, `the same-diff destination icon was not rendered\n${stderr}`);
   assert.match(stdout, /data-go-new-tab-destination="true"/, `the new-tab destination icon was not rendered\n${stderr}`);
-  assert.match(stdout, /data-go-target-color="rgb\(79, 193, 255\)"/, `recognized Go symbols did not receive the IDE link color\n${stderr}`);
+  assert.match(stdout, /data-go-target-color="rgb\(119, 204, 229\)"/, `recognized Go symbols did not receive the semantic link color\n${stderr}`);
   assert.match(stdout, /data-go-target-decoration="underline"/, `recognized Go symbols were not underlined\n${stderr}`);
   assert.match(stdout, /data-go-target-outline="none"/, `recognized Go symbols still received an outline\n${stderr}`);
   assert.match(stdout, /data-go-choice-closed-popover="true"/, `successful navigation did not close the Go popover\n${stderr}`);
@@ -471,6 +543,7 @@ try {
   }
   assert.equal(blobRequests.filter((request) => request === changedServiceBlobID).length, 1, 'changed source blob was not downloaded exactly once');
   assert.equal(rawRequests.filter((request) => request.ref === secondSha && request.path === 'go.mod').length, 1, 'second MR did not fetch its commit-specific go.mod once');
+
   console.log('browser injection smoke passed');
 } finally {
   server.close();

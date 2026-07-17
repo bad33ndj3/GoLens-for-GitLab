@@ -32,15 +32,21 @@
     {
       "matches": ["http://*/*", "https://*/*"],
       "js": ["go-navigation.js", "content.js"],
-      "css": ["gitlab-lens.css"],
+      "css": ["golens-theme.css", "gitlab-lens.css"],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": [
-        "assets/golens-icon.png",
-        "assets/golens-eyestrain.png"
+        "assets/icons/golens-32.png",
+        "assets/icons/golens-128.png",
+        "assets/celebrations/golens-approved.png",
+        "assets/celebrations/golens-discussions-resolved.png",
+        "assets/celebrations/golens-focus.png",
+        "assets/celebrations/golens-friday-beer.png",
+        "assets/celebrations/golens-merged.png",
+        "assets/celebrations/golens-pitstop.png"
       ],
       "matches": ["http://*/*", "https://*/*"]
     }

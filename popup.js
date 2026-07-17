@@ -1,4 +1,4 @@
-const defaults = { enabled: true };
+const defaults = { enabled: true, hideGeneratedFiles: false };
 let activeTabID = null;
 let fullCachePoll = null;
 
@@ -40,13 +40,17 @@ async function activeTabRequest(type) {
 }
 
 function renderFullProjectState(state) {
+  const panel = document.querySelector('[data-cache-panel]');
   const button = document.querySelector('[data-action="cache-full-project"]');
   const status = document.querySelector('[data-full-cache-status]');
   const progress = document.querySelector('[data-full-cache-progress]');
   const busy = state.status === 'busy';
   const complete = state.status === 'complete';
   const unavailable = state.status === 'unavailable';
+  panel.dataset.state = state.status || 'idle';
   button.disabled = busy || complete || unavailable;
+  button.dataset.state = state.status || 'idle';
+  button.toggleAttribute('aria-busy', busy);
   button.textContent = complete ? 'Full project cached' : busy ? 'Caching full project…' : 'Cache full project';
   status.textContent = state.message || (complete ? 'Cached' : 'Not cached');
   const percentage = Number.isFinite(state.progress?.percentage) ? state.progress.percentage : null;
@@ -99,15 +103,19 @@ function wireFullProjectControl() {
 }
 
 function wireCacheControls() {
+  const panel = document.querySelector('[data-cache-panel]');
   const button = document.querySelector('[data-action="clear-cache"]');
   const status = document.querySelector('[data-cache-status]');
   button.addEventListener('click', async () => {
     if (!confirm('Clear all cached GitLab source snapshots?')) return;
     button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    panel.dataset.clearState = 'busy';
     status.textContent = 'Clearing cache…';
     try {
       const cleared = await cacheRequest('golens-clear-cache');
       status.textContent = `Cleared ${formatBytes(cleared.bytes)} of cached source.`;
+      panel.dataset.clearState = 'success';
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab?.id) await chrome.tabs.sendMessage(tab.id, { type: 'golens-cache-invalidated' });
@@ -118,25 +126,33 @@ function wireCacheControls() {
       await refreshFullProjectState();
     } catch (error) {
       status.textContent = error.message || 'Unable to clear cache.';
+      panel.dataset.clearState = 'error';
     } finally {
       button.disabled = false;
+      button.removeAttribute('aria-busy');
     }
   });
 }
 
 function wireOnboardingControl() {
+  const guide = document.querySelector('.guide');
   const button = document.querySelector('[data-action="show-onboarding"]');
   const status = document.querySelector('[data-onboarding-status]');
   button.addEventListener('click', async () => {
     button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    guide.dataset.state = 'busy';
     status.textContent = '';
     try {
       await activeTabRequest('golens-show-onboarding');
       status.textContent = 'Quick tour opened in this tab.';
+      guide.dataset.state = 'success';
     } catch (error) {
       status.textContent = error.message || 'Open a GitLab merge request first.';
+      guide.dataset.state = 'error';
     } finally {
       button.disabled = false;
+      button.removeAttribute('aria-busy');
     }
   });
 }
@@ -148,15 +164,18 @@ async function initialise() {
     input.checked = settings[key];
     input.addEventListener('change', async () => {
       await chrome.storage.sync.set({ [key]: input.checked });
+      if (key !== 'enabled') return;
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: 'golens-enabled', enabled: input.checked }).catch(() => undefined);
     });
   }
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== 'sync' || !changes.enabled) return;
-    const input = document.querySelector('[data-setting="enabled"]');
-    if (input) input.checked = changes.enabled.newValue;
+    if (areaName !== 'sync') return;
+    for (const [key, change] of Object.entries(changes)) {
+      const input = document.querySelector(`[data-setting="${key}"]`);
+      if (input && typeof change.newValue === 'boolean') input.checked = change.newValue;
+    }
   });
   wireCacheControls();
   wireOnboardingControl();
