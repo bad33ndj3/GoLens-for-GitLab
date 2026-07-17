@@ -163,6 +163,7 @@ Normal semantic RPC has a 20-second client timeout. Project indexing, cache prep
 | Index and restore | `indexPackage`, `indexProject`, `restorePackage`, `restoreProject`, `restoreMergeRequest`, `disposeProject` | Restore returns `memoryHit`, `cacheHit`, or `cacheMiss`; durable restore requires a full commit SHA. |
 | Cache lifecycle | `prepareSources`, `cachePackage`, `cacheProject`, `cacheMergeRequest`, `packageCacheStatus`, `projectCacheStatus`, `mergeRequestCacheStatus`, `cacheStats`, `clearCache` | A complete status requires every manifest entry and source blob to be present and valid. Mutating methods are serialized. |
 | Semantic queries | `resolveDefinition`, `resolveHover`, `findReferences`, `findImplementations`, `packageRelations` | Queries wait behind pending mutations, carry their exact package/full-project search scope, and return explicit typed states instead of speculative navigation. References and implementations use stable 25-result cursor pages. |
+| Complete result search | Exhaustive commit-pinned GitLab basic code search followed by targeted package indexing | Usage searches query the identifier; implementation searches query every required method name. Coverage becomes complete only when every search page and candidate package succeeds. Cancellation or unavailable/limited search preserves incomplete coverage. |
 
 ### Storage contract
 

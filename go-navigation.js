@@ -479,10 +479,11 @@
   }
 
   function authenticatedFetch(input, options = {}) {
+    const { signal = state.abortController?.signal, ...requestOptions } = options;
     return fetch(input, {
       credentials: 'include',
-      ...options,
-      signal: state.abortController?.signal,
+      ...requestOptions,
+      signal,
     });
   }
 
@@ -492,21 +493,21 @@
     return entries.length === 100 ? currentPage + 1 : 0;
   }
 
-  async function fetchSource(path, ref) {
+  async function fetchSource(path, ref, signal = undefined) {
     const project = projectContext();
     const url = `${project.projectBase}/-/raw/${encodeURIComponent(ref)}/${path.split('/').map(encodeURIComponent).join('/')}`;
-    const response = await authenticatedFetch(url);
+    const response = await authenticatedFetch(url, { signal });
     if (!response.ok) throw new Error(`GitLab returned ${response.status} for ${path}`);
     return response.text();
   }
 
-  async function fetchBlob({ path, blobId }, ref) {
+  async function fetchBlob({ path, blobId }, ref, signal = undefined) {
     if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(blobId || '')) {
       throw new Error(`GitLab did not provide a valid blob ID for ${path}`);
     }
     const { project } = projectContext();
     const url = `${location.origin}/api/v4/projects/${encodeURIComponent(project)}/repository/blobs/${encodeURIComponent(blobId)}/raw`;
-    const response = await authenticatedFetch(url);
+    const response = await authenticatedFetch(url, { signal });
     if (!response.ok) throw new Error(`GitLab returned ${response.status} for ${path}`);
     return { path, blobId, source: await response.text() };
   }
@@ -565,14 +566,14 @@
     return COMMIT_SHA.test(file.ref || '') ? file.ref : (refs.headSha || file.ref);
   }
 
-  async function listPackageFiles(packagePath, ref) {
+  async function listPackageFiles(packagePath, ref, signal = undefined) {
     const { project } = projectContext();
     const encodedProject = encodeURIComponent(project);
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const files = [];
     for (let page = 1; page;) {
       const url = `${location.origin}/api/v4/projects/${encodedProject}/repository/tree?path=${encodeURIComponent(packagePath)}&ref=${encodeURIComponent(ref)}&per_page=100&page=${page}`;
-      const response = await authenticatedFetch(url, { headers: csrf ? { 'X-CSRF-Token': csrf } : {} });
+      const response = await authenticatedFetch(url, { headers: csrf ? { 'X-CSRF-Token': csrf } : {}, signal });
       if (!response.ok) throw new Error(`GitLab source API returned ${response.status}`);
       const entries = await response.json();
       if (!Array.isArray(entries)) throw new Error('GitLab returned an invalid repository tree response');
@@ -663,14 +664,15 @@
     return [...new Set(files)];
   }
 
-  async function searchProjectBlobPaths(search, ref, { maxPages = 100, maxPaths = Infinity } = {}) {
+  async function searchProjectBlobPaths(search, ref, { maxPages = 100, maxPaths = Infinity, signal = undefined, searchType = '' } = {}) {
     const { project } = projectContext();
     const encodedProject = encodeURIComponent(project);
     const paths = new Set();
     try {
       for (let page = 1; page <= maxPages; page++) {
         const parameters = new URLSearchParams({ scope: 'blobs', search, ref, per_page: '100', page: String(page) });
-        const response = await authenticatedFetch(`${location.origin}/api/v4/projects/${encodedProject}/search?${parameters}`);
+        if (searchType) parameters.set('search_type', searchType);
+        const response = await authenticatedFetch(`${location.origin}/api/v4/projects/${encodedProject}/search?${parameters}`, { signal });
         if (!response.ok) return { paths: [...paths], status: paths.size ? 'limited' : 'unavailable' };
         const entries = await response.json();
         if (!Array.isArray(entries)) return { paths: [...paths], status: paths.size ? 'limited' : 'unavailable' };
@@ -690,11 +692,11 @@
     }
   }
 
-  async function modulePathFor(ref) {
+  async function modulePathFor(ref, signal = undefined) {
     const key = `${projectContext().project}\u0000${ref}`;
     if (state.modulePaths.has(key)) return state.modulePaths.get(key);
     try {
-      const source = await fetchSource('go.mod', ref);
+      const source = await fetchSource('go.mod', ref, signal);
       const modulePath = source.match(/^\s*module\s+([^\s]+)\s*$/m)?.[1] || '';
       state.modulePaths.set(key, modulePath);
       return modulePath;
@@ -718,7 +720,7 @@
     return results;
   }
 
-  async function loadPackage(packagePath, ref, onProgress = () => {}) {
+  async function loadPackage(packagePath, ref, onProgress = () => {}, signal = undefined) {
     const context = projectContext();
     const key = `${location.origin}\u0000${context.project}\u0000${ref}\u0000${packagePath}`;
     const projectKey = `${location.origin}\u0000${context.project}\u0000${ref}`;
@@ -744,7 +746,7 @@
           return { ...cached, cached: cached.files || 0, downloaded: 0 };
         }
       }
-      const entries = await listPackageFiles(packagePath, ref);
+      const entries = await listPackageFiles(packagePath, ref, signal);
       const prepared = COMMIT_SHA.test(ref)
         ? await workerRPC('prepareSources', { origin: location.origin, project: context.project, ref, files: entries })
         : { total: entries.length, cached: 0, missing: entries.map((entry) => ({ ...entry, referencedFiles: 1 })) };
@@ -757,7 +759,7 @@
       });
       reportProgress(packageLoadingProgress('fetching', completed, prepared.total, progressDetails()));
       const files = await mapLimit(prepared.missing, 6, async (entry) => {
-        const file = await fetchBlob(entry, ref);
+        const file = await fetchBlob(entry, ref, signal);
         const referencedFiles = entry.referencedFiles || 1;
         downloaded += referencedFiles;
         completed += referencedFiles;
@@ -765,7 +767,7 @@
         return file;
       });
       reportProgress(packageLoadingProgress('indexing', completed, prepared.total, progressDetails()));
-      const modulePath = await modulePathFor(ref);
+      const modulePath = await modulePathFor(ref, signal);
       const result = await workerRPC('cachePackage', { origin: location.origin, project: context.project, ref, packagePath, modulePath, entries, files });
       status('ready', `Go intelligence ready · ${result.definitions} symbols`, packageLoadingProgress('ready', prepared.total, prepared.total));
       return { ...result, cached: prepared.cached, downloaded };
@@ -1093,7 +1095,7 @@
     return null;
   }
 
-  async function findReferencesAt(target, definition, cursor = '') {
+  async function findReferencesAt(target, definition, cursor = '', scopeOverride = null) {
     const file = fileContextFor(target.cell);
     const line = lineContextFor(target.cell);
     const context = projectContext();
@@ -1120,12 +1122,12 @@
       definition,
       pageSize: 25,
       cursor,
-      ...(relatedResultScope(restored, packagePath) ? { scope: relatedResultScope(restored, packagePath) } : {}),
+      ...((scopeOverride || relatedResultScope(restored, packagePath)) ? { scope: scopeOverride || relatedResultScope(restored, packagePath) } : {}),
     });
-    return { ...result, request: { kind: 'references', target, definition, ref } };
+    return { ...result, request: { kind: 'references', target, definition, ref, scope: scopeOverride } };
   }
 
-  async function findImplementationsAt(target, definition, progress = () => {}, cursor = '') {
+  async function findImplementationsAt(target, definition, progress = () => {}, cursor = '', scopeOverride = null) {
     const file = fileContextFor(target.cell);
     const line = lineContextFor(target.cell);
     const context = projectContext();
@@ -1152,9 +1154,9 @@
       interfaceDefinition: definition,
       pageSize: 25,
       cursor,
-      ...(relatedResultScope(restored, packagePath) ? { scope: relatedResultScope(restored, packagePath) } : {}),
+      ...((scopeOverride || relatedResultScope(restored, packagePath)) ? { scope: scopeOverride || relatedResultScope(restored, packagePath) } : {}),
     });
-    return { ...result, request: { kind: 'implementations', target, definition, ref } };
+    return { ...result, request: { kind: 'implementations', target, definition, ref, scope: scopeOverride } };
   }
 
   function ensureUI() {
@@ -1210,7 +1212,7 @@
         <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><div class="header-actions"><button class="header-action copy-button" type="button" aria-label="Copy source location" title="Copy source location" hidden><svg class="copy-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg><svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.25 3.15 3.15L13 4.6"/></svg></button><button class="header-action close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></header>
         <div class="popover-body"><div class="loading-progress" hidden role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase"></span><span class="loading-progress-count"></span></div><div class="loading-track" role="progressbar" aria-label="Go intelligence loading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="docs"></div><div class="scope" hidden></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
       </section>
-      <div class="full-search-backdrop" hidden><section class="full-search-dialog" role="dialog" aria-modal="true" aria-labelledby="golens-full-search-title"><div class="full-search-header"><div><h2 id="golens-full-search-title" class="full-search-title">Search complete project</h2><p class="full-search-copy">Caching every Go source at this commit makes absence results conclusive.</p></div><button class="header-action full-search-minimize" type="button" aria-label="Minimize full-project search">−</button></div><div class="loading-progress full-search-progress" role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase">Preparing project</span><span class="loading-progress-count">0%</span></div><div class="loading-track" role="progressbar" aria-label="Full-project search progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="full-search-actions"><button class="full-search-retry" type="button" hidden>Retry</button><button class="full-search-dismiss" type="button">Minimize</button></div></section></div>
+      <div class="full-search-backdrop" hidden><section class="full-search-dialog" role="dialog" aria-modal="true" aria-labelledby="golens-full-search-title"><div class="full-search-header"><div><h2 id="golens-full-search-title" class="full-search-title">Search complete project</h2><p class="full-search-copy">GoLens searches the complete project at this commit, then downloads only matching Go packages.</p></div><button class="header-action full-search-minimize" type="button" aria-label="Minimize full-project search">−</button></div><div class="loading-progress full-search-progress" role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase">Preparing project</span><span class="loading-progress-count">0%</span></div><div class="loading-track" role="progressbar" aria-label="Full-project search progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="full-search-actions"><button class="full-search-retry" type="button" hidden>Retry</button><button class="full-search-cancel" type="button">Cancel</button><button class="full-search-dismiss" type="button">Minimize</button></div></section></div>
       <button class="full-search-chip" type="button" hidden>Project search · 0%</button>
       <div class="toast" role="status"></div>
     `;
@@ -1227,6 +1229,7 @@
     shadow.querySelector('.full-search-dismiss').addEventListener('click', minimizeFullSearch);
     shadow.querySelector('.full-search-chip').addEventListener('click', restoreFullSearch);
     shadow.querySelector('.full-search-retry').addEventListener('click', runFullSearch);
+    shadow.querySelector('.full-search-cancel').addEventListener('click', cancelFullSearch);
     return shadow;
   }
 
@@ -1466,12 +1469,13 @@
   function resultScopeText(scope) {
     if (!scope) return '';
     if (scope.kind === 'fullProject') return `Full project · ${scope.packageCount} indexed package${scope.packageCount === 1 ? '' : 's'} · complete coverage`;
+    if (scope.kind === 'completeProjectSearch') return `Complete project code search · ${scope.packageCount} indexed package${scope.packageCount === 1 ? '' : 's'}`;
     if (scope.kind === 'indexedPackages') return `${scope.packageCount} indexed package${scope.packageCount === 1 ? '' : 's'} · search coverage is incomplete`;
     return `Current package${scope.packagePath ? ` · ${scope.packagePath || '.'}` : ''}`;
   }
 
   function absenceText(scope) {
-    if (scope?.kind === 'fullProject' && scope.complete) return 'Full project searched; no result exists.';
+    if (['completeProjectSearch', 'fullProject'].includes(scope?.kind) && scope.complete) return 'Full project searched; no result exists.';
     if (scope?.kind === 'indexedPackages') return `Not found in ${scope.packageCount} indexed packages. Search coverage is incomplete.`;
     return 'Not found in current package.';
   }
@@ -1513,11 +1517,65 @@
     shadow.querySelector(state.fullSearch.status === 'error' ? '.full-search-retry' : '.full-search-minimize').focus();
   }
 
-  async function rerunFullSearchQuery(search) {
-    if (search.result.request.kind === 'references') {
-      return findReferencesAt(search.result.request.target, search.result.request.definition);
+  function cancelFullSearch() {
+    const search = state.fullSearch;
+    if (!search) return;
+    search.controller?.abort();
+    state.fullSearch = null;
+    const shadow = ensureUI();
+    shadow.querySelector('.full-search-backdrop').hidden = true;
+    shadow.querySelector('.full-search-chip').hidden = true;
+    showResult(search.result, search.pointer);
+    pinPopover(search.pointer);
+    toast('Complete project search cancelled. Coverage remains incomplete.');
+  }
+
+  async function searchCompleteProject(search) {
+    const terms = search.result.request.kind === 'references'
+      ? [search.result.request.definition.name]
+      : search.result.searchTerms || [];
+    if (!terms.length) {
+      throw new Error('This interface has no searchable methods, so code search cannot prove complete coverage.');
     }
-    return findImplementationsAt(search.result.request.target, search.result.request.definition);
+    const candidatePackages = new Set();
+    for (let index = 0; index < terms.length; index++) {
+      updateFullSearchProgress(
+        `Searching project code for ${terms[index]}`,
+        { percentage: Math.round(5 + (index / terms.length) * 30) },
+      );
+      const result = await searchProjectBlobPaths(terms[index], search.result.request.ref, {
+        maxPages: Infinity,
+        maxPaths: Infinity,
+        searchType: 'basic',
+        signal: search.controller.signal,
+      });
+      if (result.status !== 'complete') {
+        throw new Error('GitLab code search could not prove complete coverage for this project.');
+      }
+      result.paths.map(dirname).forEach((packagePath) => candidatePackages.add(packagePath));
+    }
+    const packages = [...candidatePackages].sort();
+    for (let index = 0; index < packages.length; index++) {
+      updateFullSearchProgress(
+        `Indexing matching package ${index + 1} of ${packages.length}`,
+        { percentage: Math.round(35 + ((index + 1) / Math.max(1, packages.length)) * 60) },
+      );
+      await loadPackage(packages[index], search.result.request.ref, () => {}, search.controller.signal);
+    }
+    return {
+      kind: 'completeProjectSearch',
+      packageCount: packages.length,
+      complete: true,
+      searchStatus: 'complete',
+      strategy: 'gitlabCodeSearch',
+    };
+  }
+
+  async function rerunFullSearchQuery(search, scope) {
+    if (search.result.request.kind === 'references') {
+      return findReferencesAt(search.result.request.target, search.result.request.definition, '', scope);
+    }
+    return findImplementationsAt(search.result.request.target, search.result.request.definition, undefined, '', scope);
   }
 
   async function runFullSearch() {
@@ -1525,13 +1583,14 @@
     if (!search || search.status === 'busy') return;
     const shadow = ensureUI();
     search.status = 'busy';
+    search.controller = new AbortController();
     shadow.querySelector('.full-search-retry').hidden = true;
     updateFullSearchProgress('Preparing complete project search');
     try {
-      await preloadFullProject(updateFullSearchProgress, search.result.request.ref);
+      const scope = await searchCompleteProject(search);
       if (state.fullSearch !== search || !state.enabled) return;
       updateFullSearchProgress('Refreshing semantic result', { percentage: 100 });
-      const refreshed = await rerunFullSearchQuery(search);
+      const refreshed = await rerunFullSearchQuery(search, scope);
       if (state.fullSearch !== search || !state.enabled) return;
       state.fullSearch = null;
       shadow.querySelector('.full-search-backdrop').hidden = true;
@@ -1541,6 +1600,7 @@
     } catch (error) {
       if (state.fullSearch !== search) return;
       search.status = 'error';
+      search.controller = null;
       updateFullSearchProgress(error.message || 'Full-project search failed');
       shadow.querySelector('.full-search-retry').hidden = false;
       restoreFullSearch();
@@ -1549,6 +1609,7 @@
 
   function openFullSearch(result, pointer) {
     if (!result.request?.ref) return;
+    state.fullSearch?.controller?.abort();
     state.fullSearch = { result, pointer, status: 'idle' };
     hidePopover();
     restoreFullSearch();
@@ -1560,8 +1621,8 @@
     button.textContent = 'Loading more…';
     try {
       const page = result.request.kind === 'references'
-        ? await findReferencesAt(result.request.target, result.request.definition, result.nextCursor)
-        : await findImplementationsAt(result.request.target, result.request.definition, undefined, result.nextCursor);
+        ? await findReferencesAt(result.request.target, result.request.definition, result.nextCursor, result.request.scope)
+        : await findImplementationsAt(result.request.target, result.request.definition, undefined, result.nextCursor, result.request.scope);
       const key = result.request.kind === 'references' ? 'locations' : 'candidates';
       showResult({ ...page, [key]: [...result[key], ...page[key]], request: result.request }, pointer);
       pinPopover(pointer);
@@ -1716,7 +1777,8 @@
         ? 'Unsupported build constraint: GoLens cannot safely select the active declaration.'
         : 'This semantic relationship is unsupported.';
     } else return false;
-    if (result.request && result.scope?.kind !== 'fullProject' && !result.scope?.complete
+    const hasCompleteSearchTerms = result.request?.kind === 'references' || result.searchTerms?.length;
+    if (result.request && hasCompleteSearchTerms && result.scope?.kind !== 'fullProject' && !result.scope?.complete
       && !['buildConstraint', 'typeSetConstraint'].includes(result.reason)) {
       choices.append(resultAction('Search complete project', () => openFullSearch(result, pointer)));
       shouldPin = true;
@@ -2032,6 +2094,7 @@
     state.refsPromise = null;
     state.refsKey = '';
     state.refsFetchedAt = 0;
+    state.fullSearch?.controller?.abort();
     state.fullSearch = null;
     state.ui?.remove();
     state.ui = null;
@@ -2053,6 +2116,6 @@
     preloadFullProject,
     fullProjectPreloadStatus,
     invalidateCacheState,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown },
   };
 })();

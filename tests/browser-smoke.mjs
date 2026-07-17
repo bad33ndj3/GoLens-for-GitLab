@@ -358,6 +358,12 @@ const html = `<!doctype html>
         document.body.dataset.goTargetColor = targetStyle.color;
         document.body.dataset.goTargetDecoration = targetStyle.textDecorationLine;
         document.body.dataset.goTargetOutline = targetStyle.outlineStyle;
+        const fullSearchAction = [...goUI.querySelectorAll('.choices button')].find((button) => button.textContent === 'Search complete project');
+        fullSearchAction?.click();
+        document.body.dataset.goFullSearchOpened = String(!goUI.querySelector('.full-search-backdrop')?.hidden);
+        document.body.dataset.goFullSearchCancelVisible = String(Boolean(goUI.querySelector('.full-search-cancel')));
+        goUI.querySelector('.full-search-cancel')?.click();
+        document.body.dataset.goFullSearchCancelled = String(goUI.querySelector('.full-search-backdrop')?.hidden && goUI.querySelector('.scope')?.textContent.includes('incomplete'));
         goUI.querySelector('.choices .choice')?.click();
         document.body.dataset.goChoiceClosedPopover = String(!popover.classList.contains('show'));
         clearInterval(popoverWatch);
@@ -540,6 +546,9 @@ try {
   assert.match(stdout, /data-go-scope="[^"]*(?:indexed package|Full project)[^"]*"/, `semantic results did not expose their search scope\n${stderr}`);
   assert.match(stdout, /data-go-full-search-action="true"/, `incomplete semantic results did not expose the full-project action\n${stderr}`);
   assert.match(stdout, /data-go-full-search-modal="true"/, `the full-project search modal is not accessible\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-opened="true"/, `the full-project search modal did not open\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-cancel-visible="true"/, `the full-project search modal did not expose Cancel\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-cancelled="true"/, `cancelling full-project search did not preserve incomplete coverage\n${stderr}`);
   assert.match(stdout, /data-go-in-diff-destination="true"/, `the same-diff destination icon was not rendered\n${stderr}`);
   assert.match(stdout, /data-go-new-tab-destination="true"/, `the new-tab destination icon was not rendered\n${stderr}`);
   assert.match(stdout, /data-go-target-color="rgb\(119, 204, 229\)"/, `recognized Go symbols did not receive the semantic link color\n${stderr}`);

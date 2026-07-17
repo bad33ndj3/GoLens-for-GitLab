@@ -926,6 +926,7 @@ export class GoSemanticIndex {
     };
     const assertions = entries.flatMap((entry) => entry.assertions);
     const requiredMethods = [...required];
+    const searchTerms = [...new Set(requiredMethods.map((method) => method.match(/^[^(]+/)?.[0] || '').filter(Boolean))].sort();
     const candidates = records
       .filter((record) => record.kind === 'type' && !record.aliasIdentity)
       .flatMap((record) => {
@@ -964,6 +965,7 @@ export class GoSemanticIndex {
       status: 'implementations',
       interfaceDefinition,
       methodCount: requiredMethods.length,
+      searchTerms,
       candidates: pageCandidates,
       hasMore: start + pageCandidates.length < candidates.length,
       nextCursor: pageCandidates.length ? locationCursor(pageCandidates.at(-1)) : '',

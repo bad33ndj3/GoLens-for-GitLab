@@ -94,6 +94,16 @@ test('worker protocol indexes a project and finds interface implementations', as
   assert.deepEqual(implementations.result.scope, {
     kind: 'fullProject', packageCount: 2, complete: true, searchStatus: 'complete',
   });
+  const searched = await request('findImplementations', {
+    project: 'group/project',
+    ref: 'projectref',
+    interfaceDefinition: resolved.result.definition,
+    scope: { kind: 'completeProjectSearch', complete: true, searchStatus: 'complete', strategy: 'gitlabCodeSearch' },
+  });
+  assert.deepEqual(searched.result.scope, {
+    kind: 'completeProjectSearch', packagePath: '', packageCount: 2, complete: true,
+    searchStatus: 'complete', strategy: 'gitlabCodeSearch',
+  });
 });
 
 test('worker protocol reports unknown methods without crashing', async () => {

@@ -35,14 +35,15 @@ async function semanticIndex() {
 
 function resultScope(index, params, mode) {
   const supplied = params.scope;
-  if (supplied && ['currentPackage', 'indexedPackages', 'fullProject'].includes(supplied.kind)) {
+  if (supplied && ['currentPackage', 'indexedPackages', 'completeProjectSearch', 'fullProject'].includes(supplied.kind)) {
     const inferred = index.searchScope({ ...params, mode });
     return {
       kind: supplied.kind,
       packagePath: supplied.packagePath || '',
       packageCount: inferred.packageCount,
-      complete: supplied.kind === 'fullProject' ? supplied.complete === true : supplied.complete !== false,
+      complete: ['completeProjectSearch', 'fullProject'].includes(supplied.kind) ? supplied.complete === true : supplied.complete !== false,
       ...(supplied.searchStatus ? { searchStatus: supplied.searchStatus } : {}),
+      ...(supplied.strategy ? { strategy: supplied.strategy } : {}),
     };
   }
   return index.searchScope({ ...params, mode });

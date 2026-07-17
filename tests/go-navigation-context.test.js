@@ -598,6 +598,44 @@ test('uses GitLab pagination headers and falls back when headers are omitted', (
   assert.equal(helpers.nextPageNumber(response(), 2, Array(12)), 0);
 });
 
+test('exhausts commit-pinned basic code search and supports cancellation', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  try {
+    globalThis.fetch = async (url, { signal } = {}) => {
+      requests.push(String(url));
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      const page = Number(new URL(url).searchParams.get('page'));
+      const entries = page === 1
+        ? Array.from({ length: 100 }, (_value, index) => ({ path: `pkg${index}/runner.go` }))
+        : [{ path: 'final/runner.go' }];
+      return {
+        ok: true,
+        headers: { get: (name) => name.toLowerCase() === 'x-next-page' && page === 1 ? '2' : '' },
+        async json() { return entries; },
+      };
+    };
+    const complete = await helpers.searchProjectBlobPaths('Run', 'a'.repeat(40), {
+      maxPages: Infinity, maxPaths: Infinity, searchType: 'basic',
+    });
+    assert.equal(complete.status, 'complete');
+    assert.equal(complete.paths.length, 101);
+    assert.equal(requests.length, 2);
+    const parameters = new URL(requests[0]).searchParams;
+    assert.equal(parameters.get('ref'), 'a'.repeat(40));
+    assert.equal(parameters.get('search_type'), 'basic');
+
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+      helpers.searchProjectBlobPaths('Run', 'a'.repeat(40), { maxPages: Infinity, signal: controller.signal }),
+      { name: 'AbortError' },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('opens documented declarations at their attached comment', () => {
   assert.equal(helpers.destinationLineForDefinition({ line: 12, documentationLine: 10 }), 10);
   assert.equal(helpers.destinationLineForDefinition({ line: 12, documentationLine: 0 }), 12);

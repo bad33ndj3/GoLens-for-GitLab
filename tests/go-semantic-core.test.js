@@ -756,6 +756,7 @@ func (*FakeFile) Close() error { return nil }
   });
   assert.equal(result.status, 'implementations');
   assert.equal(result.methodCount, 2);
+  assert.deepEqual(result.searchTerms, ['Close', 'Read']);
   assert.deepEqual(
     result.candidates.map(({ displayName, confidence, isTestDouble, pointer, matchedMethods }) => ({ displayName, confidence, isTestDouble, pointer, matchedMethods })),
     [
