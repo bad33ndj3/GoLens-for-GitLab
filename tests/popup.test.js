@@ -22,6 +22,8 @@ test('popup starts full-project caching in the active MR tab and restores comple
   let storageListener;
   const savedSettings = [];
   const tabMessages = [];
+  let allowedOrigins = ['http://*/*', 'https://*/*', 'https://gitlab.com/*'];
+  const requestedOrigins = [];
   globalThis.chrome = {
     storage: {
       sync: {
@@ -37,6 +39,18 @@ test('popup starts full-project caching in the active MR tab and restores comple
       async sendMessage({ type }) {
         if (type === 'golens-cache-stats') return { ok: true, result: { sources: 1, packages: 1, projects: 0, bytes: 12 } };
         return { ok: true, result: { sources: 0, packages: 0, projects: 0, bytes: 0 } };
+      },
+    },
+    permissions: {
+      async getAll() { return { origins: [...allowedOrigins] }; },
+      async request({ origins }) {
+        requestedOrigins.push(...origins);
+        allowedOrigins = [...new Set([...allowedOrigins, ...origins])];
+        return true;
+      },
+      async remove({ origins }) {
+        allowedOrigins = allowedOrigins.filter((origin) => !origins.includes(origin));
+        return true;
       },
     },
     tabs: {
@@ -60,6 +74,22 @@ test('popup starts full-project caching in the active MR tab and restores comple
   assert.ok(generatedFilesSetting.checked);
   assert.match(window.document.querySelector('.preferences').textContent, /\.gitattributes/);
   assert.match(window.document.querySelector('.preferences').textContent, /large collapsed files remain visible/);
+  assert.match(window.document.querySelector('.host-access').textContent, /GitLab.com works automatically/);
+  assert.match(window.document.querySelector('[data-host-list]').textContent, /No self-hosted origins allowed/);
+  assert.doesNotMatch(window.document.querySelector('[data-host-list]').textContent, /%2A/i);
+
+  const hostForm = window.document.querySelector('[data-host-form]');
+  hostForm.elements.origin.value = 'https://gitlab.internal/group/project';
+  hostForm.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(requestedOrigins, ['https://gitlab.internal/*']);
+  assert.match(window.document.querySelector('[data-host-list]').textContent, /https:\/\/gitlab.internal/);
+  assert.match(window.document.querySelector('[data-host-status]').textContent, /Allowed https:\/\/gitlab.internal/);
+
+  window.document.querySelector('[data-host-list] button').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(allowedOrigins, ['http://*/*', 'https://*/*', 'https://gitlab.com/*']);
+  assert.match(window.document.querySelector('[data-host-list]').textContent, /No self-hosted origins allowed/);
 
   generatedFilesSetting.checked = false;
   generatedFilesSetting.dispatchEvent(new window.Event('change'));

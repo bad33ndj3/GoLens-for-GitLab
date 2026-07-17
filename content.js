@@ -1,6 +1,6 @@
 (() => {
   const defaults = { enabled: true, hideGeneratedFiles: false };
-  const ONBOARDING_VERSION = 4;
+  const ONBOARDING_VERSION = 5;
   const ONBOARDING_STORAGE_KEY = 'golensOnboardingVersion';
   const FRIDAY_MR_CREATE_STORAGE_KEY = 'golensFridayMergeRequestCreation';
   const FULL_FILE_EXPANSION_TIMEOUT_MS = 15000;
@@ -815,6 +815,7 @@
                 <p class="chapter-intro">The extension menu manages behavior shared by all open GitLab tabs and gives you direct control over stored source.</p>
                 <ul class="feature-list">
                   <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Set global review preferences</strong><p>Enable or disable GoLens everywhere and choose whether GitLab-marked generated files should be hidden.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Approve self-hosted GitLab origins</strong><p>GitLab.com works automatically. Add or remove each self-hosted HTTP(S) origin from the extension menu so GoLens only runs where you explicitly allow it.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache the full project</strong><p>Broaden navigation beyond related MR packages. Progress and availability are reported against the active merge request.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('database')}<div><strong>Inspect or clear the source cache</strong><p>See its browser storage size, package count, and source-record count, or remove every cached snapshot at once.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('replay')}<div><strong>Replay this complete tour</strong><p>Choose <span class="feature-note">Show quick tour</span> whenever you need a refresher.</p></div></li>

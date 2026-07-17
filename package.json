@@ -10,7 +10,7 @@
     "vendor:parser": "node scripts/vendor-parser.mjs",
     "test": "node --test tests/*.test.js",
     "test:browser": "node tests/browser-smoke.mjs",
-    "check:syntax": "node --check content.js && node --check go-navigation.js && node --check go-semantic-cache.js && node --check go-semantic-core.js && node --check go-semantic-worker.js && node --check popup.js && node --check scripts/package-extension.mjs && node --check scripts/release-extension.mjs && node --check scripts/vendor-parser.mjs",
+    "check:syntax": "node --check content.js && node --check go-navigation.js && node --check gitlab-host-access.js && node --check go-semantic-cache.js && node --check go-semantic-core.js && node --check go-semantic-worker.js && node --check popup.js && node --check scripts/package-extension.mjs && node --check scripts/release-extension.mjs && node --check scripts/vendor-parser.mjs",
     "check": "npm run check:syntax && npm test && npm run test:browser"
   },
   "devDependencies": {

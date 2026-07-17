@@ -11,9 +11,9 @@ GoLens developer or to analytics, advertising, or other third-party services.
 On a supported GitLab merge-request page, GoLens reads page context and uses
 your existing signed-in GitLab session to request repository paths, commit and
 blob identifiers, and source files needed for Go navigation. Those requests go
-only to the GitLab origin open in the current tab. The broad HTTP(S) host
-permission exists so the extension can support both GitLab.com and self-hosted
-GitLab instances.
+only to the GitLab origin open in the current tab. Automatic host access is
+limited to GitLab.com. Each self-hosted HTTP(S) origin requires an explicit
+runtime approval that can be removed again from the extension popup.
 
 ## Information stored in your browser
 

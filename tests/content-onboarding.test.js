@@ -92,20 +92,21 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
     'Optionally hide generated files',
     'Jump from overview discussions to code',
     'Set global review preferences',
+    'Approve self-hosted GitLab origins',
     'Cache the full project',
     'Inspect or clear the source cache',
     'Replay this complete tour',
     'Keep repository source local',
   ]);
   const featureIcons = [...firstDialog.querySelectorAll('[data-feature-icon]')];
-  assert.equal(featureIcons.length, 20);
+  assert.equal(featureIcons.length, 21);
   assert.ok(featureIcons.every((icon) => icon.querySelector('svg, img')), 'every feature uses a visual icon');
   assert.equal(firstDialog.querySelector('.feature-mark'), null, 'legacy text and Unicode markers were removed');
   const onboardingStyles = firstHost.shadowRoot.querySelector('style').textContent;
   assert.match(onboardingStyles, /var\(--golens-surface-panel\)/);
   assert.match(onboardingStyles, /\.feature-icon \{[^}]*width:40px;[^}]*height:40px;/);
   assert.match(onboardingStyles, /\.feature-icon svg \{[^}]*width:24px;[^}]*height:24px;[^}]*stroke-width:1\.75;/);
-  assert.equal(onboardingVersion, 4);
+  assert.equal(onboardingVersion, 5);
   assert.equal(navigationStarts, 1);
 
   const nextButton = firstDialog.querySelector('[data-action="next-onboarding"]');
@@ -124,6 +125,7 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
   const controls = window.document.getElementById('gitlab-lens-root').shadowRoot;
   const brandButton = controls.querySelector('[data-action="toggle-enabled"]');
   const focusButton = controls.querySelector('[data-action="focus"]');
+  assert.equal(controls.querySelectorAll('button').length, 3);
   assert.match(brandButton.querySelector('img').src, /assets\/icons\/golens-32\.png$/);
   assert.ok(focusButton.querySelector('svg'), 'focus control uses a semantic line icon');
   assert.equal(focusButton.querySelector('img'), null);
@@ -170,7 +172,7 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
   assert.ok(replayHost, 'popup replay did not reopen onboarding');
   replayHost.shadowRoot.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(window.document.getElementById('golens-onboarding-root'), null);
-  assert.equal(onboardingVersion, 4);
+  assert.equal(onboardingVersion, 5);
 
   let fullscreenElement = null;
   Object.defineProperty(window.document, 'fullscreenElement', { configurable: true, get: () => fullscreenElement });

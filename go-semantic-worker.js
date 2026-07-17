@@ -1,6 +1,7 @@
 import { Language, Parser } from './vendor/web-tree-sitter.js';
 import { GoSemanticSourceCache, isCommitSHA } from './go-semantic-cache.js';
 import { GoSemanticIndex } from './go-semantic-core.js';
+import { syncSelfHostedContentScripts } from './gitlab-host-access.js';
 
 let indexPromise;
 let mutationQueue = Promise.resolve();
@@ -135,6 +136,12 @@ function dispatch(method, params = {}) {
 }
 
 function respondToRuntimeMessage(message, sendResponse) {
+  if (message?.type === 'golens-sync-host-access') {
+    syncSelfHostedContentScripts()
+      .then((origins) => sendResponse({ ok: true, result: { origins } }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
   if (message?.type !== 'golens-cache-stats' && message?.type !== 'golens-clear-cache') return false;
   const method = message.type === 'golens-cache-stats' ? 'cacheStats' : 'clearCache';
   dispatch(method)
@@ -144,6 +151,9 @@ function respondToRuntimeMessage(message, sendResponse) {
 }
 
 globalThis.chrome?.runtime?.onMessage?.addListener((message, _sender, sendResponse) => respondToRuntimeMessage(message, sendResponse));
+globalThis.chrome?.permissions?.onAdded?.addListener(() => syncSelfHostedContentScripts().catch(() => undefined));
+globalThis.chrome?.permissions?.onRemoved?.addListener(() => syncSelfHostedContentScripts().catch(() => undefined));
+syncSelfHostedContentScripts().catch(() => undefined);
 
 if (globalThis.chrome?.runtime?.onConnect) {
   chrome.runtime.onConnect.addListener((port) => {

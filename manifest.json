@@ -3,8 +3,9 @@
   "name": "GoLens for GitLab",
   "version": "0.2.0",
   "description": "GoLens for GitLab adds Go-aware review tools and keyboard shortcuts to merge requests.",
-  "permissions": ["storage", "unlimitedStorage"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "permissions": ["storage", "unlimitedStorage", "scripting"],
+  "host_permissions": ["https://gitlab.com/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
@@ -30,7 +31,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": ["https://gitlab.com/*"],
       "js": ["go-navigation.js", "content.js"],
       "css": ["golens-theme.css", "gitlab-lens.css"],
       "run_at": "document_idle"

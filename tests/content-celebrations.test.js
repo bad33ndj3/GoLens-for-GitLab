@@ -51,7 +51,7 @@ test('celebrates confirmed review milestones and cache completion', async (t) =>
     storage: {
       sync: { async get(defaults) { return defaults; }, async set() {} },
       local: {
-        async get(defaults) { return { ...defaults, golensOnboardingVersion: 4 }; },
+        async get(defaults) { return { ...defaults, golensOnboardingVersion: 5 }; },
         async set() {},
       },
       onChanged: { addListener() {} },

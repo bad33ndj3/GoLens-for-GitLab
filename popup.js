@@ -2,6 +2,115 @@ const defaults = { enabled: true, hideGeneratedFiles: false };
 let activeTabID = null;
 let fullCachePoll = null;
 
+function normalizeGitLabOrigin(value) {
+  const candidate = String(value || '').trim();
+  if (!candidate) throw new Error('Enter your self-hosted GitLab URL.');
+  if (/\*|%2a/i.test(candidate)) throw new Error('Enter one exact GitLab origin, without wildcards.');
+  let url;
+  try {
+    url = new URL(candidate.includes('://') ? candidate : `https://${candidate}`);
+  } catch {
+    throw new Error('Enter a valid HTTP or HTTPS GitLab URL.');
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) {
+    throw new Error('Enter a valid HTTP or HTTPS GitLab URL without credentials.');
+  }
+  return url.origin;
+}
+
+function selfHostedPatterns(origins = []) {
+  const patterns = new Set();
+  for (const value of origins) {
+    const candidate = String(value).replace(/\/\*$/, '');
+    if (/\*|%2a/i.test(candidate)) continue;
+    try {
+      const url = new URL(candidate);
+      if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) continue;
+      if (url.origin !== 'https://gitlab.com') patterns.add(`${url.origin}/*`);
+    } catch {
+      // Ignore named permissions and malformed legacy values.
+    }
+  }
+  return [...patterns].sort();
+}
+
+async function syncHostAccess() {
+  const response = await chrome.runtime.sendMessage({ type: 'golens-sync-host-access' });
+  if (!response?.ok) throw new Error(response?.error || 'Unable to update GitLab host access.');
+}
+
+async function refreshHostAccess() {
+  const list = document.querySelector('[data-host-list]');
+  const granted = await chrome.permissions.getAll();
+  const patterns = selfHostedPatterns(granted.origins);
+  list.replaceChildren();
+  if (!patterns.length) {
+    const empty = document.createElement('p');
+    empty.className = 'host-empty';
+    empty.textContent = 'No self-hosted origins allowed.';
+    list.append(empty);
+    return;
+  }
+  patterns.forEach((pattern) => {
+    const origin = new URL(pattern).origin;
+    const row = document.createElement('div');
+    const label = document.createElement('code');
+    label.textContent = origin;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', `Remove access to ${origin}`);
+    remove.addEventListener('click', async () => {
+      remove.disabled = true;
+      const status = document.querySelector('[data-host-status]');
+      try {
+        await chrome.permissions.remove({ origins: [pattern] });
+        await syncHostAccess();
+        status.textContent = `Removed ${origin}. Refresh open tabs to unload GoLens.`;
+        await refreshHostAccess();
+      } catch (error) {
+        status.textContent = error.message || 'Unable to remove this origin.';
+        remove.disabled = false;
+      }
+    });
+    row.append(label, remove);
+    list.append(row);
+  });
+}
+
+function wireHostAccess() {
+  const form = document.querySelector('[data-host-form]');
+  const input = form.elements.origin;
+  const status = document.querySelector('[data-host-status]');
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    status.textContent = '';
+    try {
+      const origin = normalizeGitLabOrigin(input.value);
+      if (origin === 'https://gitlab.com') {
+        status.textContent = 'GitLab.com access is already included.';
+        return;
+      }
+      const pattern = `${origin}/*`;
+      const granted = await chrome.permissions.request({ origins: [pattern] });
+      if (!granted) {
+        status.textContent = `Access to ${origin} was not granted.`;
+        return;
+      }
+      await syncHostAccess();
+      input.value = '';
+      status.textContent = `Allowed ${origin}. Refresh that GitLab tab to start GoLens.`;
+      await refreshHostAccess();
+    } catch (error) {
+      status.textContent = error.message || 'Unable to add this GitLab origin.';
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 function formatBytes(bytes) {
   if (!bytes) return 'Empty';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -178,8 +287,10 @@ async function initialise() {
     }
   });
   wireCacheControls();
+  wireHostAccess();
   wireOnboardingControl();
   wireFullProjectControl();
+  await refreshHostAccess();
   await refreshFullProjectState();
   await refreshCacheSize();
 }

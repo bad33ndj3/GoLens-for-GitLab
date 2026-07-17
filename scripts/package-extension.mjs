@@ -18,6 +18,7 @@ const extensionFiles = [
   'golens-theme.css',
   'gitlab-lens.css',
   'go-navigation.js',
+  'gitlab-host-access.js',
   'go-semantic-cache.js',
   'go-semantic-core.js',
   'go-semantic-worker.js',

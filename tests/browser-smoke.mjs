@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+let extensionRoot = root;
 const chrome = process.env.CHROME_BIN || [
   '/Applications/Helium.app/Contents/MacOS/Helium',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -76,8 +77,8 @@ async function runBrowser(url, completionExpression, profile) {
     '--no-first-run',
     '--no-default-browser-check',
     `--user-data-dir=${profile}`,
-    `--disable-extensions-except=${root}`,
-    `--load-extension=${root}`,
+    `--disable-extensions-except=${extensionRoot}`,
+    `--load-extension=${extensionRoot}`,
     '--remote-debugging-port=0',
     url,
   ];
@@ -470,6 +471,21 @@ const server = createServer((request, response) => {
 await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
 const port = server.address().port;
 const profile = await mkdtemp(resolve(tmpdir(), 'golens-smoke-'));
+const smokeRoot = await mkdtemp(resolve(tmpdir(), 'golens-smoke-extension-'));
+extensionRoot = resolve(smokeRoot, 'extension');
+await cp(root, extensionRoot, {
+  recursive: true,
+  filter(source) {
+    const relative = source.slice(root.length).replace(/^\//, '');
+    const topLevel = relative.split('/')[0];
+    return !['.git', '.agents', '.github', 'dist', 'docs', 'node_modules', 'tests'].includes(topLevel);
+  },
+});
+const smokeManifestPath = resolve(extensionRoot, 'manifest.json');
+const smokeManifest = JSON.parse(await readFile(smokeManifestPath, 'utf8'));
+smokeManifest.host_permissions = [`http://127.0.0.1/*`];
+smokeManifest.content_scripts[0].matches = [`http://127.0.0.1/*`];
+await writeFile(smokeManifestPath, `${JSON.stringify(smokeManifest, null, 2)}\n`);
 
 try {
   const overviewURL = `http://127.0.0.1:${port}/group/project/-/merge_requests/44`;
@@ -548,4 +564,5 @@ try {
 } finally {
   server.close();
   await rm(profile, { recursive: true, force: true });
+  await rm(smokeRoot, { recursive: true, force: true });
 }
