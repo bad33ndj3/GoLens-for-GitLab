@@ -1436,6 +1436,18 @@
       || [...document.querySelectorAll('input[placeholder]')].find((input) => /search\s*\(e\.g\.\s*\*\.vue\)/i.test(input.placeholder));
   }
 
+  function isEditableShortcutEvent(event) {
+    return event.composedPath().some((target) => {
+      const editable = target?.closest?.('input, textarea, [contenteditable]');
+      return Boolean(
+        editable
+        && !editable.disabled
+        && !editable.readOnly
+        && editable.getAttribute('contenteditable') !== 'false',
+      );
+    });
+  }
+
   function focusNativeFileSearch() {
     const search = nativeFileSearch();
     if (!search) return false;
@@ -1454,7 +1466,7 @@
   }
 
   document.addEventListener('keydown', (event) => {
-    if (!state.enabled || !isMergeRequest() || event.isComposing) return;
+    if (!state.enabled || !isMergeRequest() || event.isComposing || isEditableShortcutEvent(event)) return;
     if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'p' && focusNativeFileSearch()) {
       event.preventDefault();
     }

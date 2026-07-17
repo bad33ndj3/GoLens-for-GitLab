@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GoLens for GitLab",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GoLens for GitLab adds Go-aware review tools and keyboard shortcuts to merge requests.",
   "permissions": ["storage", "unlimitedStorage"],
   "host_permissions": ["http://*/*", "https://*/*"],
