@@ -349,6 +349,9 @@ const html = `<!doctype html>
         document.body.dataset.goPopoverRole = popover.getAttribute('role') || '';
         document.body.dataset.goPopoverBadge = goUI.querySelector('.popover-header .symbol-badge')?.textContent || '';
         document.body.dataset.goPopoverCloseVisible = String(!goUI.querySelector('.close-button')?.hidden);
+        document.body.dataset.goScope = goUI.querySelector('.scope')?.textContent || '';
+        document.body.dataset.goFullSearchAction = String([...goUI.querySelectorAll('.choices button')].some((button) => button.textContent === 'Search complete project'));
+        document.body.dataset.goFullSearchModal = String(goUI.querySelector('.full-search-dialog')?.getAttribute('aria-modal') === 'true');
         document.body.dataset.goInDiffDestination = String(Boolean(goUI.querySelector('.destination-in-diff')));
         document.body.dataset.goNewTabDestination = String(Boolean(goUI.querySelector('.destination-new-tab')));
         const targetStyle = getComputedStyle(document.getElementById('go-target'));
@@ -534,6 +537,9 @@ try {
   assert.match(stdout, /data-go-popover-role="dialog"/, `the interactive Go popover was not exposed as a dialog\n${stderr}`);
   assert.match(stdout, /data-go-popover-badge="I"/, `the implementation popover did not expose its interface badge\n${stderr}`);
   assert.match(stdout, /data-go-popover-close-visible="true"/, `the pinned Go popover did not expose a close button\n${stderr}`);
+  assert.match(stdout, /data-go-scope="[^"]*(?:indexed package|Full project)[^"]*"/, `semantic results did not expose their search scope\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-action="true"/, `incomplete semantic results did not expose the full-project action\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-modal="true"/, `the full-project search modal is not accessible\n${stderr}`);
   assert.match(stdout, /data-go-in-diff-destination="true"/, `the same-diff destination icon was not rendered\n${stderr}`);
   assert.match(stdout, /data-go-new-tab-destination="true"/, `the new-tab destination icon was not rendered\n${stderr}`);
   assert.match(stdout, /data-go-target-color="rgb\(119, 204, 229\)"/, `recognized Go symbols did not receive the semantic link color\n${stderr}`);

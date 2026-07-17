@@ -334,6 +334,22 @@ test('groups production implementations ahead of collapsed test doubles', () => 
   );
 });
 
+test('describes absence only within the proven semantic scope', () => {
+  assert.equal(helpers.absenceText({ kind: 'currentPackage', packagePath: 'service', packageCount: 1 }), 'Not found in current package.');
+  assert.equal(
+    helpers.absenceText({ kind: 'indexedPackages', packageCount: 12, complete: false }),
+    'Not found in 12 indexed packages. Search coverage is incomplete.',
+  );
+  assert.equal(
+    helpers.absenceText({ kind: 'fullProject', packageCount: 40, complete: true }),
+    'Full project searched; no result exists.',
+  );
+  assert.equal(
+    helpers.resultScopeText({ kind: 'indexedPackages', packageCount: 12, complete: false }),
+    '12 indexed packages · search coverage is incomplete',
+  );
+});
+
 test('maps every Go symbol kind to a readable IDE-style badge', () => {
   const cases = {
     interface: ['I', 'Interface'],
@@ -540,6 +556,31 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
     interfaceDefinition: { name: 'Number' },
   }, currentPointer);
   assert.match(shadow.querySelector('.docs').textContent, /type-set constraint/);
+
+  helpers.showResult({
+    status: 'references',
+    definition: { name: 'Run', kind: 'function', path: 'service/run.go', line: 12 },
+    locations: [],
+    hasMore: false,
+    scope: { kind: 'indexedPackages', packageCount: 12, complete: false, searchStatus: 'limited' },
+    request: { kind: 'references', ref: 'b'.repeat(40), target: currentPointer, definition: { name: 'Run' } },
+  }, currentPointer);
+  assert.equal(shadow.querySelector('.docs').textContent, 'Not found in 12 indexed packages. Search coverage is incomplete.');
+  assert.equal(shadow.querySelector('.scope').textContent, '12 indexed packages · search coverage is incomplete');
+  assert.equal([...shadow.querySelectorAll('.choices button')].at(-1).textContent, 'Search complete project');
+  assert.equal(shadow.querySelector('.full-search-dialog').getAttribute('aria-modal'), 'true');
+  assert.equal(shadow.querySelector('.full-search-minimize').getAttribute('aria-label'), 'Minimize full-project search');
+
+  helpers.showResult({
+    status: 'implementations',
+    interfaceDefinition: { name: 'Runner' },
+    methodCount: 1,
+    candidates: [],
+    hasMore: false,
+    scope: { kind: 'fullProject', packageCount: 40, complete: true, searchStatus: 'complete' },
+  }, currentPointer);
+  assert.equal(shadow.querySelector('.docs').textContent, 'Full project searched; no result exists.');
+  assert.equal(shadow.querySelector('.choices').textContent.includes('Search complete project'), false);
 });
 
 test('includes project Go sources but excludes vendor and testdata trees', () => {

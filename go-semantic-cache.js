@@ -172,6 +172,16 @@ export class GoSemanticSourceCache {
     await this.writeSnapshot(PROJECTS, manifest, normalizedEntries, snapshotFiles(files));
   }
 
+  async stageProject({ origin, project, ref, modulePath = '', entries, files = [] }) {
+    const normalizedEntries = normalizeEntries(entries || files);
+    const manifest = { origin, project, ref, modulePath, format: CACHE_FORMAT_VERSION };
+    const available = await this.stageSnapshotSources(manifest, normalizedEntries, snapshotFiles(files));
+    return {
+      modulePath,
+      files: available.map(({ source }, index) => ({ path: normalizedEntries[index].path, source })),
+    };
+  }
+
   async writeMergeRequest({ origin, project, mergeRequest, ref, packagePaths, searchStatus = 'complete' }) {
     const paths = [...new Set(packagePaths || [])].sort();
     for (const packagePath of paths) {
@@ -392,7 +402,7 @@ export class GoSemanticSourceCache {
     return valid.every(Boolean);
   }
 
-  async writeSnapshot(storeName, manifest, entries, files) {
+  async stageSnapshotSources(manifest, entries, files) {
     const fileValidity = await Promise.all(files.map((file) => validSourceRecord(file, file)));
     const invalidFile = files.find((_file, index) => !fileValidity[index]);
     if (invalidFile) throw new Error(`Source content does not match Git blob ${invalidFile.blobId} for ${invalidFile.path}`);
@@ -408,6 +418,11 @@ export class GoSemanticSourceCache {
     if (!await this.validateSourceRecords(manifest, entries, available)) {
       throw new Error('Cannot complete semantic snapshot with missing or invalid source blobs');
     }
+    return available;
+  }
+
+  async writeSnapshot(storeName, manifest, entries, files) {
+    await this.stageSnapshotSources(manifest, entries, files);
 
     if (!this.databasePromise) {
       this.memory[storeName].set(manifest.id, manifest);

@@ -55,6 +55,9 @@ test('worker protocol indexes and resolves a definition', async () => {
   assert.equal(resolved.ok, true);
   assert.equal(resolved.result.status, 'resolved');
   assert.equal(resolved.result.definition.line, 2);
+  assert.deepEqual(resolved.result.scope, {
+    kind: 'currentPackage', packagePath: 'sample', packageCount: 1, complete: true,
+  });
 });
 
 test('worker protocol indexes a project and finds interface implementations', async () => {
@@ -88,6 +91,9 @@ test('worker protocol indexes a project and finds interface implementations', as
   });
   assert.equal(implementations.ok, true);
   assert.deepEqual(implementations.result.candidates.map((candidate) => candidate.displayName), ['*service.Service']);
+  assert.deepEqual(implementations.result.scope, {
+    kind: 'fullProject', packageCount: 2, complete: true, searchStatus: 'complete',
+  });
 });
 
 test('worker protocol reports unknown methods without crashing', async () => {

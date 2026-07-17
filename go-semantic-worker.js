@@ -33,6 +33,25 @@ async function semanticIndex() {
   return indexPromise;
 }
 
+function resultScope(index, params, mode) {
+  const supplied = params.scope;
+  if (supplied && ['currentPackage', 'indexedPackages', 'fullProject'].includes(supplied.kind)) {
+    const inferred = index.searchScope({ ...params, mode });
+    return {
+      kind: supplied.kind,
+      packagePath: supplied.packagePath || '',
+      packageCount: inferred.packageCount,
+      complete: supplied.kind === 'fullProject' ? supplied.complete === true : supplied.complete !== false,
+      ...(supplied.searchStatus ? { searchStatus: supplied.searchStatus } : {}),
+    };
+  }
+  return index.searchScope({ ...params, mode });
+}
+
+function withResultScope(index, params, mode, result) {
+  return { ...result, scope: resultScope(index, params, mode) };
+}
+
 async function performDispatch(method, params = {}) {
   if (!method) throw new Error('Semantic worker method is required');
   if (method === 'cacheStats') return sourceCache.stats();
@@ -110,10 +129,17 @@ async function performDispatch(method, params = {}) {
   }
   if (method === 'cacheProject') {
     if (!isCommitSHA(params.ref)) return index.indexProject(params);
-    await sourceCache.writeProject(params);
-    const snapshot = await sourceCache.readProject(params);
-    if (!snapshot) throw new Error('Cached Go project snapshot is incomplete');
-    return index.indexProject({ ...params, ...snapshot });
+    const staged = await sourceCache.stageProject(params);
+    const result = index.indexProject({ ...params, ...staged });
+    try {
+      await sourceCache.writeProject(params);
+      const snapshot = await sourceCache.readProject(params);
+      if (!snapshot) throw new Error('Cached Go project snapshot is incomplete');
+      return result;
+    } catch (error) {
+      index.disposeProject(params);
+      throw error;
+    }
   }
   if (method === 'cacheMergeRequest') {
     if (!isCommitSHA(params.ref)) return { status: 'missing' };
@@ -121,9 +147,11 @@ async function performDispatch(method, params = {}) {
     return sourceCache.mergeRequestStatus(params);
   }
   if (method === 'packageRelations') return index.packageRelations(params);
-  if (method === 'resolveDefinition' || method === 'resolveHover') return index.resolve(params);
-  if (method === 'findReferences') return index.findReferences(params);
-  if (method === 'findImplementations') return index.findImplementations(params);
+  if (method === 'resolveDefinition' || method === 'resolveHover') {
+    return withResultScope(index, params, 'package', index.resolve(params));
+  }
+  if (method === 'findReferences') return withResultScope(index, params, 'project', index.findReferences(params));
+  if (method === 'findImplementations') return withResultScope(index, params, 'project', index.findImplementations(params));
   if (method === 'disposeProject') return index.disposeProject(params);
   throw new Error(`Unknown semantic worker method: ${method}`);
 }

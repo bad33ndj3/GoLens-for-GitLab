@@ -84,6 +84,8 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
     'Modifier-click to navigate',
     'Stay in the diff when possible',
     'Use the small popover tools',
+    'Check the search scope',
+    'Search the complete project explicitly',
     'Separate test doubles',
     'Use Rapid Diffs automatically',
     'Show a full file',
@@ -99,14 +101,14 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
     'Keep repository source local',
   ]);
   const featureIcons = [...firstDialog.querySelectorAll('[data-feature-icon]')];
-  assert.equal(featureIcons.length, 21);
+  assert.equal(featureIcons.length, 23);
   assert.ok(featureIcons.every((icon) => icon.querySelector('svg, img')), 'every feature uses a visual icon');
   assert.equal(firstDialog.querySelector('.feature-mark'), null, 'legacy text and Unicode markers were removed');
   const onboardingStyles = firstHost.shadowRoot.querySelector('style').textContent;
   assert.match(onboardingStyles, /var\(--golens-surface-panel\)/);
   assert.match(onboardingStyles, /\.feature-icon \{[^}]*width:40px;[^}]*height:40px;/);
   assert.match(onboardingStyles, /\.feature-icon svg \{[^}]*width:24px;[^}]*height:24px;[^}]*stroke-width:1\.75;/);
-  assert.equal(onboardingVersion, 5);
+  assert.equal(onboardingVersion, 6);
   assert.equal(navigationStarts, 1);
 
   const nextButton = firstDialog.querySelector('[data-action="next-onboarding"]');
@@ -172,7 +174,7 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
   assert.ok(replayHost, 'popup replay did not reopen onboarding');
   replayHost.shadowRoot.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(window.document.getElementById('golens-onboarding-root'), null);
-  assert.equal(onboardingVersion, 5);
+  assert.equal(onboardingVersion, 6);
 
   let fullscreenElement = null;
   Object.defineProperty(window.document, 'fullscreenElement', { configurable: true, get: () => fullscreenElement });

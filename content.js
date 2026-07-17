@@ -1,6 +1,6 @@
 (() => {
   const defaults = { enabled: true, hideGeneratedFiles: false };
-  const ONBOARDING_VERSION = 5;
+  const ONBOARDING_VERSION = 6;
   const ONBOARDING_STORAGE_KEY = 'golensOnboardingVersion';
   const FRIDAY_MR_CREATE_STORAGE_KEY = 'golensFridayMergeRequestCreation';
   const FULL_FILE_EXPANSION_TIMEOUT_MS = 15000;
@@ -793,6 +793,8 @@
                   <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Modifier-click to navigate</strong><p><kbd>Cmd</kbd>-click on macOS or <kbd>Ctrl</kbd>-click elsewhere. Uses go to definitions, definitions find usages, and interfaces find implementations.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Stay in the diff when possible</strong><p>Targets already in the diff scroll into view. Other project files open at the exact line in a new tab; packages, built-ins, and standard-library symbols open their directory or documentation.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('copy')}<div><strong>Use the small popover tools</strong><p>Move into the result to pin it, copy its <span class="feature-note">file:line:column</span>, expand long signatures, choose ambiguous matches, or press <kbd>Esc</kbd> to close.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Check the search scope</strong><p>Every usage and implementation result says whether GoLens searched the current package, a limited set of indexed packages, or the complete project. Use <span class="feature-note">Show more</span> for additional matches.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Search the complete project explicitly</strong><p>Incomplete project-wide results offer this action. Its progress dialog can be minimized while you review, then GoLens refreshes the result with complete coverage.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('testDouble')}<div><strong>Separate test doubles</strong><p>Implementation results keep production matches first and place structural or asserted test doubles in their own expandable group.</p></div></li>
                 </ul>
               </section>

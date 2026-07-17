@@ -80,6 +80,8 @@ function namedTypeIdentity(file, value) {
 
 function typeIdentity(file, node) {
   if (!node) return '';
+  if (node.type === 'pointer_type') return typeIdentity(file, node.childForFieldName('type') || node.namedChildren[0]);
+  if (node.type === 'generic_type') return typeIdentity(file, node.childForFieldName('type') || node.namedChildren[0]);
   if (node.type === 'type_identifier' || node.type === 'identifier') return namedTypeIdentity(file, textOf(file.source, node));
   if (node.type === 'qualified_type') {
     const packageName = textOf(file.source, node.childForFieldName('package'));
@@ -133,6 +135,18 @@ function receiverDetails(source, receiver) {
     name: textOf(source, firstIdentifier(typeNode)),
     pointer: typeNode?.type === 'pointer_type',
   };
+}
+
+function buildConstrainedSource(source) {
+  return /^(?:\s*\/\/go:build\s+.+|\s*\/\/\s*\+build\s+.+)/m.test(source);
+}
+
+function generatedSource(source) {
+  return /^\/\/ Code generated .* DO NOT EDIT\.$/m.test(source);
+}
+
+function locationCursor({ path = '', line = 0, column = 0 }) {
+  return `${path}\u0000${String(line).padStart(10, '0')}\u0000${String(column).padStart(10, '0')}`;
 }
 
 function testDoublePath(path) {
@@ -491,9 +505,26 @@ function packageDefinitions(entry, name, packageName = entry.packageName) {
 
 function memberDefinitions(entry, name, receiver = '', packageName = entry.packageName) {
   const members = entry.members.get(name) || [];
-  return members.filter((definition) => (
+  const direct = members.filter((definition) => (
     definition.packageName === packageName && (!receiver || definition.receiver === receiver)
   ));
+  if (direct.length || !receiver) return direct;
+  const visited = new Set();
+  const promoted = (typeName) => {
+    if (!typeName || visited.has(typeName)) return [];
+    visited.add(typeName);
+    const type = entry.types.get(typeName);
+    if (!type) return [];
+    if (type.alias) {
+      const aliased = members.filter((definition) => definition.packageName === packageName && definition.receiver === type.alias);
+      if (aliased.length) return aliased;
+    }
+    return (type.embedded || []).flatMap((embedded) => {
+      const embeddedDirect = members.filter((definition) => definition.packageName === packageName && definition.receiver === embedded.name);
+      return embeddedDirect.length ? embeddedDirect : promoted(embedded.name);
+    });
+  };
+  return promoted(receiver);
 }
 
 function compositeLiteralType(file, identifierNode) {
@@ -527,6 +558,23 @@ export class GoSemanticIndex {
     return this.projects.has(projectKey(origin, project, ref));
   }
 
+  searchScope({ origin = '', project, ref, packagePath = '', mode = 'project' }) {
+    const entries = [...this.packages.values()]
+      .filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref);
+    const packageCount = new Set(entries.flatMap((entry) => [...entry.files.values()]
+      .map((file) => `${entry.packagePath}\u0000${file.packageName}`))).size;
+    if (mode === 'package') {
+      return { kind: 'currentPackage', packagePath, packageCount: entries.some((entry) => entry.packagePath === packagePath) ? 1 : 0, complete: true };
+    }
+    if (this.hasProject({ origin, project, ref })) {
+      return { kind: 'fullProject', packageCount, complete: true, searchStatus: 'complete' };
+    }
+    if (packageCount <= 1) {
+      return { kind: 'currentPackage', packagePath: entries[0]?.packagePath || packagePath, packageCount, complete: false };
+    }
+    return { kind: 'indexedPackages', packageCount, complete: false, searchStatus: 'limited' };
+  }
+
   clear() {
     this.packages.clear();
     this.files.clear();
@@ -551,12 +599,26 @@ export class GoSemanticIndex {
       typeRecords: [],
       methods: [],
       assertions: [],
+      identifierCandidates: new Map(),
       files: new Map(),
     };
 
     for (const file of files) {
       const tree = this.parser.parse(file.source);
-      const fileEntry = { ...file, origin, ref, project, packagePath, modulePath, tree, imports: new Map(), importPaths: new Set(), lines: null };
+      const fileEntry = {
+        ...file,
+        origin,
+        ref,
+        project,
+        packagePath,
+        modulePath,
+        tree,
+        imports: new Map(),
+        importPaths: new Set(),
+        lines: null,
+        buildConstrained: buildConstrainedSource(file.source),
+        generated: generatedSource(file.source),
+      };
       const packageClause = tree.rootNode.namedChildren.find((node) => node.type === 'package_clause');
       const packageNameNode = firstIdentifier(packageClause);
       const packageName = textOf(file.source, packageNameNode);
@@ -576,6 +638,12 @@ export class GoSemanticIndex {
       };
 
       walk(tree.rootNode, (node) => {
+        if (IDENTIFIER_TYPES.has(node.type)) {
+          const name = textOf(file.source, node);
+          const candidates = entry.identifierCandidates.get(name) || [];
+          candidates.push({ file: fileEntry, node });
+          entry.identifierCandidates.set(name, candidates);
+        }
         if (node.type === 'import_spec') {
           const pathNode = node.childForFieldName('path');
           const importPath = unquoteImport(textOf(file.source, pathNode));
@@ -610,6 +678,7 @@ export class GoSemanticIndex {
           if (definition && receiverInfo.name) {
             entry.methods.push({
               definition,
+              file: fileEntry,
               receiver: receiverInfo.name,
               receiverIdentity: projectTypeIdentity(fileEntry, receiverInfo.name),
               pointer: receiverInfo.pointer,
@@ -617,16 +686,26 @@ export class GoSemanticIndex {
             });
           }
         }
-        if (node.type === 'type_spec') {
+        if (node.type === 'type_spec' || node.type === 'type_alias') {
           const nameNode = node.childForFieldName('name');
           const typeNode = node.childForFieldName('type');
           const typeName = textOf(file.source, nameNode);
           const fields = new Map();
+          const embeddedFields = [];
           if (typeNode?.type === 'struct_type') {
             walk(typeNode, (fieldNode) => {
               if (fieldNode.type !== 'field_declaration') return;
-              const fieldType = receiverType(textOf(file.source, fieldNode.childForFieldName('type')));
-              namedIdentifiers(fieldNode.childForFieldName('name')).forEach((fieldName) => {
+              const fieldTypeNode = fieldNode.childForFieldName('type');
+              const fieldType = receiverType(textOf(file.source, fieldTypeNode));
+              const names = namedIdentifiers(fieldNode.childForFieldName('name'));
+              if (!names.length && fieldTypeNode) {
+                embeddedFields.push({
+                  identity: typeIdentity(fileEntry, fieldTypeNode),
+                  name: fieldType,
+                  pointer: /^\s*\*/.test(textOf(file.source, fieldNode)),
+                });
+              }
+              names.forEach((fieldName) => {
                 const fieldDefinition = recordDefinition(definitionFor({
                   source: file.source,
                   node: fieldNode,
@@ -647,7 +726,11 @@ export class GoSemanticIndex {
             : typeNode?.type === 'struct_type' ? 'struct' : 'type';
           const definition = add(nameNode, kind);
           if (typeName) {
-            entry.types.set(typeName, { fields });
+            entry.types.set(typeName, {
+              fields,
+              embedded: embeddedFields,
+              alias: node.type === 'type_alias' ? receiverType(textOf(file.source, typeNode)) : '',
+            });
             const record = {
               definition,
               file: fileEntry,
@@ -657,6 +740,8 @@ export class GoSemanticIndex {
               methods: [],
               embedded: [],
               unsupported: '',
+              embeddedTypes: embeddedFields,
+              aliasIdentity: node.type === 'type_alias' ? typeIdentity(fileEntry, typeNode) : '',
             };
             if (kind === 'interface') {
               for (const element of typeNode.namedChildren) {
@@ -776,11 +861,14 @@ export class GoSemanticIndex {
     };
   }
 
-  findImplementations({ origin = '', project, ref, interfaceDefinition }) {
+  findImplementations({ origin = '', project, ref, interfaceDefinition, pageSize = 25, cursor = '' }) {
     const entries = [...this.packages.values()].filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref);
     const records = entries.flatMap((entry) => entry.typeRecords);
     const interfaceRecord = records.find((record) => record.kind === 'interface' && sameDefinition(record.definition, interfaceDefinition));
     if (!interfaceRecord) return { status: 'notFound', reason: 'interfaceNotIndexed' };
+    if (interfaceRecord.file.buildConstrained) {
+      return { status: 'unsupportedImplementations', reason: 'buildConstraint', interfaceDefinition };
+    }
 
     const recordsByIdentity = new Map(records.map((record) => [record.identity, record]));
     const interfaces = new Map(records.filter((record) => record.kind === 'interface').map((record) => [record.identity, record]));
@@ -809,14 +897,41 @@ export class GoSemanticIndex {
     }
 
     const methods = entries.flatMap((entry) => entry.methods);
+    const methodsByReceiver = new Map();
+    for (const method of methods) {
+      const receiverMethods = methodsByReceiver.get(method.receiverIdentity) || [];
+      receiverMethods.push(method);
+      methodsByReceiver.set(method.receiverIdentity, receiverMethods);
+    }
+    const promotedMethods = (record, pointer, visiting = new Set()) => {
+      if (!record || visiting.has(record.identity)) return [];
+      visiting.add(record.identity);
+      const own = (methodsByReceiver.get(record.identity) || []).filter((method) => pointer || !method.pointer);
+      const ownNames = new Set(own.map((method) => method.identity.match(/^[^(]+/)?.[0] || method.identity));
+      const promotedByName = new Map();
+      for (const embedded of record.embeddedTypes || []) {
+        const embeddedRecord = recordsByIdentity.get(embedded.identity);
+        const branchMethods = promotedMethods(embeddedRecord, pointer || embedded.pointer, new Set(visiting));
+        const branchNames = new Set();
+        for (const method of branchMethods) {
+          const name = method.identity.match(/^[^(]+/)?.[0] || method.identity;
+          if (ownNames.has(name) || branchNames.has(name)) continue;
+          branchNames.add(name);
+          const matches = promotedByName.get(name) || [];
+          matches.push(method);
+          promotedByName.set(name, matches);
+        }
+      }
+      return [...own, ...[...promotedByName.values()].filter((matches) => matches.length === 1).flat()];
+    };
     const assertions = entries.flatMap((entry) => entry.assertions);
     const requiredMethods = [...required];
     const candidates = records
-      .filter((record) => record.kind === 'type')
+      .filter((record) => record.kind === 'type' && !record.aliasIdentity)
       .flatMap((record) => {
-        const receiverMethods = methods.filter((method) => method.receiverIdentity === record.identity);
-        const valueMethods = new Map(receiverMethods.filter((method) => !method.pointer).map((method) => [method.identity, method]));
-        const pointerMethods = new Map(receiverMethods.map((method) => [method.identity, method]));
+        const targetRecord = record.aliasIdentity ? recordsByIdentity.get(record.aliasIdentity) || record : record;
+        const valueMethods = new Map(promotedMethods(targetRecord, false).map((method) => [method.identity, method]));
+        const pointerMethods = new Map(promotedMethods(targetRecord, true).map((method) => [method.identity, method]));
         const valueMatches = requiredMethods.every((method) => valueMethods.has(method));
         const pointerMatches = requiredMethods.every((method) => pointerMethods.has(method));
         if (!valueMatches && !pointerMatches) return [];
@@ -832,7 +947,8 @@ export class GoSemanticIndex {
           matchedMethods: matchedMethods.length,
           methodCount: requiredMethods.length,
           confidence: asserted ? 'asserted' : 'structural',
-          isTestDouble: testDoublePath(record.definition.path) || matchedMethods.some((method) => testDoublePath(method.definition.path)),
+          isTestDouble: record.file.generated || record.file.packageName?.endsWith('_test') || testDoublePath(record.definition.path)
+            || matchedMethods.some((method) => method.file?.generated || method.file?.packageName?.endsWith('_test') || testDoublePath(method.definition.path)),
         }];
       })
       .sort((left, right) => {
@@ -841,11 +957,16 @@ export class GoSemanticIndex {
         return `${left.packagePath}/${left.name}`.localeCompare(`${right.packagePath}/${right.name}`);
       });
 
+    const size = Math.max(1, Math.min(100, pageSize));
+    const start = cursor ? Math.max(0, candidates.findIndex((candidate) => locationCursor(candidate) === cursor) + 1) : 0;
+    const pageCandidates = candidates.slice(start, start + size);
     return {
       status: 'implementations',
       interfaceDefinition,
       methodCount: requiredMethods.length,
-      candidates,
+      candidates: pageCandidates,
+      hasMore: start + pageCandidates.length < candidates.length,
+      nextCursor: pageCandidates.length ? locationCursor(pageCandidates.at(-1)) : '',
     };
   }
 
@@ -939,7 +1060,12 @@ export class GoSemanticIndex {
     candidates = uniqueDefinitions(candidates);
     if (!candidates.length && PREDECLARED_FUNCTIONS.has(symbol) && !shadowsPredeclaredFunction(file, identifierNode, symbol)) return { status: 'builtin', symbol };
     if (!candidates.length) return { status: 'notFound', reason: 'definitionNotFound', symbol };
-    if (uncertain || candidates.length > 1) return { status: 'ambiguous', symbol, definitions: candidates };
+    if (uncertain || candidates.length > 1) {
+      if (candidates.some((candidate) => this.files.get(fileKey(origin, project, ref, candidate.path))?.buildConstrained)) {
+        return { status: 'unsupported', reason: 'buildConstraint', symbol };
+      }
+      return { status: 'ambiguous', reason: uncertain || isSelectorField ? 'receiverOrSelector' : 'multipleDefinitions', symbol, definitions: candidates };
+    }
     const definition = candidates[0];
     return {
       status: 'resolved',
@@ -951,45 +1077,47 @@ export class GoSemanticIndex {
     };
   }
 
-  findReferences({ origin = '', project, ref, packagePath, definition, limit = 5 }) {
+  findReferences({ origin = '', project, ref, packagePath, definition, pageSize = 25, cursor = '' }) {
     const sourceEntry = this.packages.get(packageKey(origin, project, ref, packagePath));
     if (!sourceEntry || !definition) return { status: 'notFound', reason: 'packageNotIndexed' };
 
     const locations = [];
     const entries = [...this.packages.values()].filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref);
-    for (const entry of entries) {
-      for (const file of entry.files.values()) {
-        walk(file.tree.rootNode, (node) => {
-          if (locations.length > limit || !IDENTIFIER_TYPES.has(node.type) || textOf(file.source, node) !== definition.name) return;
-          const location = {
-            path: file.path,
-            ref: file.ref,
-            line: node.startPosition.row + 1,
-            column: node.startPosition.column + 1,
-          };
-          if (sameDefinition({ ...definition, ...location }, definition)) return;
-          const result = this.resolve({
-            origin,
-            project,
-            ref,
-            packagePath: entry.packagePath,
-            path: file.path,
-            line: location.line,
-            character: utf16Column(fileLines(file)[node.startPosition.row] || '', node.startPosition.column),
-            identifier: definition.name,
-          });
-          if (result.status === 'resolved' && sameDefinition(result.definition, definition)) locations.push(location);
-        });
-        if (locations.length > limit) break;
-      }
-      if (locations.length > limit) break;
+    const candidates = entries
+      .flatMap((entry) => (entry.identifierCandidates.get(definition.name) || []).map((candidate) => ({ ...candidate, packagePath: entry.packagePath })))
+      .sort((left, right) => locationCursor({ path: left.file.path, line: left.node.startPosition.row + 1, column: left.node.startPosition.column + 1 })
+        .localeCompare(locationCursor({ path: right.file.path, line: right.node.startPosition.row + 1, column: right.node.startPosition.column + 1 })));
+    const size = Math.max(1, Math.min(100, pageSize));
+    for (const { file, node, packagePath: candidatePackagePath } of candidates) {
+      const location = {
+        path: file.path,
+        ref: file.ref,
+        line: node.startPosition.row + 1,
+        column: node.startPosition.column + 1,
+      };
+      if (cursor && locationCursor(location) <= cursor) continue;
+      if (sameDefinition({ ...definition, ...location }, definition)) continue;
+      const result = this.resolve({
+        origin,
+        project,
+        ref,
+        packagePath: candidatePackagePath,
+        path: file.path,
+        line: location.line,
+        character: utf16Column(fileLines(file)[node.startPosition.row] || '', node.startPosition.column),
+        identifier: definition.name,
+      });
+      if (result.status === 'resolved' && sameDefinition(result.definition, definition)) locations.push(location);
+      if (locations.length > size) break;
     }
 
+    const pageLocations = locations.slice(0, size);
     return {
       status: 'references',
       definition,
-      locations: locations.slice(0, limit),
-      hasMore: locations.length > limit,
+      locations: pageLocations,
+      hasMore: locations.length > size,
+      nextCursor: pageLocations.length ? locationCursor(pageLocations.at(-1)) : '',
     };
   }
 

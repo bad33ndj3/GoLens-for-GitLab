@@ -1,9 +1,23 @@
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { before, test } from 'node:test';
 import { Language, Parser } from 'web-tree-sitter';
 import { GoSemanticIndex } from '../go-semantic-core.js';
 
 let index;
+const FIXTURES = fileURLToPath(new URL('./fixtures/semantic-regressions/', import.meta.url));
+
+function fixtureFiles(name) {
+  const root = join(FIXTURES, name);
+  return readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.go'))
+    .map((entry) => {
+      const path = join(entry.parentPath, entry.name);
+      return { path: relative(root, path), source: readFileSync(path, 'utf8') };
+    });
+}
 
 const searchSource = `package search
 
@@ -624,7 +638,7 @@ test('returns ambiguous rather than guessing between duplicate declarations', ()
   assert.equal(result.definitions.length, 2);
 });
 
-test('finds at most five usages after clicking a definition', () => {
+test('pages usage candidates without duplicates or rescanning unrelated identifiers', () => {
   const source = `package usages
 
 func Target() {}
@@ -660,10 +674,21 @@ func Use() {
     ref: 'abc123',
     packagePath: 'pkg/usages',
     definition: definitionResult.definition,
+    pageSize: 5,
   });
   assert.equal(references.status, 'references');
   assert.deepEqual(references.locations.map((location) => location.line), [6, 7, 8, 9, 10]);
   assert.equal(references.hasMore, true);
+  const next = index.findReferences({
+    project: 'group/project',
+    ref: 'abc123',
+    packagePath: 'pkg/usages',
+    definition: definitionResult.definition,
+    pageSize: 5,
+    cursor: references.nextCursor,
+  });
+  assert.deepEqual(next.locations.map((location) => location.line), [11]);
+  assert.equal(next.hasMore, false);
 });
 
 test('finds project-wide interface implementations with context and confidence', () => {
@@ -776,6 +801,122 @@ type Number interface { ~int | ~int64 }
     assert.equal(result.status, 'unsupportedImplementations');
     assert.equal(result.reason, reason);
   }
+});
+
+test('covers representative receiver, embedding, alias, generated, and build-constraint regressions', () => {
+  const cases = [
+    ['pointer-value', ['*service.PointerRunner', 'service.ValueRunner']],
+    ['promoted-methods', ['*service.Base', 'service.EmbeddedPointer']],
+    ['embedded-interfaces', ['contracts.Service']],
+  ];
+  for (const [fixture, expected] of cases) {
+    const localIndex = new GoSemanticIndex(index.parser);
+    const files = fixtureFiles(fixture);
+    localIndex.indexProject({ project: fixture, ref: fixture, modulePath: 'example.com/project', files });
+    const contracts = files.find((file) => file.path.includes('contracts'));
+    const line = contracts.source.split('\n').findIndex((value) => value.includes(fixture === 'embedded-interfaces' ? 'ReadCloser interface' : 'Runner interface')) + 1;
+    const name = fixture === 'embedded-interfaces' ? 'ReadCloser' : 'Runner';
+    const resolved = localIndex.resolve({
+      project: fixture, ref: fixture, packagePath: 'contracts', path: contracts.path, ...position(contracts.source, line, name),
+    });
+    const implementations = localIndex.findImplementations({
+      project: fixture, ref: fixture, interfaceDefinition: resolved.definition,
+    });
+    assert.deepEqual(implementations.candidates.map((candidate) => candidate.displayName), expected);
+    if (fixture === 'promoted-methods') {
+      const service = files.find((file) => file.path === 'service/service.go');
+      const ambiguous = localIndex.resolve({
+        project: fixture, ref: fixture, packagePath: 'service', path: service.path, ...position(service.source, 13, 'Ping'),
+      });
+      assert.equal(ambiguous.status, 'ambiguous');
+      assert.equal(ambiguous.reason, 'receiverOrSelector');
+    }
+  }
+
+  const aliasIndex = new GoSemanticIndex(index.parser);
+  const aliasFiles = fixtureFiles('aliases-generics');
+  aliasIndex.indexProject({ project: 'aliases', ref: 'aliases', modulePath: 'example.com/project', files: aliasFiles });
+  const aliasSource = aliasFiles[0].source;
+  const aliasResult = aliasIndex.resolve({
+    project: 'aliases', ref: 'aliases', packagePath: 'service', path: aliasFiles[0].path, ...position(aliasSource, 7, 'Get'),
+  });
+  assert.equal(aliasResult.status, 'resolved');
+  assert.equal(aliasResult.definition.receiver, 'Box');
+
+  const generatedIndex = new GoSemanticIndex(index.parser);
+  const generatedFiles = fixtureFiles('generated-external-tests');
+  generatedIndex.indexProject({ project: 'generated', ref: 'generated', modulePath: 'example.com/project', files: generatedFiles });
+  const generatedContract = generatedFiles.find((file) => file.path === 'contracts/contracts.go');
+  const generatedInterface = generatedIndex.resolve({
+    project: 'generated', ref: 'generated', packagePath: 'contracts', path: generatedContract.path, ...position(generatedContract.source, 3, 'Runner'),
+  });
+  const generatedImplementations = generatedIndex.findImplementations({
+    project: 'generated', ref: 'generated', interfaceDefinition: generatedInterface.definition,
+  });
+  assert.deepEqual(
+    generatedImplementations.candidates.map(({ displayName, isTestDouble }) => ({ displayName, isTestDouble })),
+    [
+      { displayName: 'contracts_test.ExternalRunner', isTestDouble: true },
+      { displayName: '*mocks.GeneratedRunner', isTestDouble: true },
+    ],
+  );
+
+  const constrainedIndex = new GoSemanticIndex(index.parser);
+  const constrainedFiles = fixtureFiles('build-constraints');
+  constrainedIndex.indexProject({ project: 'constraints', ref: 'constraints', modulePath: 'example.com/project', files: constrainedFiles });
+  const constrained = constrainedIndex.resolve({
+    project: 'constraints', ref: 'constraints', packagePath: '', path: constrainedFiles[0].path, ...position(constrainedFiles[0].source, 5, 'Runner'),
+  });
+  assert.equal(constrainedIndex.findImplementations({
+    project: 'constraints', ref: 'constraints', interfaceDefinition: constrained.definition,
+  }).reason, 'buildConstraint');
+});
+
+test('paginates more than fifty usages and rebuilds identifier candidates on reindex', () => {
+  const localIndex = new GoSemanticIndex(index.parser);
+  const calls = Array.from({ length: 55 }, () => '\tTarget()').join('\n');
+  const source = `package many\nfunc Target() {}\nfunc Use() {\n${calls}\n}\n`;
+  localIndex.indexPackage({ project: 'many', ref: 'many', packagePath: 'many', files: [{ path: 'many/many.go', source }] });
+  const definition = localIndex.resolve({ project: 'many', ref: 'many', packagePath: 'many', path: 'many/many.go', ...position(source, 2, 'Target') }).definition;
+  const first = localIndex.findReferences({ project: 'many', ref: 'many', packagePath: 'many', definition });
+  const second = localIndex.findReferences({ project: 'many', ref: 'many', packagePath: 'many', definition, cursor: first.nextCursor });
+  const third = localIndex.findReferences({ project: 'many', ref: 'many', packagePath: 'many', definition, cursor: second.nextCursor });
+  assert.deepEqual([first.locations.length, second.locations.length, third.locations.length], [25, 25, 5]);
+  assert.deepEqual([first.hasMore, second.hasMore, third.hasMore], [true, true, false]);
+  assert.equal(new Set([...first.locations, ...second.locations, ...third.locations].map(({ line }) => line)).size, 55);
+  assert.equal([...localIndex.packages.values()][0].identifierCandidates.get('Target').length, 56);
+
+  localIndex.indexPackage({ project: 'many', ref: 'many', packagePath: 'many', files: [{ path: 'many/many.go', source: 'package many\nfunc Other() {}\n' }] });
+  const candidates = [...localIndex.packages.values()][0].identifierCandidates;
+  assert.equal(candidates.has('Target'), false);
+  assert.equal(candidates.get('Other').length, 1);
+});
+
+test('paginates more than fifty implementations in stable order', () => {
+  const localIndex = new GoSemanticIndex(index.parser);
+  const contracts = 'package contracts\ntype Runner interface { Run() error }\n';
+  const implementations = Array.from({ length: 55 }, (_value, number) => {
+    const name = `Runner${String(number).padStart(2, '0')}`;
+    return `type ${name} struct{}\nfunc (${name}) Run() error { return nil }`;
+  }).join('\n');
+  localIndex.indexProject({
+    project: 'many-implementations', ref: 'many-implementations', modulePath: 'example.com/project',
+    files: [
+      { path: 'contracts/contracts.go', source: contracts },
+      { path: 'service/service.go', source: `package service\n${implementations}\n` },
+    ],
+  });
+  const definition = localIndex.resolve({
+    project: 'many-implementations', ref: 'many-implementations', packagePath: 'contracts', path: 'contracts/contracts.go', ...position(contracts, 2, 'Runner'),
+  }).definition;
+  const first = localIndex.findImplementations({ project: 'many-implementations', ref: 'many-implementations', interfaceDefinition: definition });
+  const second = localIndex.findImplementations({ project: 'many-implementations', ref: 'many-implementations', interfaceDefinition: definition, cursor: first.nextCursor });
+  const third = localIndex.findImplementations({ project: 'many-implementations', ref: 'many-implementations', interfaceDefinition: definition, cursor: second.nextCursor });
+  const names = [...first.candidates, ...second.candidates, ...third.candidates].map(({ displayName }) => displayName);
+  assert.deepEqual([first.candidates.length, second.candidates.length, third.candidates.length], [25, 25, 5]);
+  assert.deepEqual([first.hasMore, second.hasMore, third.hasMore], [true, true, false]);
+  assert.equal(new Set(names).size, 55);
+  assert.deepEqual(names, [...names].sort());
 });
 
 test('resolves version-suffixed imports to their declared package convention', () => {
