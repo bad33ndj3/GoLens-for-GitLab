@@ -22,6 +22,7 @@ if (!existsSync(chrome)) {
 }
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+const DEVTOOLS_TIMEOUT_MS = 30000;
 
 async function devToolsTarget(port, expectedURL, deadline) {
   while (Date.now() < deadline) {
@@ -40,8 +41,18 @@ async function devToolsTarget(port, expectedURL, deadline) {
 async function connectDevTools(url) {
   const socket = new WebSocket(url);
   await new Promise((resolveOpen, rejectOpen) => {
-    socket.addEventListener('open', resolveOpen, { once: true });
-    socket.addEventListener('error', rejectOpen, { once: true });
+    const timeout = setTimeout(() => {
+      socket.close();
+      rejectOpen(new Error('DevTools connection timed out'));
+    }, DEVTOOLS_TIMEOUT_MS);
+    socket.addEventListener('open', () => {
+      clearTimeout(timeout);
+      resolveOpen();
+    }, { once: true });
+    socket.addEventListener('error', (error) => {
+      clearTimeout(timeout);
+      rejectOpen(error);
+    }, { once: true });
   });
   let id = 0;
   const pending = new Map();
@@ -55,8 +66,21 @@ async function connectDevTools(url) {
   });
   const send = (method, params = {}) => new Promise((resolveSend, rejectSend) => {
     const requestID = ++id;
-    pending.set(requestID, { resolve: resolveSend, reject: rejectSend });
-    socket.send(JSON.stringify({ id: requestID, method, params }));
+    const timeout = setTimeout(() => {
+      pending.delete(requestID);
+      rejectSend(new Error(`DevTools ${method} timed out for ${url}`));
+    }, DEVTOOLS_TIMEOUT_MS);
+    pending.set(requestID, {
+      resolve(value) { clearTimeout(timeout); resolveSend(value); },
+      reject(error) { clearTimeout(timeout); rejectSend(error); },
+    });
+    try {
+      socket.send(JSON.stringify({ id: requestID, method, params }));
+    } catch (error) {
+      clearTimeout(timeout);
+      pending.delete(requestID);
+      rejectSend(error);
+    }
   });
   return { socket, send };
 }
@@ -104,7 +128,7 @@ async function stopBrowser(child) {
   ]);
 }
 
-async function runBrowser(url, completionExpression, profile, { extensionMessage = '' } = {}) {
+async function runBrowserAttempt(url, completionExpression, profile, { extensionMessage = '' } = {}) {
   const args = [
     '--headless=new',
     '--disable-gpu',
@@ -137,7 +161,10 @@ async function runBrowser(url, completionExpression, profile, { extensionMessage
   let connection;
   let html = '';
   try {
-    const endpointURL = new URL(await endpoint);
+    const endpointURL = new URL(await Promise.race([
+      endpoint,
+      delay(15000).then(() => { throw new Error(`Browser DevTools did not become ready\n${stderr}`); }),
+    ]));
     const deadline = Date.now() + 30000;
     const target = await devToolsTarget(endpointURL.port, url, deadline);
     connection = await connectDevTools(target.webSocketDebuggerUrl);
@@ -174,6 +201,19 @@ async function runBrowser(url, completionExpression, profile, { extensionMessage
   } finally {
     connection?.socket.close();
     await stopBrowser(child);
+  }
+}
+
+async function runBrowser(url, completionExpression, profile, options = {}) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await runBrowserAttempt(url, completionExpression, profile, options);
+    } catch (error) {
+      const retryable = error.message?.startsWith('Browser DevTools did not become ready')
+        || error.message?.startsWith('DevTools connection timed out')
+        || /^DevTools .* timed out/.test(error.message || '');
+      if (!retryable || attempt === 1) throw error;
+    }
   }
 }
 
