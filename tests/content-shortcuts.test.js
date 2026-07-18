@@ -51,6 +51,7 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   const fileSearch = window.document.getElementById('file-search');
   const commentEditor = window.document.getElementById('comment-editor');
   const richEditor = window.document.getElementById('rich-editor');
+  const primaryModifier = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '') ? { metaKey: true } : { ctrlKey: true };
 
   commentEditor.focus();
   const shiftF = new window.KeyboardEvent('keydown', { key: 'F', code: 'KeyF', shiftKey: true, bubbles: true, cancelable: true });
@@ -59,7 +60,7 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   assert.equal(fileSearch.value, '*.go');
   assert.equal(window.document.activeElement, commentEditor);
 
-  const commandP = new window.KeyboardEvent('keydown', { key: 'p', code: 'KeyP', metaKey: true, bubbles: true, cancelable: true });
+  const commandP = new window.KeyboardEvent('keydown', { key: 'p', code: 'KeyP', ...primaryModifier, bubbles: true, cancelable: true });
   richEditor.dispatchEvent(commandP);
   assert.equal(commandP.defaultPrevented, false);
   assert.equal(fileSearch.value, '*.go');
@@ -72,7 +73,7 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   assert.equal(fileSearch.value, '');
 
   fileSearch.value = '*.go';
-  const pageCommandP = new window.KeyboardEvent('keydown', { key: 'p', code: 'KeyP', metaKey: true, bubbles: true, cancelable: true });
+  const pageCommandP = new window.KeyboardEvent('keydown', { key: 'p', code: 'KeyP', ...primaryModifier, bubbles: true, cancelable: true });
   window.document.body.dispatchEvent(pageCommandP);
   assert.equal(pageCommandP.defaultPrevented, true);
   assert.equal(window.document.activeElement, fileSearch);
@@ -83,7 +84,6 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   assert.equal(searchShiftF.defaultPrevented, false);
   assert.equal(fileSearch.value, '*.go');
 
-  const primaryModifier = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '') ? { metaKey: true } : { ctrlKey: true };
   const dialogButton = window.document.getElementById('dialog-button');
   dialogButton.focus();
   dialogButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', altKey: true, ...primaryModifier, bubbles: true, cancelable: true }));

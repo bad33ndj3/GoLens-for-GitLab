@@ -66,6 +66,8 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
   assert.deepEqual(tabs.map((tab) => tab.textContent.trim()), ['General', 'Shortcuts', 'GitLab access', 'Cache', 'Help']);
   assert.equal(window.document.querySelector('[data-settings-panel="general"]').hidden, false);
   assert.ok(window.document.querySelector('[data-setting="hideGeneratedFiles"]').checked);
+  assert.match(window.document.querySelector('[data-settings-panel="general"] .section-heading p').textContent, /Source stays in your browser, this extension, and your signed-in GitLab origin/);
+  assert.equal(window.document.querySelector('.privacy-note'), null);
   assert.ok(tabMessages.includes('golens-settings-ready'));
 
   tabs[1].click();

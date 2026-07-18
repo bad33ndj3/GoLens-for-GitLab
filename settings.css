@@ -46,11 +46,6 @@ main { display:grid; grid-template-rows:auto minmax(0,1fr) auto; min-width:0; }
 .preference-row strong { display:block; font-size:12px; }
 .preference-row small { display:block; max-width:58ch; margin-top:4px; color:var(--golens-text-muted); font-size:10.5px; }
 .preference-row code { color:var(--golens-text-secondary); font:inherit; }
-.privacy-note { display:grid; grid-template-columns:34px minmax(0,1fr); align-items:start; gap:12px; margin-top:16px; padding:15px 16px; border:1px solid color-mix(in srgb,var(--golens-accent-info) 28%,var(--golens-border-subtle)); border-radius:var(--golens-radius-panel); background:var(--golens-info-soft); }
-.privacy-note svg { width:21px; height:21px; margin-top:1px; fill:none; stroke:var(--golens-accent-info); stroke-linecap:round; stroke-linejoin:round; stroke-width:1.7; }
-.privacy-note strong { font-size:11.5px; }
-.privacy-note p { margin-top:3px; color:var(--golens-text-secondary); font-size:10.5px; }
-
 .shortcut-heading { display:flex; align-items:start; justify-content:space-between; gap:16px; margin-bottom:16px; }
 .shortcut-heading button,.host-form button,.host-list button { min-height:31px; padding:0 10px; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-control); background:var(--golens-surface-raised); color:var(--golens-text-secondary); font-size:10px; font-weight:650; }
 .shortcut-heading button:hover,.host-form button:hover,.host-list button:hover { border-color:var(--golens-accent-info); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
