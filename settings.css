@@ -42,7 +42,7 @@ main { display:grid; grid-template-rows:auto minmax(0,1fr) auto; min-width:0; }
 .section-heading h2,.shortcut-heading h2,.cache-summary h2 { font-size:14px; font-weight:720; }
 .section-heading p,.shortcut-heading p,.cache-summary p { margin-top:4px; color:var(--golens-text-muted); font-size:11px; }
 
-.preference-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:20px; padding:16px; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-panel); background:var(--golens-surface-panel); cursor:pointer; }
+.preference-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:20px; padding:16px; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-panel); background:var(--golens-surface-panel); cursor:pointer; }
 .preference-row strong { display:block; font-size:12px; }
 .preference-row small { display:block; max-width:58ch; margin-top:4px; color:var(--golens-text-muted); font-size:10.5px; }
 .preference-row code { color:var(--golens-text-secondary); font:inherit; }

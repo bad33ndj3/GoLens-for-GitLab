@@ -65,6 +65,7 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
   const tabs = [...window.document.querySelectorAll('[role="tab"]')];
   assert.deepEqual(tabs.map((tab) => tab.textContent.trim()), ['General', 'Shortcuts', 'GitLab access', 'Cache', 'Help']);
   assert.equal(window.document.querySelector('[data-settings-panel="general"]').hidden, false);
+  assert.equal(window.document.querySelector('[data-settings-panel="cache"]').hidden, true);
   assert.ok(window.document.querySelector('[data-setting="hideGeneratedFiles"]').checked);
   assert.match(window.document.querySelector('[data-settings-panel="general"] .section-heading p').textContent, /Source stays in your browser, this extension, and your signed-in GitLab origin/);
   assert.equal(window.document.querySelector('.privacy-note'), null);

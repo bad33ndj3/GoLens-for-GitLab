@@ -428,6 +428,7 @@ async function initialise() {
     }
   });
   wireSettingsTabs();
+  showSettingsPage(document.querySelector('[role="tab"][aria-selected="true"]')?.dataset.settingsTab);
   wireShortcutControls();
   wireHostAccess();
   wireCacheControls();
