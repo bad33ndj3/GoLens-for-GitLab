@@ -17,8 +17,11 @@ GoLens for GitLab is a dependency-light Manifest V3 extension for GitLab.com and
 
 - Hover Go identifiers for signatures and documentation.
 - `Cmd/Ctrl`-click to find definitions, usages, and interface implementations.
+- Select a Go identifier and press `Cmd/Ctrl+F12` by default for the same definition or implementation navigation.
 - Plain-click a Go identifier to highlight its loaded-diff occurrences, then move between occurrences, hunks, and files with configurable shortcuts.
 - Go back and forward through in-diff semantic jumps without leaving the merge request.
+
+Navigation defaults follow familiar editor patterns: `Cmd/Ctrl+Alt+↑/↓` for occurrences, `Shift+Alt+F5`/`Alt+F5` for hunks, `Alt+Page Up/Down` for files, and `Ctrl+-`/`Ctrl+Shift+-` for semantic history. Every binding can be changed or cleared in settings.
 - Enter review focus to hide GitLab chrome and give the diff more room.
 - Cache related packages—or the full project—for broader navigation.
 - Let the mascot mark review focus, a completed cache pitstop, the final resolved discussion, confirmed approvals and merges, plus an extra-long Friday-after-16:00 beer-kart lap with confetti.

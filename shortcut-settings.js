@@ -2,14 +2,15 @@
   const ACTIONS = [
     { id: 'focusFileSearch', label: 'Focus file search', defaultBinding: 'Primary+KeyP' },
     { id: 'clearFileSearch', label: 'Clear file search', defaultBinding: 'Shift+KeyF' },
-    { id: 'previousOccurrence', label: 'Previous occurrence', defaultBinding: 'Alt+BracketLeft' },
-    { id: 'nextOccurrence', label: 'Next occurrence', defaultBinding: 'Alt+BracketRight' },
-    { id: 'previousHunk', label: 'Previous hunk', defaultBinding: 'Alt+Shift+BracketLeft' },
-    { id: 'nextHunk', label: 'Next hunk', defaultBinding: 'Alt+Shift+BracketRight' },
-    { id: 'previousFile', label: 'Previous file', defaultBinding: 'Primary+Alt+BracketLeft' },
-    { id: 'nextFile', label: 'Next file', defaultBinding: 'Primary+Alt+BracketRight' },
-    { id: 'historyBack', label: 'Go back', defaultBinding: 'Primary+Alt+Minus' },
-    { id: 'historyForward', label: 'Go forward', defaultBinding: 'Primary+Alt+Equal' },
+    { id: 'semanticJump', label: 'Go to definition or implementation', defaultBinding: 'Primary+F12' },
+    { id: 'previousOccurrence', label: 'Previous occurrence', defaultBinding: 'Primary+Alt+ArrowUp' },
+    { id: 'nextOccurrence', label: 'Next occurrence', defaultBinding: 'Primary+Alt+ArrowDown' },
+    { id: 'previousHunk', label: 'Previous hunk', defaultBinding: 'Alt+Shift+F5' },
+    { id: 'nextHunk', label: 'Next hunk', defaultBinding: 'Alt+F5' },
+    { id: 'previousFile', label: 'Previous file', defaultBinding: 'Alt+PageUp' },
+    { id: 'nextFile', label: 'Next file', defaultBinding: 'Alt+PageDown' },
+    { id: 'historyBack', label: 'Go back', defaultBinding: 'Ctrl+Minus' },
+    { id: 'historyForward', label: 'Go forward', defaultBinding: 'Ctrl+Shift+Minus' },
   ];
   const ACTION_IDS = new Set(ACTIONS.map(({ id }) => id));
   const MODIFIER_ORDER = ['Primary', 'Ctrl', 'Alt', 'Shift', 'Meta'];

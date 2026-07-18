@@ -70,12 +70,13 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
 
   tabs[1].click();
   assert.equal(window.document.querySelector('[data-page-title]').textContent, 'Keyboard shortcuts');
-  assert.equal(window.document.querySelectorAll('[data-shortcut-binding]').length, 10);
+  assert.equal(window.document.querySelectorAll('[data-shortcut-binding]').length, 11);
   const focusBinding = window.document.querySelector('[data-shortcut-binding="focusFileSearch"]');
   focusBinding.click();
-  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { code: 'BracketRight', key: ']', altKey: true, bubbles: true, cancelable: true }));
+  const primaryModifier = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '') ? { metaKey: true } : { ctrlKey: true };
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { code: 'ArrowDown', key: 'ArrowDown', altKey: true, ...primaryModifier, bubbles: true, cancelable: true }));
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(savedSettings.at(-1).shortcutBindings.focusFileSearch, 'Alt+BracketRight');
+  assert.equal(savedSettings.at(-1).shortcutBindings.focusFileSearch, 'Primary+Alt+ArrowDown');
   assert.equal(savedSettings.at(-1).shortcutBindings.nextOccurrence, '');
 
   tabs[2].click();

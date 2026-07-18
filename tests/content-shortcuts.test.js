@@ -83,14 +83,20 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   assert.equal(searchShiftF.defaultPrevented, false);
   assert.equal(fileSearch.value, '*.go');
 
+  const primaryModifier = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '') ? { metaKey: true } : { ctrlKey: true };
   const dialogButton = window.document.getElementById('dialog-button');
   dialogButton.focus();
-  dialogButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: ']', code: 'BracketRight', altKey: true, bubbles: true, cancelable: true }));
+  dialogButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', altKey: true, ...primaryModifier, bubbles: true, cancelable: true }));
   assert.deepEqual(navigationActions, []);
 
   window.document.body.focus();
-  const nextOccurrence = new window.KeyboardEvent('keydown', { key: ']', code: 'BracketRight', altKey: true, bubbles: true, cancelable: true });
+  const nextOccurrence = new window.KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', altKey: true, ...primaryModifier, bubbles: true, cancelable: true });
   window.document.body.dispatchEvent(nextOccurrence);
   assert.equal(nextOccurrence.defaultPrevented, true);
   assert.deepEqual(navigationActions, ['nextOccurrence']);
+
+  const semanticJump = new window.KeyboardEvent('keydown', { key: 'F12', code: 'F12', ...primaryModifier, bubbles: true, cancelable: true });
+  window.document.body.dispatchEvent(semanticJump);
+  assert.equal(semanticJump.defaultPrevented, true);
+  assert.deepEqual(navigationActions, ['nextOccurrence', 'semanticJump']);
 });

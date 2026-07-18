@@ -760,7 +760,14 @@ test('finds identifier-boundary occurrences only in loaded Go diff code', () => 
   globalThis.document = window.document;
   globalThis.NodeFilter = window.NodeFilter;
   try {
-    assert.equal(helpers.occurrenceRanges('Run').length, 3);
+    const occurrences = helpers.occurrenceRanges('Run');
+    assert.equal(occurrences.length, 3);
+    const keyboardTarget = helpers.targetForOccurrence(occurrences[2], 'Run');
+    assert.deepEqual(
+      { identifier: keyboardTarget.identifier, character: keyboardTarget.character, occurrence: keyboardTarget.occurrence },
+      { identifier: 'Run', character: 0, occurrence: 0 },
+    );
+    assert.equal(keyboardTarget.cell, occurrences[2].cell);
     assert.equal(helpers.identifierBoundary('_'), false);
     assert.equal(helpers.hunkTargets().length, 1);
     assert.equal(helpers.locationKey({ path: 'pkg/run.go', line: 2 }), 'pkg/run.go:2:new');

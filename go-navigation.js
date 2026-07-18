@@ -2012,7 +2012,7 @@
               const range = document.createRange();
               range.setStart(node, index);
               range.setEnd(node, end);
-              occurrences.push({ range, cell, row: cell.closest('tr, [role="row"]') || cell });
+              occurrences.push({ range, cell, row: cell.closest('tr, [role="row"]') || cell, character: hit.character, occurrence: hit.occurrence });
             }
             from = index + identifier.length;
           }
@@ -2060,7 +2060,7 @@
   function selectSymbol(target) {
     state.selectedIdentifier = target.identifier;
     refreshOccurrences();
-    const index = state.occurrences.findIndex(({ cell }) => cell === target.cell);
+    const index = state.occurrences.findIndex(({ cell, character }) => cell === target.cell && character === target.character);
     if (index >= 0) state.occurrenceIndex = index;
     paintOccurrences();
   }
@@ -2077,6 +2077,26 @@
     flashDestination(occurrence.row);
     toast(`${state.selectedIdentifier} · ${state.occurrenceIndex + 1} of ${state.occurrences.length}`);
     return true;
+  }
+
+  function targetForOccurrence(occurrence, identifier) {
+    if (!occurrence) return null;
+    const bounds = occurrence.row.getBoundingClientRect();
+    const parent = occurrence.range.startContainer.parentElement;
+    const element = parent && parent !== occurrence.cell && (parent.textContent || '').trim() === identifier ? parent : null;
+    return {
+      identifier,
+      character: occurrence.character,
+      occurrence: occurrence.occurrence,
+      cell: occurrence.cell,
+      element,
+      x: bounds.left + Math.min(bounds.width / 2, 240),
+      y: bounds.top + Math.min(bounds.height / 2, 20),
+    };
+  }
+
+  function targetForSelectedOccurrence() {
+    return targetForOccurrence(state.occurrences[state.occurrenceIndex], state.selectedIdentifier);
   }
 
   function changedRow(row) {
@@ -2118,6 +2138,12 @@
 
   function runNavigationAction(action) {
     if (!state.enabled) return false;
+    if (action === 'semanticJump') {
+      const target = targetForSelectedOccurrence();
+      if (!target) toast('Click a Go symbol to select it first.');
+      else navigateSemanticTarget(target);
+      return true;
+    }
     if (action === 'previousOccurrence') return navigateOccurrence(-1);
     if (action === 'nextOccurrence') return navigateOccurrence(1);
     if (action === 'previousHunk') return navigateElements(hunkTargets(), -1, 'No loaded diff hunks.', 'hunk');
@@ -2216,25 +2242,10 @@
     return true;
   }
 
-  async function onClick(event) {
-    if (!state.enabled || event.button !== 0) return;
-    if (eventIsInsideUI(event)) return;
-    if (!(event.metaKey || event.ctrlKey)) {
-      dismissPinnedPopoverFromOutside(event);
-      const selection = globalThis.getSelection?.();
-      const target = (!selection || selection.isCollapsed) ? targetAtEvent(event) : null;
-      if (target) selectSymbol(target);
-      else if (!codeCellFor(event.target)) clearSelectedSymbol();
-      return;
-    }
-    const target = targetAtEvent(event);
-    if (!target) {
-      if (codeCellFor(event.target)) toast('GoLens could not identify a Go symbol on this diff line.');
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
+  async function navigateSemanticTarget(target) {
     hidePopover();
+    state.activeTarget = { key: targetKey(target), ...target };
+    markTarget(target.element);
     try {
       showLoading(`Looking up ${target.identifier}…`, target);
       const result = await resolveAt(target, 'resolveDefinition', (message, progress) => showLoading(message, target, progress));
@@ -2267,6 +2278,27 @@
       hidePopover();
       toast(error.message || 'Go intelligence is unavailable.');
     }
+  }
+
+  async function onClick(event) {
+    if (!state.enabled || event.button !== 0) return;
+    if (eventIsInsideUI(event)) return;
+    if (!(event.metaKey || event.ctrlKey)) {
+      dismissPinnedPopoverFromOutside(event);
+      const selection = globalThis.getSelection?.();
+      const target = (!selection || selection.isCollapsed) ? targetAtEvent(event) : null;
+      if (target) selectSymbol(target);
+      else if (!codeCellFor(event.target)) clearSelectedSymbol();
+      return;
+    }
+    const target = targetAtEvent(event);
+    if (!target) {
+      if (codeCellFor(event.target)) toast('GoLens could not identify a Go symbol on this diff line.');
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    await navigateSemanticTarget(target);
   }
 
   function init() {
@@ -2349,6 +2381,6 @@
     fullProjectPreloadStatus,
     invalidateCacheState,
     runNavigationAction,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, changedRow, hunkTargets, locationKey },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey },
   };
 })();

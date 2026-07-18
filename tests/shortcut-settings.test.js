@@ -11,6 +11,19 @@ test('normalizes, displays, and matches portable shortcut bindings', () => {
   const event = { code: 'BracketRight', altKey: true, shiftKey: false, ctrlKey: false, metaKey: false, repeat: false, isComposing: false };
   assert.equal(shortcuts.matchesEvent('Alt+BracketRight', event), true);
   assert.match(shortcuts.displayBinding('Alt+BracketRight'), /\]/);
+  assert.deepEqual(shortcuts.defaultBindings(), {
+    focusFileSearch: 'Primary+KeyP',
+    clearFileSearch: 'Shift+KeyF',
+    semanticJump: 'Primary+F12',
+    previousOccurrence: 'Primary+Alt+ArrowUp',
+    nextOccurrence: 'Primary+Alt+ArrowDown',
+    previousHunk: 'Alt+Shift+F5',
+    nextHunk: 'Alt+F5',
+    previousFile: 'Alt+PageUp',
+    nextFile: 'Alt+PageDown',
+    historyBack: 'Ctrl+Minus',
+    historyForward: 'Ctrl+Shift+Minus',
+  });
 });
 
 test('moving a duplicate binding unassigns its previous GoLens action', () => {

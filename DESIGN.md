@@ -116,7 +116,7 @@ Figure 1. GoLens keeps GitLab integration in the page, semantic work in the exte
 
 ### Symbol hover and navigation
 
-Plain-clicking a Go token records a loaded-diff text selection and paints identifier-boundary matches through the CSS Custom Highlight API. A mutation observer refreshes ranges as Rapid Diffs streams content. Shortcut actions traverse those occurrences, explicit or inferred hunks, and loaded file roots without modifying GitLab's code DOM.
+Plain-clicking a Go token records a loaded-diff text selection and paints identifier-boundary matches through the CSS Custom Highlight API. A mutation observer refreshes ranges as Rapid Diffs streams content. Shortcut actions traverse those occurrences, explicit or inferred hunks, and loaded file roots without modifying GitLab's code DOM. The `semanticJump` action (`Cmd/Ctrl+F12` by default) rebuilds the exact pointer target for the selected occurrence and uses the same safe definition, usage, or implementation resolver as modifier-click.
 
 In-diff semantic jumps record their exact source and destination in a bounded, per-MR memory history. Back and forward reveal collapsed target lines when possible; leaving the MR or disabling GoLens clears selection and history. New-tab destinations remain browser history only.
 

@@ -400,6 +400,16 @@ const html = `<!doctype html>
         document.body.dataset.goFullSearchCancelled = String(goUI.querySelector('.full-search-backdrop')?.hidden && goUI.querySelector('.scope')?.textContent.includes('incomplete'));
         goUI.querySelector('.choices .choice')?.click();
         document.body.dataset.goChoiceClosedPopover = String(!popover.classList.contains('show'));
+        const shortcutTarget = document.getElementById('go-target');
+        const shortcutRect = shortcutTarget.getBoundingClientRect();
+        shortcutTarget.dispatchEvent(new MouseEvent('click', { bubbles:true, button:0, clientX:shortcutRect.left + shortcutRect.width / 2, clientY:shortcutRect.top + shortcutRect.height / 2 }));
+        const primary = /Mac|iPhone|iPad/.test(navigator.platform) ? { metaKey:true } : { ctrlKey:true };
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key:'F12', code:'F12', ...primary, bubbles:true, cancelable:true }));
+        const shortcutWatch = setInterval(() => {
+          if (!popover.classList.contains('show') || goUI.querySelector('.popover-title')?.textContent !== 'Implementations of Runner') return;
+          document.body.dataset.goSemanticShortcut = 'true';
+          clearInterval(shortcutWatch);
+        }, 50);
         clearInterval(popoverWatch);
       }, 700);
     }, 50);
@@ -553,6 +563,7 @@ try {
     document.body?.dataset.preloadAfterReload === 'true'
       && document.body?.dataset.enabledToggle === 'true'
       && document.body?.dataset.goChoiceClosedPopover === 'true'
+      && document.body?.dataset.goSemanticShortcut === 'true'
       && document.body?.dataset.fullFileInline === 'true'
   `, profile);
   assert.match(stdout, /id="gitlab-lens-root"/, `extension shell was not injected\n${stderr}`);
@@ -578,6 +589,7 @@ try {
   assert.match(stdout, /data-preload-after-reload="true"/, `preload completion did not survive reload\n${stderr}`);
   assert.match(stdout, /data-preload-complete-while-off="true"/, `disabling GoLens discarded the preload check\n${stderr}`);
   assert.match(stdout, /data-preload-complete-after-enable="true"/, `re-enabling GoLens discarded the preload check\n${stderr}`);
+  assert.match(stdout, /data-go-semantic-shortcut="true"/, `the selected-symbol semantic shortcut did not reuse implementation navigation\n${stderr}`);
   assert.match(stdout, /data-go-status="(?:loading|ready)"/, `Go source loading did not start\n${stderr}`);
   assert.doesNotMatch(stdout, /data-go-status="error"/, 'browser integration reported an error');
   assert.match(stdout, /data-go-popover-stable="true"/, `the pinned Go popover closed while moving into it\n${stderr}`);
