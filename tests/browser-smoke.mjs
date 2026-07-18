@@ -75,7 +75,8 @@ async function sendExtensionTabMessage(port, pageURL, messageType, deadline) {
       const result = await connection.send('Runtime.evaluate', {
         expression: `(async () => {
           const tabs = await chrome.tabs.query({});
-          const tab = tabs.find((candidate) => candidate.url === ${JSON.stringify(pageURL)});
+          const tab = tabs.find((candidate) => candidate.active && candidate.url === ${JSON.stringify(pageURL)})
+            || tabs.find((candidate) => candidate.url === ${JSON.stringify(pageURL)});
           if (!tab?.id) return { ok:false, error:'fixture tab unavailable' };
           try { return await chrome.tabs.sendMessage(tab.id, { type:${JSON.stringify(messageType)} }); }
           catch (error) { return { ok:false, error:error.message }; }
