@@ -42,7 +42,12 @@ test('adds exact Changes links to overview line discussions', async () => {
   globalThis.window = window;
   globalThis.document = window.document;
   globalThis.location = window.location;
-  globalThis.MutationObserver = window.MutationObserver;
+  let mutationListener;
+  globalThis.MutationObserver = class {
+    constructor(listener) { mutationListener = listener; }
+    observe() {}
+    disconnect() {}
+  };
   globalThis.Event = window.Event;
   globalThis.CustomEvent = window.CustomEvent;
 
@@ -89,6 +94,7 @@ test('adds exact Changes links to overview line discussions', async () => {
   assert.equal(window.document.querySelector('#file-discussion [data-golens-discussion-line-link]'), null);
 
   window.document.getElementById('activity').append(window.document.createElement('span'));
+  mutationListener();
   await settle();
   assert.equal(window.document.querySelectorAll('#line-discussion [data-golens-discussion-line-link]').length, 1);
 
@@ -96,6 +102,7 @@ test('adds exact Changes links to overview line discussions', async () => {
   const streamedTarget = '/group/project/-/merge_requests/42/diffs?diff_id=78#otherhash_4_9';
   streamed.innerHTML = lineDiscussion('streamed-discussion', streamedTarget);
   window.document.getElementById('activity').append(streamed.firstElementChild);
+  mutationListener();
   await waitFor(() => window.document.querySelector('#streamed-discussion [data-golens-discussion-line-link]'));
   assert.equal(
     window.document.querySelector('#streamed-discussion [data-golens-discussion-line-link]').href,
