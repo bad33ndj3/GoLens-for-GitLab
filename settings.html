@@ -49,6 +49,10 @@
             <span><strong>Hide generated files</strong><small>Uses GitLab's <code>.gitattributes</code> marker. Large collapsed files remain visible.</small></span>
             <input type="checkbox" data-setting="hideGeneratedFiles" aria-label="Hide .gitattributes generated files">
           </label>
+          <label class="preference-row">
+            <span><strong>Show contextual shortcut tips</strong><small>Suggests a configured shortcut after you perform the same action manually. Learned shortcuts stop appearing.</small></span>
+            <input type="checkbox" data-setting="shortcutCoachEnabled" aria-label="Show contextual shortcut tips">
+          </label>
         </section>
 
         <section class="settings-panel" id="settings-panel-shortcuts" role="tabpanel" aria-labelledby="settings-tab-shortcuts" data-settings-panel="shortcuts" hidden>
@@ -91,10 +95,10 @@
         </section>
 
         <section class="settings-panel" id="settings-panel-help" role="tabpanel" aria-labelledby="settings-tab-help" data-settings-panel="help" hidden>
-          <div class="section-heading"><h2>Quick tour</h2><p>Replay the complete feature guide inside the active merge request.</p></div>
+          <div class="section-heading"><h2>Feature guide</h2><p>Open the complete GoLens reference inside the active merge request.</p></div>
           <div class="help-card">
             <img src="assets/icons/golens-128.png" alt="">
-            <div><strong>Review every GoLens feature</strong><p>The tour covers page controls, Go intelligence, diff helpers, settings, and privacy.</p><button class="primary-action" type="button" data-action="show-onboarding">Show quick tour</button></div>
+            <div><strong>Review every GoLens feature</strong><p>Browse page controls, Go intelligence, diff helpers, settings, and privacy.</p><button class="primary-action" type="button" data-action="show-onboarding">Open feature guide</button></div>
           </div>
           <p class="inline-status" data-onboarding-status role="status"></p>
         </section>

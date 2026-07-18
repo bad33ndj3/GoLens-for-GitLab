@@ -44,6 +44,11 @@
   };
   const MODIFIER_ORDER = ['Primary', 'Ctrl', 'Alt', 'Shift', 'Meta'];
   const CODE_LABELS = { BracketLeft: '[', BracketRight: ']', Minus: '-', Equal: '=', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Space: 'Space', Escape: 'Esc' };
+  const COACH_STORAGE_KEY = 'golensShortcutCoach';
+  const COACH_VERSION = 1;
+  const COACH_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+  const COACH_MAX_HINTS_PER_ACTION = 2;
+  const COACH_THRESHOLDS = { focusFileSearch: 2, semanticJump: 2, nextOccurrence: 2, historyBack: 2 };
 
   function isMac() { return /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || ''); }
   function defaultBindings() { return Object.fromEntries(ACTIONS.map(({ id, defaultBinding }) => [id, defaultBinding])); }
@@ -123,5 +128,128 @@
     return { bindings: next, displaced };
   }
 
-  globalThis.GoLensShortcuts = { actions: ACTIONS.map((action) => ({ ...action })), presets: PRESETS.map((preset) => ({ ...preset })), defaultBindings, presetBindings, presetForBindings, mergeBindings, normalizeBinding, bindingForEvent, matchesEvent, displayBinding, assignBinding };
+  function normalizeCoachState(value) {
+    const normalized = { version: COACH_VERSION, lastHintAt: 0, actions: {} };
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return normalized;
+    normalized.lastHintAt = Math.max(0, Number(value.lastHintAt) || 0);
+    for (const actionID of Object.keys(COACH_THRESHOLDS)) {
+      const action = value.actions?.[actionID];
+      if (!action || typeof action !== 'object') continue;
+      normalized.actions[actionID] = {
+        manualUses: Math.max(0, Number(action.manualUses) || 0),
+        hintCount: Math.max(0, Number(action.hintCount) || 0),
+        lastHintAt: Math.max(0, Number(action.lastHintAt) || 0),
+        lastShortcutUseAt: Math.max(0, Number(action.lastShortcutUseAt) || 0),
+        learned: action.learned === true,
+      };
+    }
+    return normalized;
+  }
+
+  function createShortcutCoach({
+    localStorage = globalThis.chrome?.storage?.local,
+    syncStorage = globalThis.chrome?.storage?.sync,
+    now = () => Date.now(),
+    cooldownMs = COACH_COOLDOWN_MS,
+    maxHintsPerAction = COACH_MAX_HINTS_PER_ACTION,
+  } = {}) {
+    let statePromise = null;
+    let queue = Promise.resolve();
+    let sessionHintShown = false;
+
+    async function loadState() {
+      if (statePromise) return statePromise;
+      statePromise = (async () => {
+        if (!localStorage?.get) return normalizeCoachState();
+        const stored = await localStorage.get({ [COACH_STORAGE_KEY]: normalizeCoachState() });
+        return normalizeCoachState(stored?.[COACH_STORAGE_KEY]);
+      })().catch(() => normalizeCoachState());
+      return statePromise;
+    }
+
+    async function saveState(state) {
+      try {
+        if (localStorage?.set) await localStorage.set({ [COACH_STORAGE_KEY]: state });
+      } catch {
+        // Learning state is optional and must never interrupt review navigation.
+      }
+    }
+
+    function enqueue(operation) {
+      const result = queue.then(operation, operation);
+      queue = result.catch(() => undefined);
+      return result;
+    }
+
+    async function syncedSettings() {
+      const fallback = { shortcutCoachEnabled: true, shortcutBindings: defaultBindings() };
+      if (!syncStorage?.get) return fallback;
+      try {
+        return await syncStorage.get(fallback);
+      } catch {
+        return fallback;
+      }
+    }
+
+    function consider(actionID) {
+      return enqueue(async () => {
+        const threshold = COACH_THRESHOLDS[actionID];
+        if (!threshold) return null;
+        const [state, settings] = await Promise.all([loadState(), syncedSettings()]);
+        const action = state.actions[actionID] || { manualUses: 0, hintCount: 0, lastHintAt: 0, lastShortcutUseAt: 0, learned: false };
+        action.manualUses = Math.min(threshold, action.manualUses + 1);
+        state.actions[actionID] = action;
+        const timestamp = now();
+        const binding = mergeBindings(settings.shortcutBindings)[actionID];
+        const eligible = settings.shortcutCoachEnabled !== false
+          && !sessionHintShown
+          && !action.learned
+          && action.hintCount < maxHintsPerAction
+          && action.manualUses >= threshold
+          && Boolean(binding)
+          && (!state.lastHintAt || timestamp - state.lastHintAt >= cooldownMs);
+        if (eligible) {
+          action.hintCount++;
+          action.lastHintAt = timestamp;
+          state.lastHintAt = timestamp;
+          sessionHintShown = true;
+        }
+        await saveState(state);
+        if (!eligible) return null;
+        return {
+          actionID,
+          label: ACTIONS.find(({ id }) => id === actionID)?.label || actionID,
+          binding,
+          displayBinding: displayBinding(binding),
+        };
+      });
+    }
+
+    function markShortcutUsed(actionID) {
+      return enqueue(async () => {
+        if (!COACH_THRESHOLDS[actionID]) return false;
+        const state = await loadState();
+        const action = state.actions[actionID] || { manualUses: 0, hintCount: 0, lastHintAt: 0, lastShortcutUseAt: 0, learned: false };
+        action.lastShortcutUseAt = now();
+        action.learned = true;
+        state.actions[actionID] = action;
+        await saveState(state);
+        return true;
+      });
+    }
+
+    async function setEnabled(enabled) {
+      try {
+        if (syncStorage?.set) await syncStorage.set({ shortcutCoachEnabled: Boolean(enabled) });
+      } catch {
+        return false;
+      }
+      return true;
+    }
+
+    return { consider, markShortcutUsed, setEnabled, storageKey: COACH_STORAGE_KEY };
+  }
+
+  globalThis.GoLensShortcuts = { actions: ACTIONS.map((action) => ({ ...action })), presets: PRESETS.map((preset) => ({ ...preset })), defaultBindings, presetBindings, presetForBindings, mergeBindings, normalizeBinding, bindingForEvent, matchesEvent, displayBinding, assignBinding, createShortcutCoach };
+  globalThis.GoLensShortcutCoach = createShortcutCoach();
 })();

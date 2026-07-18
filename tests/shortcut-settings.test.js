@@ -48,3 +48,37 @@ test('provides editable GoLens, VS Code, IntelliJ, and Vim-style presets', () =>
     assert.equal(new Set(assigned).size, assigned.length, `${preset.id} contains duplicate bindings`);
   }
 });
+
+test('contextual shortcut coach throttles hints and retires learned actions', async () => {
+  let clock = 1_000;
+  const localValues = {};
+  const syncValues = { shortcutCoachEnabled: true, shortcutBindings: { ...shortcuts.defaultBindings(), focusFileSearch: 'Alt+KeyP' } };
+  const localStorage = {
+    async get(defaults) { return { ...defaults, ...localValues }; },
+    async set(values) { Object.assign(localValues, values); },
+  };
+  const syncStorage = {
+    async get(defaults) { return { ...defaults, ...syncValues }; },
+    async set(values) { Object.assign(syncValues, values); },
+  };
+  const coach = shortcuts.createShortcutCoach({ localStorage, syncStorage, now: () => clock, cooldownMs: 100 });
+
+  assert.equal(await coach.consider('focusFileSearch'), null, 'first manual use stays quiet');
+  assert.deepEqual(await coach.consider('focusFileSearch'), {
+    actionID: 'focusFileSearch',
+    label: 'Focus file search',
+    binding: 'Alt+KeyP',
+    displayBinding: shortcuts.displayBinding('Alt+KeyP'),
+  });
+  assert.equal(await coach.consider('semanticJump'), null, 'only one hint is shown per page session');
+
+  clock += 101;
+  const nextSession = shortcuts.createShortcutCoach({ localStorage, syncStorage, now: () => clock, cooldownMs: 100 });
+  await nextSession.markShortcutUsed('focusFileSearch');
+  assert.equal(await nextSession.consider('focusFileSearch'), null, 'using the shortcut permanently retires its hint');
+
+  await nextSession.setEnabled(false);
+  assert.equal(syncValues.shortcutCoachEnabled, false);
+  const disabledSession = shortcuts.createShortcutCoach({ localStorage, syncStorage, now: () => clock + 101, cooldownMs: 100 });
+  assert.equal(await disabledSession.consider('semanticJump'), null);
+});

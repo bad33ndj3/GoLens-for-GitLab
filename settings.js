@@ -1,10 +1,10 @@
-const defaults = { enabled: true, hideGeneratedFiles: false, shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() };
+const defaults = { enabled: true, hideGeneratedFiles: false, shortcutCoachEnabled: true, shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() };
 const pageMeta = {
   general: ['General', 'Choose how GoLens behaves across GitLab reviews.'],
   shortcuts: ['Keyboard shortcuts', 'Move through large diffs without leaving the keyboard.'],
   access: ['GitLab access', 'Control which self-hosted GitLab origins can run GoLens.'],
   cache: ['Source cache', 'Inspect and manage commit-pinned source stored in this browser.'],
-  help: ['Help', 'Replay the feature tour whenever you need a refresher.'],
+  help: ['Help', 'Open the complete feature guide whenever you need a refresher.'],
 };
 let activeTabID = null;
 let fullCachePoll = null;
@@ -96,7 +96,7 @@ function wireShortcutControls() {
   for (const preset of globalThis.GoLensShortcuts.presets) {
     const option = document.createElement('option');
     option.value = preset.id;
-    option.textContent = `${preset.label} — ${preset.description}`;
+    option.textContent = `${preset.label} - ${preset.description}`;
     presetSelect.append(option);
   }
   presetSelect.addEventListener('change', () => {

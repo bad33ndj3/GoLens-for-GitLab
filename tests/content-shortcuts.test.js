@@ -25,17 +25,20 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   globalThis.Event = window.Event;
   globalThis.CustomEvent = window.CustomEvent;
   const navigationActions = [];
+  const coachedActions = [];
+  const learnedActions = [];
   globalThis.GoLensGoNavigation = {
     init() {},
     teardown() {},
     runNavigationAction(action) { navigationActions.push(action); return true; },
+    offerShortcutCoach(action) { coachedActions.push(action); return Promise.resolve(false); },
     async mergeRequestPreloadStatus() { return { status: 'missing' }; },
     invalidateCacheState() {},
   };
   globalThis.chrome = {
     storage: {
       sync: { async get(defaults) { return defaults; }, async set() {} },
-      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 9 }; }, async set() {} },
+      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 11 }; }, async set() {} },
       onChanged: { addListener() {} },
     },
     runtime: {
@@ -45,6 +48,7 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   };
 
   await import('../shortcut-settings.js?content-shortcuts-test');
+  globalThis.GoLensShortcutCoach = { markShortcutUsed(action) { learnedActions.push(action); return Promise.resolve(true); } };
   await import('../content.js?content-shortcuts-test');
   await wait(0);
 
@@ -52,6 +56,10 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   const commentEditor = window.document.getElementById('comment-editor');
   const richEditor = window.document.getElementById('rich-editor');
   const primaryModifier = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '') ? { metaKey: true } : { ctrlKey: true };
+
+  fileSearch.click();
+  fileSearch.click();
+  assert.deepEqual(coachedActions, ['focusFileSearch', 'focusFileSearch']);
 
   commentEditor.focus();
   const shiftF = new window.KeyboardEvent('keydown', { key: 'F', code: 'KeyF', shiftKey: true, bubbles: true, cancelable: true });
@@ -94,9 +102,11 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   window.document.body.dispatchEvent(nextOccurrence);
   assert.equal(nextOccurrence.defaultPrevented, true);
   assert.deepEqual(navigationActions, ['nextOccurrence']);
+  assert.deepEqual(learnedActions, ['clearFileSearch', 'focusFileSearch', 'nextOccurrence']);
 
   const semanticJump = new window.KeyboardEvent('keydown', { key: 'F12', code: 'F12', ...primaryModifier, bubbles: true, cancelable: true });
   window.document.body.dispatchEvent(semanticJump);
   assert.equal(semanticJump.defaultPrevented, true);
   assert.deepEqual(navigationActions, ['nextOccurrence', 'semanticJump']);
+  assert.deepEqual(learnedActions, ['clearFileSearch', 'focusFileSearch', 'nextOccurrence', 'semanticJump']);
 });

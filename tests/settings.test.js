@@ -67,6 +67,7 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
   assert.equal(window.document.querySelector('[data-settings-panel="general"]').hidden, false);
   assert.equal(window.document.querySelector('[data-settings-panel="cache"]').hidden, true);
   assert.ok(window.document.querySelector('[data-setting="hideGeneratedFiles"]').checked);
+  assert.ok(window.document.querySelector('[data-setting="shortcutCoachEnabled"]').checked);
   assert.match(window.document.querySelector('[data-settings-panel="general"] .section-heading p').textContent, /Source stays in your browser, this extension, and your signed-in GitLab origin/);
   assert.equal(window.document.querySelector('.privacy-note'), null);
   assert.ok(tabMessages.includes('golens-settings-ready'));
@@ -116,6 +117,8 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
   assert.match(window.document.querySelector('[data-cache-status]').textContent, /^Cleared /);
 
   tabs[4].click();
+  assert.equal(window.document.querySelector('[data-settings-panel="help"] h2').textContent, 'Feature guide');
+  assert.equal(window.document.querySelector('[data-action="show-onboarding"]').textContent, 'Open feature guide');
   window.document.querySelector('[data-action="show-onboarding"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(tabMessages.includes('golens-show-onboarding'));
@@ -126,4 +129,7 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
 
   storageListener({ hideGeneratedFiles: { oldValue: true, newValue: false } }, 'sync');
   assert.equal(window.document.querySelector('[data-setting="hideGeneratedFiles"]').checked, false);
+  window.document.querySelector('[data-setting="shortcutCoachEnabled"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(savedSettings.at(-1).shortcutCoachEnabled, false);
 });

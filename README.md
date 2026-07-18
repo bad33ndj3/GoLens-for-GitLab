@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A calmer, Go-aware code review experience for GitLab.</strong><br>
-  Navigate symbols, find interface implementations, and focus on the diff—without sending repository code anywhere.
+  Navigate symbols, find interface implementations, and focus on the diff without sending repository code anywhere.
 </p>
 
 ![GoLens racing through a merge-request diff](assets/golens-banner.png)
@@ -22,10 +22,15 @@ GoLens for GitLab is a dependency-light Manifest V3 extension for GitLab.com and
 - Go back and forward through in-diff semantic jumps without leaving the merge request.
 
 Navigation defaults follow familiar editor patterns: `Cmd/Ctrl+Alt+↑/↓` for occurrences, `Shift+Alt+F5`/`Alt+F5` for hunks, `Alt+Page Up/Down` for files, and `Ctrl+-`/`Ctrl+Shift+-` for semantic history. Settings can apply GoLens, VS Code, IntelliJ IDEA, or Vim-style keymaps before changing or clearing individual bindings; the Vim preset adds shortcuts only, not modal behavior.
+
+First-run setup asks which keymap to use and whether GitLab-marked generated files should be hidden, then teaches four essential interactions. The complete feature reference remains available from Settings under Help.
+
 - Enter review focus to hide GitLab chrome and give the diff more room.
-- Cache related packages—or the full project—for broader navigation.
+- Cache related packages or the full project for broader navigation.
 - Let the mascot mark review focus, a completed cache pitstop, the final resolved discussion, confirmed approvals and merges, plus an extra-long Friday-after-16:00 beer-kart lap with confetti.
 - Keep source local, same-origin, and pinned to the merge-request commit.
+
+GoLens teaches the highest-value bindings with contextual shortcut tips after the equivalent mouse action. Tips are limited to one per review session with a 24-hour cooldown, stop after the shortcut is used, and can be disabled or re-enabled in General settings. Learning progress stays in local extension storage while the preference and configured bindings use Chrome sync.
 
 ## In action
 

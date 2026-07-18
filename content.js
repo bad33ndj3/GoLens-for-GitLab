@@ -1,7 +1,7 @@
 (() => {
   const shortcutDefaults = globalThis.GoLensShortcuts?.defaultBindings?.() || {};
-  const defaults = { enabled: true, hideGeneratedFiles: false, shortcutBindings: shortcutDefaults };
-  const ONBOARDING_VERSION = 9;
+  const defaults = { enabled: true, hideGeneratedFiles: false, shortcutCoachEnabled: true, shortcutBindings: shortcutDefaults };
+  const ONBOARDING_VERSION = 11;
   const ONBOARDING_STORAGE_KEY = 'golensOnboardingVersion';
   const FRIDAY_MR_CREATE_STORAGE_KEY = 'golensFridayMergeRequestCreation';
   const FULL_FILE_EXPANSION_TIMEOUT_MS = 15000;
@@ -731,6 +731,171 @@
     return `<span class="${classes.join(' ')}" data-feature-icon="${name}" aria-hidden="true"><svg viewBox="${icon.viewBox || '0 0 24 24'}">${icon.body}</svg></span>`;
   }
 
+  function showSetupOnboarding() {
+    const existing = document.getElementById('golens-onboarding-root');
+    if (existing) {
+      existing.shadowRoot?.querySelector('input:checked, button')?.focus();
+      return;
+    }
+
+    const shortcuts = globalThis.GoLensShortcuts;
+    const currentBindings = shortcuts?.mergeBindings(state.settings.shortcutBindings) || state.settings.shortcutBindings;
+    const currentPreset = shortcuts?.presetForBindings(currentBindings) || 'custom';
+    const presetOptions = (shortcuts?.presets || []).map((preset) => `
+      <label class="choice-card">
+        <input type="radio" name="keymap" value="${preset.id}" ${currentPreset === preset.id ? 'checked' : ''}>
+        <span><strong>${preset.label}</strong><small>${preset.description}${preset.id === 'vim' ? '. Shortcuts only, without modes or command sequences.' : ''}</small></span>
+      </label>
+    `).join('');
+    const customOption = currentPreset === 'custom' ? `
+      <label class="choice-card">
+        <input type="radio" name="keymap" value="custom" checked>
+        <span><strong>Keep current shortcuts</strong><small>Your customized bindings will not be replaced.</small></span>
+      </label>
+    ` : '';
+
+    state.onboardingReturnFocus = document.activeElement;
+    const host = document.createElement('div');
+    host.id = 'golens-onboarding-root';
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <style>
+        :host { all:initial; position:fixed; inset:0; z-index:var(--golens-z-modal); color:var(--golens-text-primary); font:14px/1.45 var(--golens-font-sans); color-scheme:dark; }
+        * { box-sizing:border-box; }
+        .backdrop { position:absolute; inset:0; display:grid; place-items:center; overflow:auto; padding:var(--golens-space-6); background:rgba(9,10,12,.82); backdrop-filter:blur(4px); }
+        .dialog { position:relative; display:grid; grid-template-rows:auto minmax(0,1fr) auto; width:min(680px,calc(100vw - 32px)); max-height:min(680px,calc(100dvh - 32px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-xl); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); }
+        .hero { display:grid; grid-template-columns:56px minmax(0,1fr); gap:var(--golens-space-4); align-items:center; padding:var(--golens-space-5) var(--golens-space-6); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+        .mascot { width:56px; height:56px; object-fit:contain; }
+        .eyebrow { margin:0 0 var(--golens-space-1); color:var(--golens-primary-hover); font-size:10px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
+        h1 { margin:0; color:var(--golens-text-primary); font-size:23px; line-height:1.15; letter-spacing:-.025em; }
+        .intro { margin:var(--golens-space-2) 0 0; color:var(--golens-text-secondary); font-size:12px; }
+        .close { position:absolute; top:var(--golens-space-3); right:var(--golens-space-3); display:grid; place-items:center; width:32px; height:32px; padding:0; border:1px solid transparent; border-radius:var(--golens-radius-sm); background:transparent; color:var(--golens-text-muted); cursor:pointer; font:22px/1 var(--golens-font-sans); }
+        .close:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+        .setup-panel { min-height:0; overflow:auto; padding:var(--golens-space-6); }
+        .setup-panel[hidden] { display:none; }
+        .step-label { margin:0 0 var(--golens-space-1); color:var(--golens-primary-hover); font:800 10px/1.3 var(--golens-font-mono); letter-spacing:.08em; text-transform:uppercase; }
+        h2 { margin:0; color:var(--golens-text-primary); font-size:20px; line-height:1.2; letter-spacing:-.015em; }
+        .step-intro { max-width:58ch; margin:var(--golens-space-2) 0 var(--golens-space-5); color:var(--golens-text-secondary); font-size:12px; }
+        .choice-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--golens-space-3); }
+        .choice-card { position:relative; display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--golens-space-3); align-items:start; min-height:78px; padding:var(--golens-space-4); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-panel); background:var(--golens-surface-raised); cursor:pointer; }
+        .choice-card:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); }
+        .choice-card:has(input:checked) { border-color:var(--golens-primary); background:var(--golens-primary-soft); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--golens-primary) 30%,transparent); }
+        .choice-card input { width:16px; height:16px; margin:2px 0 0; accent-color:var(--golens-primary); }
+        .choice-card strong { display:block; color:var(--golens-text-primary); font-size:12px; }
+        .choice-card small { display:block; margin-top:4px; color:var(--golens-text-muted); font-size:10.5px; line-height:1.45; }
+        .essentials { display:grid; gap:var(--golens-space-3); margin:0; padding:0; list-style:none; }
+        .essential { display:grid; grid-template-columns:40px minmax(0,1fr); gap:var(--golens-space-3); align-items:center; padding:var(--golens-space-3); border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-panel); background:var(--golens-surface-raised); }
+        .feature-icon { display:grid; place-items:center; width:40px; height:40px; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-sm); background:var(--golens-surface-inset); color:var(--golens-info-hover); }
+        .feature-icon svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
+        .feature-icon-filled svg { fill:currentColor; stroke:none; }
+        .feature-icon img { width:30px; height:30px; border-radius:var(--golens-radius-xs); object-fit:contain; }
+        .essential strong { display:block; color:var(--golens-text-primary); font-size:12px; }
+        .essential p { margin:2px 0 0; color:var(--golens-text-secondary); font-size:11px; line-height:1.45; }
+        kbd { min-width:24px; padding:2px 6px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 10px/1.4 var(--golens-font-mono); text-align:center; }
+        .footer { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-3); align-items:center; padding:var(--golens-space-3) var(--golens-space-5); border-top:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+        .progress { margin:0; color:var(--golens-text-muted); font:650 10px/1.4 var(--golens-font-mono); text-align:center; }
+        .status { min-height:16px; margin:var(--golens-space-3) 0 0; color:var(--golens-error); font-size:11px; }
+        .secondary,.primary { min-height:36px; padding:0 var(--golens-space-4); border-radius:var(--golens-radius-sm); cursor:pointer; font:750 12px/1 var(--golens-font-sans); white-space:nowrap; }
+        .secondary { border:1px solid var(--golens-border-default); background:transparent; color:var(--golens-text-secondary); }
+        .secondary:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+        .secondary[hidden] { visibility:hidden; display:block; }
+        .primary { border:1px solid var(--golens-primary); background:var(--golens-primary); color:var(--golens-text-inverse); font-weight:800; }
+        .primary:hover { border-color:var(--golens-primary-hover); background:var(--golens-primary-hover); }
+        button:focus-visible,input:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:2px; }
+        @media (max-width:640px) { .backdrop { padding:var(--golens-space-3); } .dialog { max-height:calc(100dvh - 24px); } .hero { grid-template-columns:44px 1fr; padding:var(--golens-space-4) var(--golens-space-5); } .mascot { width:44px; height:44px; } h1 { padding-right:var(--golens-space-5); font-size:20px; } .setup-panel { padding:var(--golens-space-5); } .choice-grid { grid-template-columns:1fr; } }
+        @media (prefers-reduced-motion:reduce) { .backdrop { backdrop-filter:none; } }
+      </style>
+      <div class="backdrop" data-action="backdrop">
+        <section class="dialog" data-onboarding-dialog data-onboarding-mode="setup" role="dialog" aria-modal="true" aria-labelledby="golens-setup-title" aria-describedby="golens-setup-description">
+          <button class="close" type="button" data-action="close-onboarding" aria-label="Close setup">×</button>
+          <header class="hero">
+            <img class="mascot" src="${chrome.runtime.getURL('assets/icons/golens-128.png')}" alt="">
+            <div><p class="eyebrow">Quick setup</p><h1 id="golens-setup-title">Make GoLens feel familiar</h1><p class="intro" id="golens-setup-description">Two choices, then the essentials.</p></div>
+          </header>
+          <section class="setup-panel" data-setup-panel>
+            <p class="step-label">Keyboard</p>
+            <h2>Which shortcuts should GoLens use?</h2>
+            <p class="step-intro">Choose a familiar keymap. You can customize every action later.</p>
+            <div class="choice-grid">${customOption}${presetOptions}</div>
+          </section>
+          <section class="setup-panel" data-setup-panel hidden>
+            <p class="step-label">Diff display</p>
+            <h2>Hide generated files?</h2>
+            <p class="step-intro">GoLens follows GitLab’s <code>.gitattributes</code> generated marker. Large collapsed files remain visible.</p>
+            <div class="choice-grid">
+              <label class="choice-card"><input type="radio" name="generated-files" value="show" ${state.settings.hideGeneratedFiles ? '' : 'checked'}><span><strong>Show generated files</strong><small>Keep GitLab’s complete changed-file list visible.</small></span></label>
+              <label class="choice-card"><input type="radio" name="generated-files" value="hide" ${state.settings.hideGeneratedFiles ? 'checked' : ''}><span><strong>Hide generated files</strong><small>Hide marked files and dim generated-only folders.</small></span></label>
+            </div>
+          </section>
+          <section class="setup-panel" data-setup-panel hidden>
+            <p class="step-label">Ready</p>
+            <h2>Four things to remember</h2>
+            <p class="step-intro">The complete feature guide stays available in Settings under Help.</p>
+            <ul class="essentials">
+              <li class="essential">${onboardingFeatureIcon('brand')}<div><strong>Use the three page controls</strong><p>Toggle GoLens, enter review focus, or cache related packages.</p></div></li>
+              <li class="essential">${onboardingFeatureIcon('hover')}<div><strong>Hover for Go insight</strong><p>See signatures, documentation, source locations, and usages.</p></div></li>
+              <li class="essential">${onboardingFeatureIcon('search')}<div><strong>Plain-click selects occurrences</strong><p>Move through matching identifiers in the loaded diff.</p></div></li>
+              <li class="essential">${onboardingFeatureIcon('navigate')}<div><strong><kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click follows code</strong><p>Resolve definitions, usages, and interface implementations.</p></div></li>
+            </ul>
+            <p class="status" data-setup-status role="status" aria-live="polite"></p>
+          </section>
+          <footer class="footer">
+            <button class="secondary" type="button" data-action="previous-onboarding" hidden>Back</button>
+            <p class="progress" data-tour-progress aria-live="polite">1 of 3 · Keyboard</p>
+            <button class="primary" type="button" data-action="next-onboarding">Continue</button>
+          </footer>
+        </section>
+      </div>
+    `;
+
+    const close = () => closeOnboarding();
+    const panels = [...shadow.querySelectorAll('[data-setup-panel]')];
+    const previousButton = shadow.querySelector('[data-action="previous-onboarding"]');
+    const primaryButton = shadow.querySelector('[data-action="next-onboarding"]');
+    const progress = shadow.querySelector('[data-tour-progress]');
+    const labels = ['Keyboard', 'Diff display', 'Ready'];
+    let activePage = 0;
+    const showPage = (index) => {
+      activePage = Math.max(0, Math.min(panels.length - 1, index));
+      panels.forEach((panel, panelIndex) => { panel.hidden = panelIndex !== activePage; });
+      previousButton.hidden = activePage === 0;
+      primaryButton.textContent = activePage === panels.length - 1 ? 'Save and start reviewing' : 'Continue';
+      progress.textContent = `${activePage + 1} of ${panels.length} · ${labels[activePage]}`;
+      panels[activePage].querySelector('input:checked, input, button')?.focus();
+    };
+    const save = async () => {
+      const presetID = shadow.querySelector('input[name="keymap"]:checked')?.value || currentPreset;
+      const hideGeneratedFiles = shadow.querySelector('input[name="generated-files"]:checked')?.value === 'hide';
+      const nextSettings = { hideGeneratedFiles };
+      if (presetID !== 'custom') nextSettings.shortcutBindings = shortcuts.presetBindings(presetID);
+      primaryButton.disabled = true;
+      try {
+        await chrome.storage.sync.set(nextSettings);
+        state.settings = { ...state.settings, ...nextSettings };
+        reconcileGeneratedDiffFiles();
+        close();
+      } catch (error) {
+        shadow.querySelector('[data-setup-status]').textContent = error.message || 'Unable to save these choices.';
+        primaryButton.disabled = false;
+      }
+    };
+    shadow.querySelector('[data-action="close-onboarding"]').addEventListener('click', close);
+    shadow.querySelector('[data-action="backdrop"]').addEventListener('click', (event) => { if (event.target === event.currentTarget) close(); });
+    previousButton.addEventListener('click', () => showPage(activePage - 1));
+    primaryButton.addEventListener('click', () => { if (activePage === panels.length - 1) void save(); else showPage(activePage + 1); });
+    shadow.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); close(); return; }
+      if (event.key !== 'Tab') return;
+      const focusable = [...shadow.querySelectorAll('button,input')].filter((element) => !element.disabled && !element.hidden && !element.closest('[hidden]'));
+      const index = focusable.indexOf(shadow.activeElement);
+      const next = event.shiftKey ? (index <= 0 ? focusable.length - 1 : index - 1) : (index === focusable.length - 1 ? 0 : index + 1);
+      event.preventDefault();
+      focusable[next].focus();
+    });
+    document.body.append(host);
+    showPage(0);
+  }
+
   function showOnboarding() {
     const existing = document.getElementById('golens-onboarding-root');
     if (existing) {
@@ -811,7 +976,7 @@
             <div>
               <p class="eyebrow">Quick tour</p>
               <h1 id="golens-onboarding-title">Welcome to GoLens for GitLab</h1>
-              <p class="intro" id="golens-onboarding-description">Every review tool, grouped into four short chapters so you can find the useful details without memorizing them.</p>
+              <p class="intro" id="golens-onboarding-description">A concise reference for every GoLens review tool.</p>
             </div>
           </header>
           <div class="tour">
@@ -825,57 +990,57 @@
               <section class="tour-panel" id="golens-tour-controls" role="tabpanel" aria-labelledby="golens-tour-tab-controls" tabindex="0">
                 <p class="chapter-label">Always beside GitLab’s AI panel</p>
                 <h2>Review controls and celebrations</h2>
-                <p class="chapter-intro">The compact strip stays with the merge request, even when GitLab navigates without reloading the page.</p>
+                <p class="chapter-intro">The compact strip stays beside GitLab’s AI panel throughout the review.</p>
                 <ul class="feature-list">
-                  <li class="feature">${onboardingFeatureIcon('brand')}<div><strong>Turn GoLens on or off</strong><p>The logo button controls all GoLens behavior. The same global switch is also available in the extension menu and syncs to every open GitLab tab.</p></div></li>
-                    <li class="feature">${onboardingFeatureIcon('focus')}<div><strong>Enter fullscreen review focus</strong><p>Hide GitLab chrome and the file tree, widen the diff, and enlarge code. The mascot puts on review goggles until you press <kbd>Esc</kbd> or use the button again.</p></div></li>
-                    <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache related MR packages</strong><p>Fetch changed and related Go packages at the merge request’s head commit. The button shows discovery, package counts, completion, errors, and a tiny pitstop when the cache is ready.</p></div></li>
-                    <li class="feature">${onboardingFeatureIcon('brand')}<div><strong>Mark review milestones</strong><p>The mascot reacts after GitLab confirms an approval, merge, or final resolved discussion. On Friday after 16:00, finishing or creating an MR unlocks an extra-long beer-kart lap with confetti. Reduced-motion preferences use a static moment.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('brand')}<div><strong>Turn GoLens on or off</strong><p>The logo controls GoLens globally and syncs across open GitLab tabs.</p></div></li>
+                    <li class="feature">${onboardingFeatureIcon('focus')}<div><strong>Enter fullscreen review focus</strong><p>Hide GitLab chrome, widen the diff, and leave with <kbd>Esc</kbd> or the focus button.</p></div></li>
+                    <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache related MR packages</strong><p>Fetch changed and related Go packages at the MR head, with progress and completion states.</p></div></li>
+                    <li class="feature">${onboardingFeatureIcon('brand')}<div><strong>Mark review milestones</strong><p>The mascot marks completed caches, resolved discussions, approvals, merges, and the Friday beer-kart celebration. Reduced motion stays static.</p></div></li>
                 </ul>
               </section>
               <section class="tour-panel" id="golens-tour-go" role="tabpanel" aria-labelledby="golens-tour-tab-go" tabindex="0" hidden>
                 <p class="chapter-label">Browser-native Go navigation</p>
                 <h2>Inspect and follow symbols</h2>
-                <p class="chapter-intro">GoLens indexes commit-pinned source in your browser and refuses to guess when a result is missing or ambiguous.</p>
+                <p class="chapter-intro">Commit-pinned browser indexing provides safe navigation without speculative results.</p>
                 <ul class="feature-list">
-                  <li class="feature">${onboardingFeatureIcon('hover')}<div><strong>Hover for Go insight</strong><p>See a symbol’s kind, signature, documentation, and source location. Hovering a definition also finds its usages.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Navigate by click or shortcut</strong><p><kbd>Cmd</kbd>-click on macOS or <kbd>Ctrl</kbd>-click elsewhere. Alternatively select a symbol and press the configurable Go to definition or implementation shortcut, <kbd>Cmd/Ctrl F12</kbd> by default. Uses go to definitions, definitions find usages, and interfaces find implementations.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Select and revisit occurrences</strong><p>Plain-click a Go identifier to highlight same-spelling occurrences in the loaded diff. Move with <kbd>Cmd/Ctrl Alt ↑</kbd> and <kbd>Cmd/Ctrl Alt ↓</kbd> by default.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Stay in the diff when possible</strong><p>Targets already in the diff scroll into view. Other project files open at the exact line in a new tab; packages, built-ins, and standard-library symbols open their directory or documentation.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Retrace semantic jumps</strong><p>Go back and forward through in-diff definition and usage jumps without changing the browser’s page history. The defaults are <kbd>Ctrl -</kbd> and <kbd>Ctrl Shift -</kbd>.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('copy')}<div><strong>Use the small popover tools</strong><p>Move into the result to pin it, copy its <span class="feature-note">file:line:column</span>, expand long signatures, choose ambiguous matches, or press <kbd>Esc</kbd> to close.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Check the search scope</strong><p>Every usage and implementation result says whether GoLens searched the current package, a limited set of indexed packages, or the complete project. Use <span class="feature-note">Show more</span> for additional matches.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Search the complete project explicitly</strong><p>Incomplete results can exhaust GitLab’s commit-pinned code search and index only matching Go packages. The progress dialog can be minimized or cancelled, then GoLens refreshes the result when coverage is complete.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('testDouble')}<div><strong>Separate test doubles</strong><p>Implementation results keep production matches first and place structural or asserted test doubles in their own expandable group.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('hover')}<div><strong>Hover for Go insight</strong><p>See kind, signature, documentation, location, and usages for definitions.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Navigate by click or shortcut</strong><p><kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click or <kbd>Cmd/Ctrl F12</kbd> resolves definitions, usages, and implementations.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Select and revisit occurrences</strong><p>Plain-click highlights loaded-diff occurrences; configured shortcuts move between them.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Stay in the diff when possible</strong><p>Loaded targets scroll into view; other sources open at their exact destination.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Retrace semantic jumps</strong><p>Move through in-diff semantic history without changing browser history.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('copy')}<div><strong>Use the small popover tools</strong><p>Pin results, copy <span class="feature-note">file:line:column</span>, expand signatures, choose matches, or close with <kbd>Esc</kbd>.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Check the search scope</strong><p>Results identify package, indexed-package, or complete-project coverage.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Search the complete project explicitly</strong><p>Run cancellable commit-pinned search when current coverage is incomplete.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('testDouble')}<div><strong>Separate test doubles</strong><p>Production implementations stay ahead of an expandable test-double group.</p></div></li>
                 </ul>
               </section>
               <section class="tour-panel" id="golens-tour-diff" role="tabpanel" aria-labelledby="golens-tour-tab-diff" tabindex="0" hidden>
                 <p class="chapter-label">Small helpers across the merge request</p>
                 <h2>Move through large diffs faster</h2>
-                <p class="chapter-intro">These helpers use GitLab’s existing UI and metadata, so they remain familiar and reversible.</p>
+                <p class="chapter-intro">Small GitLab-native helpers keep large reviews moving.</p>
                 <ul class="feature-list">
-                  <li class="feature">${onboardingFeatureIcon('rapid')}<div><strong>Use Rapid Diffs automatically</strong><p>When GitLab offers its Rapid Diffs opt-in on the Changes page, GoLens enables it for the review.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('fullFile')}<div><strong>Show a full file</strong><p>Use the expand icon in a file header to reveal all available lines, then switch back to changes-only where GitLab supports it.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Reach file search from the keyboard</strong><p><kbd>Cmd/Ctrl P</kbd> focuses and selects GitLab’s file search. <kbd>Shift F</kbd> clears it and returns to the diff.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Move by hunk or file</strong><p>Use <kbd>Shift Alt F5</kbd>/<kbd>Alt F5</kbd> for hunks and <kbd>Alt Page Up</kbd>/<kbd>Alt Page Down</kbd> for files by default. Each destination is briefly highlighted.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('testFile')}<div><strong>Spot Go test files</strong><p>Files ending in <span class="feature-note">_test.go</span> receive a subtle green label in the file tree.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('generated')}<div><strong>Optionally hide generated files</strong><p>Enable this in the extension menu to hide files GitLab marks as generated through <span class="feature-note">.gitattributes</span>. Large collapsed files stay visible, and generated-only folders are dimmed.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('discussion')}<div><strong>Jump from overview discussions to code</strong><p>Line discussions on the merge request overview gain a <span class="feature-note">View in changes</span> link to the exact commented line.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('rapid')}<div><strong>Use Rapid Diffs automatically</strong><p>GoLens enables GitLab’s Rapid Diffs opt-in when it is offered.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('fullFile')}<div><strong>Show a full file</strong><p>Expand a file beyond changed lines, then return to changes-only.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Reach file search from the keyboard</strong><p><kbd>Cmd/Ctrl P</kbd> focuses file search; <kbd>Shift F</kbd> clears it and returns.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Move by hunk or file</strong><p>Configured shortcuts move between hunks and files with a brief destination highlight.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('testFile')}<div><strong>Spot Go test files</strong><p><span class="feature-note">_test.go</span> files receive a subtle green file-tree label.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('generated')}<div><strong>Optionally hide generated files</strong><p>Hide <span class="feature-note">.gitattributes</span>-marked files while keeping large collapsed files visible.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('discussion')}<div><strong>Jump from overview discussions to code</strong><p><span class="feature-note">View in changes</span> opens the exact commented line.</p></div></li>
                 </ul>
               </section>
               <section class="tour-panel" id="golens-tour-popup" role="tabpanel" aria-labelledby="golens-tour-tab-popup" tabindex="0" hidden>
                 <p class="chapter-label">Open from the compact browser menu</p>
                 <h2>Tabbed settings and cache control</h2>
-                <p class="chapter-intro">Keep active-project caching close, then open the large settings overlay for behavior shared by every GitLab tab.</p>
+                <p class="chapter-intro">Manage synchronized preferences, access, caching, and help.</p>
                 <ul class="feature-list">
-                  <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Open the settings overlay</strong><p>Use the gear in the compact browser menu to open a large tabbed settings surface over the active GitLab page. Close it with <kbd>Esc</kbd>, the close button, or the backdrop.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Set global review preferences</strong><p>Enable or disable GoLens everywhere and choose whether GitLab-marked generated files should be hidden.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Choose a familiar keymap</strong><p>Apply GoLens, VS Code, IntelliJ IDEA, or Vim-style bindings, then customize or clear any individual action. Vim-style changes shortcuts only; it does not add modes or command sequences.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Approve self-hosted GitLab origins</strong><p>GitLab.com works automatically. Add or remove each self-hosted HTTP(S) origin from the extension menu so GoLens only runs where you explicitly allow it.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache the full project</strong><p>Broaden navigation beyond related MR packages. Progress and availability are reported against the active merge request.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('database')}<div><strong>Inspect or clear the source cache</strong><p>See its browser storage size, package count, and source-record count, or remove every cached snapshot at once.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('replay')}<div><strong>Replay this complete tour</strong><p>Open the Help settings page and choose <span class="feature-note">Show quick tour</span> whenever you need a refresher.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Keep repository source local</strong><p>Source stays inside your browser, this extension, and your signed-in GitLab origin. Requests are same-origin and pinned to the merge request commit.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Open the settings overlay</strong><p>The browser-menu gear opens settings over the active GitLab page; close with <kbd>Esc</kbd>, the button, or backdrop.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Set global review preferences</strong><p>Control global enablement, generated files, and contextual shortcut tips.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Choose a familiar keymap</strong><p>Apply GoLens, VS Code, IntelliJ IDEA, or non-modal Vim-style bindings, then customize them. Contextual tips retire after successful use.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Approve self-hosted GitLab origins</strong><p>Add or remove each trusted HTTP(S) origin explicitly; GitLab.com works automatically.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache the full project</strong><p>Broaden navigation beyond related MR packages with visible progress.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('database')}<div><strong>Inspect or clear the source cache</strong><p>Review cache size and record counts, or remove all snapshots.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('replay')}<div><strong>Replay this complete tour</strong><p>Open this feature guide again from Settings under Help.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Keep repository source local</strong><p>Source stays in your browser and signed-in GitLab origin, with commit-pinned same-origin requests.</p></div></li>
                 </ul>
               </section>
             </div>
@@ -954,7 +1119,7 @@
   async function showFirstRunOnboarding() {
     const stored = await chrome.storage.local.get({ [ONBOARDING_STORAGE_KEY]: 0 });
     if (stored[ONBOARDING_STORAGE_KEY] >= ONBOARDING_VERSION) return;
-    showOnboarding();
+    showSetupOnboarding();
     await chrome.storage.local.set({ [ONBOARDING_STORAGE_KEY]: ONBOARDING_VERSION });
   }
 
@@ -1522,6 +1687,12 @@
     return true;
   }
 
+  function onShortcutCoachManualClick(event) {
+    const search = nativeFileSearch();
+    if (!state.enabled || !search || !event.composedPath().includes(search)) return;
+    void globalThis.GoLensGoNavigation?.offerShortcutCoach?.('focusFileSearch');
+  }
+
   document.addEventListener('keydown', (event) => {
     if (!state.enabled || !isMergeRequest() || event.isComposing || isBlockedShortcutEvent(event)) return;
     const shortcuts = globalThis.GoLensShortcuts;
@@ -1533,9 +1704,13 @@
     if (action === 'focusFileSearch') handled = focusNativeFileSearch();
     else if (action === 'clearFileSearch') handled = closeNativeFileSearch();
     else handled = globalThis.GoLensGoNavigation?.runNavigationAction?.(action) === true;
-    if (handled) event.preventDefault();
+    if (handled) {
+      event.preventDefault();
+      void globalThis.GoLensShortcutCoach?.markShortcutUsed?.(action);
+    }
   }, true);
   document.addEventListener('click', onNativeMergeRequestActionClick, true);
+  document.addEventListener('click', onShortcutCoachManualClick, true);
 
   async function toggleReviewFocus() {
     const entering = !inReviewFocus();

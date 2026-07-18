@@ -44,6 +44,7 @@
     activeTarget: null,
     activeElement: null,
     lastErrorToast: '',
+    toastTimer: null,
     fullSearch: null,
     abortController: null,
     ui: null,
@@ -1215,7 +1216,19 @@
         details { margin-top:var(--golens-space-1); } summary { padding:var(--golens-space-2) var(--golens-space-1); border-radius:var(--golens-radius-xs); color:var(--golens-text-secondary); cursor:pointer; } summary:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .test-double-choices { display:grid; gap:5px; margin-top:var(--golens-space-1); }
         .shortcut-hint { display:flex; align-items:center; gap:5px; margin:var(--golens-space-3) 0 0; color:var(--golens-text-muted); font-size:10px; } kbd { display:inline-flex; min-width:17px; min-height:17px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
         .loading-progress { display:grid; gap:var(--golens-space-2); margin:0 0 var(--golens-space-3); padding:var(--golens-space-2) var(--golens-space-3); border:1px solid color-mix(in srgb,var(--golens-primary) 35%,var(--golens-border-subtle)); border-radius:var(--golens-radius-sm); background:var(--golens-primary-soft); } .loading-progress[hidden] { display:none; } .loading-progress-meta { display:flex; justify-content:space-between; gap:var(--golens-space-2); color:var(--golens-text-primary); font-size:10px; } .loading-progress-phase { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; } .loading-progress-count { flex:0 0 auto; color:var(--golens-primary-hover); font:700 10px/1.45 var(--golens-font-mono); font-variant-numeric:tabular-nums; } .loading-track { height:4px; overflow:hidden; border-radius:999px; background:var(--golens-surface-pressed); } .loading-track > i { display:block; width:0; height:100%; border-radius:inherit; background:var(--golens-primary); transition:width var(--golens-motion-base); }
-        .toast { position:fixed; right:18px; bottom:18px; display:none; max-width:360px; padding:var(--golens-space-2) var(--golens-space-3); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-md); background:var(--golens-surface-raised); color:var(--golens-text-primary); box-shadow:var(--golens-shadow-md); } .toast.show { display:block; }
+        .toast { position:fixed; right:18px; bottom:18px; display:none; width:min(390px,calc(100vw - 36px)); padding:var(--golens-space-3); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-md); background:var(--golens-surface-raised); color:var(--golens-text-primary); box-shadow:var(--golens-shadow-md); pointer-events:auto; }
+        .toast.show { display:grid; }
+        .toast[data-kind="message"] { width:auto; max-width:360px; padding:var(--golens-space-2) var(--golens-space-3); }
+        .toast[data-kind="message"] .toast-label,.toast[data-kind="message"] .toast-binding,.toast[data-kind="message"] .toast-actions { display:none; }
+        .toast-label { margin:0 0 3px; color:var(--golens-primary-hover); font:700 9px/1.3 var(--golens-font-mono); letter-spacing:.06em; text-transform:uppercase; }
+        .toast-content { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-3); align-items:center; }
+        .toast-message { color:var(--golens-text-primary); line-height:1.45; }
+        .toast-binding { min-height:24px; padding:3px 7px; white-space:nowrap; }
+        .toast-actions { display:flex; gap:var(--golens-space-2); justify-content:flex-end; margin-top:var(--golens-space-2); }
+        .toast-actions button { padding:4px 7px; border:1px solid transparent; border-radius:var(--golens-radius-xs); background:transparent; color:var(--golens-text-secondary); font:650 10px/1.3 var(--golens-font-sans); cursor:pointer; }
+        .toast-actions button:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+        .toast-actions button:active { background:var(--golens-surface-pressed); transform:translateY(1px); }
+        .toast-actions button:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:1px; }
         .full-search-backdrop { position:fixed; inset:0; display:grid; place-items:center; padding:20px; background:rgba(0,0,0,.58); pointer-events:auto; } .full-search-backdrop[hidden] { display:none; }
         .full-search-dialog { width:min(480px,100%); padding:var(--golens-space-4); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-lg); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); }
         .full-search-header { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--golens-space-3); } .full-search-title { margin:0; font-size:15px; } .full-search-copy { margin:8px 0 14px; color:var(--golens-text-secondary); }
@@ -1229,7 +1242,7 @@
       </section>
       <div class="full-search-backdrop" hidden><section class="full-search-dialog" role="dialog" aria-modal="true" aria-labelledby="golens-full-search-title"><div class="full-search-header"><div><h2 id="golens-full-search-title" class="full-search-title">Search complete project</h2><p class="full-search-copy">GoLens searches the complete project at this commit, then downloads only matching Go packages.</p></div><button class="header-action full-search-minimize" type="button" aria-label="Minimize full-project search">−</button></div><div class="loading-progress full-search-progress" role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase">Preparing project</span><span class="loading-progress-count">0%</span></div><div class="loading-track" role="progressbar" aria-label="Full-project search progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="full-search-actions"><button class="full-search-retry" type="button" hidden>Retry</button><button class="full-search-cancel" type="button">Cancel</button><button class="full-search-dismiss" type="button">Minimize</button></div></section></div>
       <button class="full-search-chip" type="button" hidden>Project search · 0%</button>
-      <div class="toast" role="status"></div>
+      <section class="toast" data-kind="message" role="status" aria-live="polite"><p class="toast-label">Shortcut tip</p><div class="toast-content"><div class="toast-message"></div><kbd class="toast-binding"></kbd></div><div class="toast-actions"><button type="button" data-action="shortcut-tip-dismiss">Got it</button><button type="button" data-action="shortcut-tip-disable">Turn tips off</button></div></section>
     `;
     document.body.append(host);
     state.ui = host;
@@ -1245,6 +1258,11 @@
     shadow.querySelector('.full-search-chip').addEventListener('click', restoreFullSearch);
     shadow.querySelector('.full-search-retry').addEventListener('click', runFullSearch);
     shadow.querySelector('.full-search-cancel').addEventListener('click', cancelFullSearch);
+    shadow.querySelector('[data-action="shortcut-tip-dismiss"]').addEventListener('click', hideToast);
+    shadow.querySelector('[data-action="shortcut-tip-disable"]').addEventListener('click', async () => {
+      const saved = await globalThis.GoLensShortcutCoach?.setEnabled?.(false);
+      toast(saved ? 'Shortcut tips turned off. You can re-enable them in settings.' : 'Could not update shortcut tip settings.');
+    });
     return shadow;
   }
 
@@ -1382,6 +1400,7 @@
     retained.push(destination);
     state.history = retained.slice(-100);
     state.historyIndex = state.history.length - 1;
+    if (state.history.length >= 3) void offerShortcutCoach('historyBack');
   }
 
   async function navigateHistory(direction) {
@@ -1960,11 +1979,57 @@
     }
   }
 
+  function hideToast() {
+    clearTimeout(state.toastTimer);
+    state.toastTimer = null;
+    state.ui?.shadowRoot.querySelector('.toast')?.classList.remove('show');
+  }
+
   function toast(message) {
     const element = ensureUI().querySelector('.toast');
-    element.textContent = message;
+    clearTimeout(state.toastTimer);
+    element.dataset.kind = 'message';
+    element.querySelector('.toast-message').textContent = message;
     element.classList.add('show');
-    setTimeout(() => element.classList.remove('show'), 2600);
+    state.toastTimer = setTimeout(hideToast, 2600);
+  }
+
+  const SHORTCUT_COACH_MESSAGES = {
+    focusFileSearch: "Focus GitLab's file search without reaching for the mouse.",
+    semanticJump: 'Open the selected symbol directly from the keyboard.',
+    nextOccurrence: 'Move through the selected occurrences from the keyboard.',
+    historyBack: 'Return to the previous semantic location.',
+  };
+
+  function shortcutCoachBlocked() {
+    const toastElement = state.ui?.shadowRoot.querySelector('.toast');
+    return document.visibilityState === 'hidden'
+      || Boolean(document.getElementById('golens-onboarding-root'))
+      || Boolean(document.getElementById('golens-settings-root'))
+      || Boolean(toastElement?.classList.contains('show'));
+  }
+
+  function showShortcutCoachHint(hint) {
+    const message = SHORTCUT_COACH_MESSAGES[hint?.actionID];
+    if (!message || shortcutCoachBlocked()) return false;
+    const element = ensureUI().querySelector('.toast');
+    clearTimeout(state.toastTimer);
+    element.dataset.kind = 'shortcut';
+    element.querySelector('.toast-message').textContent = message;
+    element.querySelector('.toast-binding').textContent = hint.displayBinding;
+    element.classList.add('show');
+    state.toastTimer = setTimeout(hideToast, 8000);
+    return true;
+  }
+
+  async function offerShortcutCoach(actionID) {
+    if (!state.enabled || shortcutCoachBlocked()) return false;
+    try {
+      const hint = await globalThis.GoLensShortcutCoach?.consider?.(actionID);
+      return hint ? showShortcutCoachHint(hint) : false;
+    } catch {
+      return false;
+    }
   }
 
   function targetAtEvent(event) {
@@ -2063,6 +2128,7 @@
     const index = state.occurrences.findIndex(({ cell, character }) => cell === target.cell && character === target.character);
     if (index >= 0) state.occurrenceIndex = index;
     paintOccurrences();
+    if (state.occurrences.length > 1) void offerShortcutCoach('nextOccurrence');
   }
 
   function navigateOccurrence(direction) {
@@ -2298,6 +2364,7 @@
     }
     event.preventDefault();
     event.stopPropagation();
+    void offerShortcutCoach('semanticJump');
     await navigateSemanticTarget(target);
   }
 
@@ -2331,6 +2398,8 @@
     state.abortController?.abort();
     state.abortController = null;
     clearTimeout(state.hoverTimer);
+    clearTimeout(state.toastTimer);
+    state.toastTimer = null;
     state.diffObserver?.disconnect();
     state.diffObserver = null;
     clearSelectedSymbol();
@@ -2381,6 +2450,7 @@
     fullProjectPreloadStatus,
     invalidateCacheState,
     runNavigationAction,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey },
+    offerShortcutCoach,
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked },
   };
 })();
