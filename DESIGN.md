@@ -17,7 +17,7 @@
 
 GoLens for GitLab is a dependency-light Manifest V3 browser extension that adds Go-aware navigation and focused review tools to GitLab merge requests. It runs against GitLab.com and self-hosted GitLab, reads repository source through the user's signed-in same-origin session, parses Go locally with checked-in Tree-sitter assets, and stores commit-pinned source snapshots in browser IndexedDB. Repository source is not sent to an external service.
 
-The extension has four user-facing surfaces: a three-button control rail mounted beside GitLab's AI-panel control, a first-run onboarding dialog, the toolbar popup, and a Go intelligence popover. These surfaces share a dependency-free semantic token layer while keeping their layout and state rules isolated. The design preserves GitLab's DOM ownership, Shadow DOM boundaries, native file search, current permissions, and all existing storage and messaging contracts.
+The extension has five user-facing surfaces: a three-button control rail mounted beside GitLab's AI-panel control, a first-run onboarding dialog, a compact toolbar popup, a large tabbed settings overlay, and a Go intelligence popover. These surfaces share a dependency-free semantic token layer while keeping their layout and state rules isolated. The design preserves GitLab's DOM ownership, Shadow DOM boundaries, native file search, current permissions, and all existing storage and messaging contracts.
 
 The primary invariant is: **never navigate or cache speculatively**. Source identity must be tied to the GitLab origin, project, and immutable commit; ambiguous or unsupported semantic results remain explicit instead of being guessed.
 
@@ -28,7 +28,7 @@ The primary invariant is: **never navigate or cache speculatively**. Source iden
 | Provide useful Go definitions, usages, signatures, documentation, and interface implementations directly from a merge-request diff. | Replace a full Go language server, compiler, or IDE. |
 | Keep source access authenticated, same-origin, commit-pinned, local to the browser, and verifiable against Git blob identifiers. | Upload repository content, usage data, or analytics to a remote GoLens service. |
 | Survive GitLab Turbo/PJAX navigation and DOM replacement without duplicate controls or stale sessions. | Own or rewrite GitLab's navigation, diff renderer, file browser, or theme. |
-| Present a consistent GitLab-native visual language across popup, rail, onboarding, and semantic popover while preserving surface-specific density. | Introduce a UI framework, runtime design-system dependency, remote font, or remote image. |
+| Present a consistent GitLab-native visual language across popup, settings, rail, onboarding, and semantic popover while preserving surface-specific density. | Introduce a UI framework, runtime design-system dependency, remote font, or remote image. |
 | Expose deterministic busy, success, error, disabled, focus, and pressed feedback without changing behavioral state contracts. | Persist visual-only state or introduce a second state machine in CSS. |
 | Preserve accessible keyboard operation, focus restoration, status announcements, and reduced-motion behavior. | Guarantee support for semantic cases that the local parser cannot resolve safely, including ambiguous symbols, dot imports, and unresolved build-constraint variants. |
 
@@ -86,12 +86,13 @@ Figure 1. GoLens keeps GitLab integration in the page, semantic work in the exte
 | Component | Responsibility | Primary state or dependency | Failure behavior |
 | --- | --- | --- | --- |
 | `shortcut-settings.js` | Define portable shortcut actions, defaults, normalization, display labels, matching, and duplicate reassignment. | `chrome.storage.sync.shortcutBindings`, platform modifier conventions | Invalid stored entries fall back to defaults; explicitly cleared actions stay unassigned. |
-| `content.js` | Detect GitLab merge requests; mount and reconcile controls; own focus mode, onboarding, confirmed review celebrations, generated-file behavior, full-file actions, and shortcut dispatch; bridge popup messages to the active tab. | GitLab DOM, `chrome.storage.sync`, `chrome.storage.local` | Leaves non-GitLab and non-MR pages untouched. Suppresses shortcuts in editors, searches, and dialogs. Waits for the exact mount anchor and tears down page state when the MR changes or GoLens is disabled. |
+| `content.js` | Detect GitLab merge requests; mount and reconcile controls; own focus mode, onboarding, the settings-overlay host, confirmed review celebrations, generated-file behavior, full-file actions, and shortcut dispatch; bridge extension-page messages to the active tab. | GitLab DOM, `chrome.storage.sync`, `chrome.storage.local` | Leaves non-GitLab and non-MR pages untouched. Suppresses shortcuts in editors, searches, and dialogs. Waits for the exact mount anchor and tears down page state when the MR changes or GoLens is disabled. |
 | `go-navigation.js` | Adapt GitLab diff DOM to semantic inputs; fetch GitLab trees, blobs, diffs, approval and discussion state, and search results; manage progress; render Go popovers; open exact destinations. | Signed-in GitLab session, active MR refs, long-lived worker port | Aborts fetches and rejects pending RPCs on teardown. Shows explicit errors or missing/ambiguous results instead of guessing. |
 | `go-semantic-worker.js` | Initialize Tree-sitter, dispatch semantic RPC, serialize mutations, restore durable snapshots, and handle cache statistics and clearing. | `go-semantic-core.js`, `go-semantic-cache.js`, checked-in WASM | Rejects unknown methods. Resets failed parser initialization for retry. Serializes cache/index mutations so clearing cannot race writes. |
 | `go-semantic-core.js` | Build an in-memory, DOM-independent Go symbol and identifier-candidate index; resolve definitions, references, documentation, and implementations. | Tree-sitter syntax trees and indexed package/project snapshots | Returns typed `notFound`, `ambiguous`, `needsPackage`, or unsupported results when evidence is insufficient. |
 | `go-semantic-cache.js` | Persist, validate, restore, count, and clear immutable source blobs plus package, project, and MR manifests. | IndexedDB database `golens-go-semantic-cache`, format version 3 | Verifies cached source against Git blob IDs, deletes corrupted records, and treats incomplete manifests as misses. Falls back to process memory if IndexedDB is unavailable. |
-| `popup.*` | Control global enablement, generated-file preference, full-project caching, cache clearing, and onboarding replay. | Storage, active-tab messages, worker runtime messages | Shows unavailable or error state when no supported MR tab or worker response is available. |
+| `popup.*` | Provide compact global enablement, active-project cache status, full-project caching, and entry to the settings overlay. | Storage, active-tab messages, worker runtime messages | Shows unavailable or error state when no supported GitLab tab or worker response is available. |
+| `settings.*` | Render the tabbed extension settings inside an isolated iframe overlay; manage preferences, shortcuts, host access, cache lifecycle, and onboarding replay. | Storage, optional permissions, active-tab messages, worker runtime messages | Keeps permission prompts in an extension context and reports unavailable active-tab operations explicitly. |
 | `golens-theme.css` | Define shared neutral surfaces, semantic accents, type stacks, spacing, radii, shadows, motion, and stacking tokens. | CSS custom properties scoped to GoLens roots and popup `:root` | Surface CSS retains no behavioral authority; absent states remain controlled by DOM and ARIA attributes. |
 | `gitlab-lens.css` | Apply focus mode and GitLab-adjacent affordances that cannot live inside a Shadow DOM. | GitLab page DOM and shared tokens | Uses narrowly scoped selectors and fallbacks; never injects a standalone floating control. |
 
@@ -136,13 +137,15 @@ In-diff semantic jumps record their exact source and destination in a bounded, p
 5. A package containing more than 200 Go files fails explicitly rather than creating a partial semantic namespace.
 6. Completion is published only after every referenced package or project entry can be restored and verified. Progress moves through stable phases and uses determinate percentages when totals are known.
 
-### Popup actions
+### Popup and settings actions
 
-1. The popup reads synchronized preferences and requests full-project status from the active tab.
-2. Global enablement is stored in `chrome.storage.sync` and propagated to the active tab; storage listeners update every other open tab.
-3. Full-project caching runs in the active MR tab because the tab owns the signed-in GitLab origin and fetch context.
-4. Cache statistics and clearing are sent directly to the service worker. Clearing invalidates the active tab's transient cache state after durable deletion succeeds.
-5. Onboarding replay is sent to the active tab and succeeds only on a supported GitLab merge request.
+1. The compact popup reads global enablement, cache statistics, and full-project status from the active tab.
+2. Its gear sends `golens-show-settings` to the active GitLab content script, which mounts `settings.html` in a full-viewport Shadow DOM backdrop.
+3. The settings iframe remains an extension context, so optional host permission requests stay directly tied to settings controls while GitLab cannot inspect or style the settings document.
+4. Global enablement and generated-file preferences are stored in `chrome.storage.sync`; storage listeners update every open tab and extension surface.
+5. Full-project caching runs in the active MR tab because the tab owns the signed-in GitLab origin and fetch context.
+6. Cache statistics and clearing are sent directly to the service worker. Clearing invalidates the active tab's transient cache state after durable deletion succeeds.
+7. Onboarding replay is sent from the Help settings page and succeeds only on a supported GitLab merge request.
 
 ## 6. API and Data Contracts
 
@@ -278,7 +281,7 @@ The selected design is a local-first, GitLab-native extension with restrained Go
 | Milestone | Deliverable | Exit criteria | Status |
 | --- | --- | --- | --- |
 | M1 | Shared tokens, system typography, semantic focus/preload icons | Every GoLens surface consumes the shared contract; no remote font or operational raster icon remains. | Implemented |
-| M2 | Popup hierarchy and complete interaction states | Primary caching, preferences, support, and destructive clearing have distinct hierarchy and tested busy/success/error states. | Implemented |
+| M2 | Compact popup and tabbed settings hierarchy | Active-project caching stays immediate while preferences, shortcuts, host access, storage, and help use a large isolated overlay with tested busy/success/error states. | Implemented |
 | M3 | Vertical onboarding and aligned semantic popover | Responsive workflow, accessible dialog behavior, tokenized popover surfaces, and preserved syntax semantics pass tests. | Implemented |
 | M4 | Asset optimization, obsolete CSS removal, and regression coverage | Runtime uses display-sized icons, obsolete focus CSS is removed, 99 unit tests and the Chrome injection smoke pass, and the package contains expected assets. | Implemented |
 

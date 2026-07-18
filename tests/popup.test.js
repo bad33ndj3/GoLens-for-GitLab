@@ -3,62 +3,39 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 
-test('popup starts full-project caching in the active MR tab and restores completion', async () => {
+test('compact popup controls enablement, project caching, and the settings overlay', async () => {
   const window = new Window({ url: 'chrome-extension://golens/popup.html' });
-  const html = await readFile(new URL('../popup.html', import.meta.url), 'utf8');
-  window.document.write(html);
+  window.document.write(await readFile(new URL('../popup.html', import.meta.url), 'utf8'));
   globalThis.window = window;
   globalThis.document = window.document;
-  globalThis.confirm = () => true;
-  assert.equal(window.document.title, 'GoLens for GitLab');
-  assert.equal(window.document.querySelector('.plugin-switch span').textContent, 'GoLens for GitLab');
-  assert.equal(window.document.querySelector('link[href="golens-theme.css"]').rel, 'stylesheet');
-  assert.match(window.document.querySelector('.identity img').src, /assets\/icons\/golens-32\.png$/);
-  assert.equal(window.document.querySelector('[data-cache-panel]').dataset.state, 'idle');
-  assert.ok(window.document.querySelector('[data-action="clear-cache"]').classList.contains('destructive-action'));
 
+  let popupClosed = false;
+  window.close = () => { popupClosed = true; };
   let fullStatus = { status: 'idle', message: 'Not cached', progress: null };
-  let requestedDefaults;
   let storageListener;
   const savedSettings = [];
   const tabMessages = [];
-  let allowedOrigins = ['http://*/*', 'https://*/*', 'https://gitlab.com/*'];
-  const requestedOrigins = [];
   globalThis.chrome = {
     storage: {
       sync: {
-        async get(defaults) {
-          requestedDefaults = defaults;
-          return { ...defaults, hideGeneratedFiles: true };
-        },
+        async get(defaults) { return { ...defaults, enabled: true }; },
         async set(value) { savedSettings.push(value); },
       },
       onChanged: { addListener(listener) { storageListener = listener; } },
     },
     runtime: {
       async sendMessage({ type }) {
-        if (type === 'golens-cache-stats') return { ok: true, result: { sources: 1, packages: 1, projects: 0, bytes: 12 } };
-        return { ok: true, result: { sources: 0, packages: 0, projects: 0, bytes: 0 } };
-      },
-    },
-    permissions: {
-      async getAll() { return { origins: [...allowedOrigins] }; },
-      async request({ origins }) {
-        requestedOrigins.push(...origins);
-        allowedOrigins = [...new Set([...allowedOrigins, ...origins])];
-        return true;
-      },
-      async remove({ origins }) {
-        allowedOrigins = allowedOrigins.filter((origin) => !origins.includes(origin));
-        return true;
+        if (type === 'golens-cache-stats') return { ok: true, result: { sources: 2, packages: 1, projects: 0, bytes: 1280 } };
+        return { ok: false, error: 'Unexpected request' };
       },
     },
     tabs: {
       async query() { return [{ id: 7 }]; },
       async sendMessage(_tabID, message) {
         tabMessages.push(message.type);
+        if (message.type === 'golens-show-settings') return { ok: true, result: { shown: true } };
         if (message.type === 'golens-preload-full-project') {
-          fullStatus = { status: 'busy', message: '1 cached · 1 remaining · 45%', progress: { phase: 'fetching', percentage: 45 } };
+          fullStatus = { status: 'busy', message: '1 cached, 1 remaining, 45%', progress: { phase: 'fetching', percentage: 45 } };
         } else if (message.type === 'golens-full-project-status' && fullStatus.status === 'busy') {
           fullStatus = { status: 'complete', message: 'Full project cached', progress: { phase: 'ready', percentage: 100 } };
         }
@@ -67,75 +44,34 @@ test('popup starts full-project caching in the active MR tab and restores comple
     },
   };
 
-  await import('../shortcut-settings.js?popup-test');
-  await import('../popup.js?popup-test');
+  await import('../popup.js?compact-popup-test');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(requestedDefaults, { enabled: true, hideGeneratedFiles: false, shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() });
-  const generatedFilesSetting = window.document.querySelector('[data-setting="hideGeneratedFiles"]');
-  assert.ok(generatedFilesSetting.checked);
-  assert.match(window.document.querySelector('.preferences').textContent, /\.gitattributes/);
-  assert.match(window.document.querySelector('.preferences').textContent, /large collapsed files remain visible/);
-  assert.equal(window.document.querySelectorAll('[data-shortcut-binding]').length, 10);
-  assert.match(window.document.querySelector('[data-shortcut-binding="focusFileSearch"]').textContent, /P/);
-  const focusBinding = window.document.querySelector('[data-shortcut-binding="focusFileSearch"]');
-  focusBinding.click();
-  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { code: 'BracketRight', key: ']', altKey: true, bubbles: true, cancelable: true }));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const rebound = savedSettings.at(-1).shortcutBindings;
-  assert.equal(rebound.focusFileSearch, 'Alt+BracketRight');
-  assert.equal(rebound.nextOccurrence, '');
-  assert.match(window.document.querySelector('[data-shortcut-status]').textContent, /Next occurrence is now unassigned/);
-  assert.match(window.document.querySelector('.host-access').textContent, /GitLab.com works automatically/);
-  assert.match(window.document.querySelector('[data-host-list]').textContent, /No self-hosted origins allowed/);
-  assert.doesNotMatch(window.document.querySelector('[data-host-list]').textContent, /%2A/i);
 
-  const hostForm = window.document.querySelector('[data-host-form]');
-  hostForm.elements.origin.value = 'https://gitlab.internal/group/project';
-  hostForm.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(requestedOrigins, ['https://gitlab.internal/*']);
-  assert.match(window.document.querySelector('[data-host-list]').textContent, /https:\/\/gitlab.internal/);
-  assert.match(window.document.querySelector('[data-host-status]').textContent, /Allowed https:\/\/gitlab.internal/);
-
-  window.document.querySelector('[data-host-list] button').click();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(allowedOrigins, ['http://*/*', 'https://*/*', 'https://gitlab.com/*']);
-  assert.match(window.document.querySelector('[data-host-list]').textContent, /No self-hosted origins allowed/);
-
-  generatedFilesSetting.checked = false;
-  generatedFilesSetting.dispatchEvent(new window.Event('change'));
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(savedSettings.at(-1), { hideGeneratedFiles: false });
-  assert.equal(tabMessages.includes('golens-enabled'), false);
-
-  storageListener({ hideGeneratedFiles: { oldValue: false, newValue: true } }, 'sync');
-  assert.ok(generatedFilesSetting.checked);
-
-  const button = window.document.querySelector('[data-action="cache-full-project"]');
-  assert.equal(button.disabled, false);
-  assert.equal(button.dataset.state, 'idle');
+  assert.equal(window.document.body.clientWidth >= 0, true);
+  assert.match(window.document.querySelector('.identity img').src, /assets\/icons\/golens-32\.png$/);
+  assert.ok(window.document.querySelector('[data-setting="enabled"]').checked);
+  assert.equal(window.document.querySelector('[data-action="show-settings"]').getAttribute('aria-label'), 'Open GoLens settings');
+  assert.equal(window.document.querySelector('[data-cache-size]').textContent, '1.3 KB');
   assert.equal(window.document.querySelector('[data-full-cache-status]').textContent, 'Not cached');
+  assert.equal(window.document.querySelector('[data-shortcut-list]'), null, 'the compact popup does not render settings forms');
 
-  button.click();
+  const enabled = window.document.querySelector('[data-setting="enabled"]');
+  enabled.checked = false;
+  enabled.dispatchEvent(new window.Event('change'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(savedSettings.at(-1), { enabled: false });
+  assert.ok(tabMessages.includes('golens-enabled'));
+  storageListener({ enabled: { oldValue: false, newValue: true } }, 'sync');
+  assert.ok(enabled.checked);
+
+  const cacheButton = window.document.querySelector('[data-action="cache-full-project"]');
+  cacheButton.click();
   await new Promise((resolve) => setTimeout(resolve, 500));
-  assert.equal(button.textContent, 'Full project cached');
-  assert.equal(button.disabled, true);
-  assert.equal(button.dataset.state, 'complete');
-  assert.equal(window.document.querySelector('[data-cache-panel]').dataset.state, 'complete');
-  assert.equal(button.hasAttribute('aria-busy'), false);
+  assert.equal(cacheButton.textContent, 'Full project cached');
   assert.ok(tabMessages.includes('golens-preload-full-project'));
-  assert.ok(tabMessages.filter((type) => type === 'golens-full-project-status').length >= 2);
 
-  const clearButton = window.document.querySelector('[data-action="clear-cache"]');
-  clearButton.click();
+  window.document.querySelector('[data-action="show-settings"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(window.document.querySelector('[data-cache-panel]').dataset.clearState, 'success');
-  assert.match(window.document.querySelector('[data-cache-status]').textContent, /^Cleared /);
-  assert.equal(clearButton.hasAttribute('aria-busy'), false);
-
-  window.document.querySelector('[data-action="show-onboarding"]').click();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(tabMessages.includes('golens-show-onboarding'));
-  assert.equal(window.document.querySelector('[data-onboarding-status]').textContent, 'Quick tour opened in this tab.');
-  assert.equal(window.document.querySelector('.guide').dataset.state, 'success');
+  assert.ok(tabMessages.includes('golens-show-settings'));
+  assert.equal(popupClosed, true);
 });

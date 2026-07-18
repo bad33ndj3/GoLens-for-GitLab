@@ -12,78 +12,40 @@
       <div class="identity">
         <img src="assets/icons/golens-32.png" alt="">
         <div>
-          <p>GoLens for GitLab</p>
-          <h1>Review controls</h1>
+          <strong>GoLens for GitLab</strong>
+          <span>Review controls</span>
         </div>
       </div>
-      <label class="plugin-switch" title="Enable GoLens for GitLab">
-        <span class="visually-hidden">GoLens for GitLab</span>
-        <input type="checkbox" data-setting="enabled" aria-label="Enable GoLens for GitLab">
-      </label>
-    </header>
-    <main>
-      <section class="preferences" aria-labelledby="preferences-title">
-        <div class="section-heading">
-          <h2 id="preferences-title">Review preferences</h2>
-          <p>Applied to every open GitLab tab.</p>
-        </div>
-        <label class="preference-switch">
-          <span>
-            <strong>Hide generated files</strong>
-            <small>Uses GitLab’s <code>.gitattributes</code> marker; large collapsed files remain visible.</small>
-          </span>
-          <input type="checkbox" data-setting="hideGeneratedFiles" aria-label="Hide .gitattributes generated files">
+      <div class="header-actions">
+        <button class="settings-action" type="button" data-action="show-settings" aria-label="Open GoLens settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        </button>
+        <label class="plugin-switch" title="Enable GoLens for GitLab">
+          <span class="visually-hidden">Enable GoLens for GitLab</span>
+          <input type="checkbox" data-setting="enabled" aria-label="Enable GoLens for GitLab">
         </label>
-      </section>
-      <section class="shortcuts" aria-labelledby="shortcuts-title">
-        <div class="section-heading shortcut-heading">
-          <div><h2 id="shortcuts-title">Keyboard shortcuts</h2><p>Click a binding, then press a new shortcut.</p></div>
-          <button type="button" data-action="reset-shortcuts">Reset all</button>
-        </div>
-        <div class="shortcut-list" data-shortcut-list></div>
-        <p class="shortcut-status" data-shortcut-status role="status" aria-live="polite"></p>
-      </section>
-      <section class="host-access" aria-labelledby="host-access-title">
-        <div class="section-heading">
-          <h2 id="host-access-title">Self-hosted GitLab</h2>
-          <p>GitLab.com works automatically. Add only the other origins you trust.</p>
-        </div>
-        <form class="host-form" data-host-form>
-          <label for="golens-gitlab-origin">GitLab origin</label>
-          <div><input id="golens-gitlab-origin" name="origin" type="text" inputmode="url" autocomplete="url" placeholder="https://gitlab.example.com" required><button type="submit">Allow origin</button></div>
-        </form>
-        <div class="host-list" data-host-list aria-label="Allowed self-hosted GitLab origins"></div>
-        <p class="host-status" data-host-status role="status" aria-live="polite"></p>
-      </section>
-      <section class="cache" aria-labelledby="cache-title" data-cache-panel data-state="idle">
-        <div class="cache-summary">
+      </div>
+    </header>
+
+    <main>
+      <section class="project-cache" aria-labelledby="project-cache-title" data-cache-panel data-state="idle">
+        <div class="cache-heading">
           <div>
-            <h2 id="cache-title">Source cache</h2>
-            <p>Stored only in this browser.</p>
+            <h1 id="project-cache-title">Project intelligence</h1>
+            <p data-full-cache-status role="status">Checking active merge request…</p>
           </div>
           <output data-cache-size aria-live="polite">Loading…</output>
         </div>
-        <div class="full-cache">
-          <button class="primary-action" type="button" data-action="cache-full-project">Cache full project</button>
-          <progress data-full-cache-progress max="100" value="0" hidden></progress>
-          <p class="cache-status" data-full-cache-status role="status">Checking active MR…</p>
-        </div>
-        <button class="destructive-action" type="button" data-action="clear-cache">Clear cached source</button>
-        <p class="cache-status" data-cache-status role="status"></p>
+        <button class="primary-action" type="button" data-action="cache-full-project">Cache full project</button>
+        <progress data-full-cache-progress max="100" value="0" hidden></progress>
       </section>
+      <p class="settings-status" data-settings-status role="status" aria-live="polite"></p>
     </main>
-    <footer class="guide" aria-labelledby="guide-title" data-state="idle">
-      <div>
-        <strong id="guide-title">Need a refresher?</strong>
-        <p>Replay the complete feature tour.</p>
-      </div>
-      <button class="tertiary-action" type="button" data-action="show-onboarding">
-        Show quick tour
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9m-3.5-3.5L12 8l-3.5 3.5"></path></svg>
-      </button>
-      <p class="guide-status" data-onboarding-status role="status"></p>
+
+    <footer>
+      <span>Source stays in this browser</span>
+      <strong data-page-context>Active MR</strong>
     </footer>
-    <script src="shortcut-settings.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

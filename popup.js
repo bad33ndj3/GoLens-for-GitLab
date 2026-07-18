@@ -1,192 +1,6 @@
-const defaults = { enabled: true, hideGeneratedFiles: false, shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() };
+const defaults = { enabled: true };
 let activeTabID = null;
 let fullCachePoll = null;
-let shortcutBindings = globalThis.GoLensShortcuts.defaultBindings();
-let recordingShortcut = '';
-
-function shortcutAction(actionID) {
-  return globalThis.GoLensShortcuts.actions.find(({ id }) => id === actionID);
-}
-
-function renderShortcutBindings() {
-  for (const button of document.querySelectorAll('[data-shortcut-binding]')) {
-    const actionID = button.dataset.shortcutBinding;
-    button.textContent = recordingShortcut === actionID ? 'Press keys…' : globalThis.GoLensShortcuts.displayBinding(shortcutBindings[actionID]);
-    button.dataset.recording = String(recordingShortcut === actionID);
-    button.setAttribute('aria-pressed', String(recordingShortcut === actionID));
-    button.closest('.shortcut-row').querySelector('.shortcut-clear').disabled = !shortcutBindings[actionID];
-  }
-}
-
-async function saveShortcut(actionID, binding) {
-  const result = globalThis.GoLensShortcuts.assignBinding(shortcutBindings, actionID, binding);
-  shortcutBindings = result.bindings;
-  await chrome.storage.sync.set({ shortcutBindings });
-  const status = document.querySelector('[data-shortcut-status]');
-  const action = shortcutAction(actionID);
-  if (result.displaced) {
-    status.textContent = `${action.label} updated; ${shortcutAction(result.displaced).label} is now unassigned.`;
-  } else {
-    status.textContent = binding ? `${action.label} updated.` : `${action.label} is now unassigned.`;
-  }
-  renderShortcutBindings();
-}
-
-function wireShortcutControls() {
-  const list = document.querySelector('[data-shortcut-list]');
-  for (const action of globalThis.GoLensShortcuts.actions) {
-    const row = document.createElement('div');
-    row.className = 'shortcut-row';
-    row.innerHTML = `<span>${action.label}</span><button class="shortcut-binding" type="button" data-shortcut-binding="${action.id}" aria-pressed="false"></button><button class="shortcut-clear" type="button" aria-label="Clear ${action.label}" title="Clear shortcut">×</button>`;
-    const binding = row.querySelector('.shortcut-binding');
-    binding.addEventListener('click', () => {
-      recordingShortcut = recordingShortcut === action.id ? '' : action.id;
-      document.querySelector('[data-shortcut-status]').textContent = recordingShortcut ? 'Press a shortcut. Escape cancels; Backspace clears.' : '';
-      renderShortcutBindings();
-    });
-    row.querySelector('.shortcut-clear').addEventListener('click', () => saveShortcut(action.id, ''));
-    list.append(row);
-  }
-  document.addEventListener('keydown', (event) => {
-    if (!recordingShortcut) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.code === 'Escape') {
-      recordingShortcut = '';
-      document.querySelector('[data-shortcut-status]').textContent = 'Recording cancelled.';
-      renderShortcutBindings();
-      return;
-    }
-    if (['Backspace', 'Delete'].includes(event.code)) {
-      const actionID = recordingShortcut;
-      recordingShortcut = '';
-      saveShortcut(actionID, '');
-      return;
-    }
-    const binding = globalThis.GoLensShortcuts.bindingForEvent(event);
-    if (!binding) return;
-    const actionID = recordingShortcut;
-    recordingShortcut = '';
-    saveShortcut(actionID, binding);
-  }, true);
-  document.querySelector('[data-action="reset-shortcuts"]').addEventListener('click', async () => {
-    recordingShortcut = '';
-    shortcutBindings = globalThis.GoLensShortcuts.defaultBindings();
-    await chrome.storage.sync.set({ shortcutBindings });
-    document.querySelector('[data-shortcut-status]').textContent = 'All shortcuts reset.';
-    renderShortcutBindings();
-  });
-  renderShortcutBindings();
-}
-
-function normalizeGitLabOrigin(value) {
-  const candidate = String(value || '').trim();
-  if (!candidate) throw new Error('Enter your self-hosted GitLab URL.');
-  if (/\*|%2a/i.test(candidate)) throw new Error('Enter one exact GitLab origin, without wildcards.');
-  let url;
-  try {
-    url = new URL(candidate.includes('://') ? candidate : `https://${candidate}`);
-  } catch {
-    throw new Error('Enter a valid HTTP or HTTPS GitLab URL.');
-  }
-  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) {
-    throw new Error('Enter a valid HTTP or HTTPS GitLab URL without credentials.');
-  }
-  return url.origin;
-}
-
-function selfHostedPatterns(origins = []) {
-  const patterns = new Set();
-  for (const value of origins) {
-    const candidate = String(value).replace(/\/\*$/, '');
-    if (/\*|%2a/i.test(candidate)) continue;
-    try {
-      const url = new URL(candidate);
-      if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) continue;
-      if (url.origin !== 'https://gitlab.com') patterns.add(`${url.origin}/*`);
-    } catch {
-      // Ignore named permissions and malformed legacy values.
-    }
-  }
-  return [...patterns].sort();
-}
-
-async function syncHostAccess() {
-  const response = await chrome.runtime.sendMessage({ type: 'golens-sync-host-access' });
-  if (!response?.ok) throw new Error(response?.error || 'Unable to update GitLab host access.');
-}
-
-async function refreshHostAccess() {
-  const list = document.querySelector('[data-host-list]');
-  const granted = await chrome.permissions.getAll();
-  const patterns = selfHostedPatterns(granted.origins);
-  list.replaceChildren();
-  if (!patterns.length) {
-    const empty = document.createElement('p');
-    empty.className = 'host-empty';
-    empty.textContent = 'No self-hosted origins allowed.';
-    list.append(empty);
-    return;
-  }
-  patterns.forEach((pattern) => {
-    const origin = new URL(pattern).origin;
-    const row = document.createElement('div');
-    const label = document.createElement('code');
-    label.textContent = origin;
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.textContent = 'Remove';
-    remove.setAttribute('aria-label', `Remove access to ${origin}`);
-    remove.addEventListener('click', async () => {
-      remove.disabled = true;
-      const status = document.querySelector('[data-host-status]');
-      try {
-        await chrome.permissions.remove({ origins: [pattern] });
-        await syncHostAccess();
-        status.textContent = `Removed ${origin}. Refresh open tabs to unload GoLens.`;
-        await refreshHostAccess();
-      } catch (error) {
-        status.textContent = error.message || 'Unable to remove this origin.';
-        remove.disabled = false;
-      }
-    });
-    row.append(label, remove);
-    list.append(row);
-  });
-}
-
-function wireHostAccess() {
-  const form = document.querySelector('[data-host-form]');
-  const input = form.elements.origin;
-  const status = document.querySelector('[data-host-status]');
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const button = form.querySelector('button[type="submit"]');
-    button.disabled = true;
-    status.textContent = '';
-    try {
-      const origin = normalizeGitLabOrigin(input.value);
-      if (origin === 'https://gitlab.com') {
-        status.textContent = 'GitLab.com access is already included.';
-        return;
-      }
-      const pattern = `${origin}/*`;
-      const granted = await chrome.permissions.request({ origins: [pattern] });
-      if (!granted) {
-        status.textContent = `Access to ${origin} was not granted.`;
-        return;
-      }
-      await syncHostAccess();
-      input.value = '';
-      status.textContent = `Allowed ${origin}. Refresh that GitLab tab to start GoLens.`;
-      await refreshHostAccess();
-    } catch (error) {
-      status.textContent = error.message || 'Unable to add this GitLab origin.';
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
 
 function formatBytes(bytes) {
   if (!bytes) return 'Empty';
@@ -203,14 +17,14 @@ async function cacheRequest(type) {
 }
 
 async function refreshCacheSize() {
-  const size = document.querySelector('[data-cache-size]');
+  const output = document.querySelector('[data-cache-size]');
   try {
     const stats = await cacheRequest('golens-cache-stats');
-    size.textContent = formatBytes(stats.bytes);
-    size.title = `${stats.sources} stored source records across ${stats.packages} package snapshots and ${stats.projects} project snapshots`;
+    output.textContent = formatBytes(stats.bytes);
+    output.title = `${stats.sources} stored source records across ${stats.packages} package snapshots and ${stats.projects} project snapshots`;
   } catch {
-    size.textContent = 'Unavailable';
-    size.removeAttribute('title');
+    output.textContent = 'Unavailable';
+    output.removeAttribute('title');
   }
 }
 
@@ -219,10 +33,15 @@ async function activeTabRequest(type) {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     activeTabID = tab?.id || null;
   }
-  if (!activeTabID) throw new Error('Open a GitLab merge request to cache its project.');
+  if (!activeTabID) throw new Error('Open a supported GitLab page.');
   const response = await chrome.tabs.sendMessage(activeTabID, { type });
-  if (!response?.ok) throw new Error(response?.error || 'Project cache request failed');
+  if (!response?.ok) throw new Error(response?.error || 'The active GitLab tab did not respond.');
   return response.result;
+}
+
+function stopFullCachePolling() {
+  if (fullCachePoll) clearInterval(fullCachePoll);
+  fullCachePoll = null;
 }
 
 function renderFullProjectState(state) {
@@ -230,6 +49,7 @@ function renderFullProjectState(state) {
   const button = document.querySelector('[data-action="cache-full-project"]');
   const status = document.querySelector('[data-full-cache-status]');
   const progress = document.querySelector('[data-full-cache-progress]');
+  const context = document.querySelector('[data-page-context]');
   const busy = state.status === 'busy';
   const complete = state.status === 'complete';
   const unavailable = state.status === 'unavailable';
@@ -238,21 +58,14 @@ function renderFullProjectState(state) {
   button.dataset.state = state.status || 'idle';
   button.toggleAttribute('aria-busy', busy);
   button.textContent = complete ? 'Full project cached' : busy ? 'Caching full project…' : 'Cache full project';
-  status.textContent = state.message || (complete ? 'Cached' : 'Not cached');
+  status.textContent = state.message || (complete ? 'Full-project results are ready.' : 'Full-project results are not cached yet.');
+  context.textContent = unavailable ? 'No active MR' : 'Active MR';
   const percentage = Number.isFinite(state.progress?.percentage) ? state.progress.percentage : null;
   progress.hidden = !busy;
-  if (percentage === null || state.progress?.phase === 'discovering') {
-    progress.removeAttribute('value');
-  } else {
-    progress.value = Math.max(0, Math.min(100, percentage));
-  }
+  if (percentage === null || state.progress?.phase === 'discovering') progress.removeAttribute('value');
+  else progress.value = Math.max(0, Math.min(100, percentage));
   if (busy) startFullCachePolling();
   else stopFullCachePolling();
-}
-
-function stopFullCachePolling() {
-  if (fullCachePoll) clearInterval(fullCachePoll);
-  fullCachePoll = null;
 }
 
 function startFullCachePolling() {
@@ -288,94 +101,37 @@ function wireFullProjectControl() {
   });
 }
 
-function wireCacheControls() {
-  const panel = document.querySelector('[data-cache-panel]');
-  const button = document.querySelector('[data-action="clear-cache"]');
-  const status = document.querySelector('[data-cache-status]');
-  button.addEventListener('click', async () => {
-    if (!confirm('Clear all cached GitLab source snapshots?')) return;
-    button.disabled = true;
-    button.setAttribute('aria-busy', 'true');
-    panel.dataset.clearState = 'busy';
-    status.textContent = 'Clearing cache…';
-    try {
-      const cleared = await cacheRequest('golens-clear-cache');
-      status.textContent = `Cleared ${formatBytes(cleared.bytes)} of cached source.`;
-      panel.dataset.clearState = 'success';
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.id) await chrome.tabs.sendMessage(tab.id, { type: 'golens-cache-invalidated' });
-      } catch {
-        // The active tab may not host GoLens; the cache has still been cleared.
-      }
-      await refreshCacheSize();
-      await refreshFullProjectState();
-    } catch (error) {
-      status.textContent = error.message || 'Unable to clear cache.';
-      panel.dataset.clearState = 'error';
-    } finally {
-      button.disabled = false;
-      button.removeAttribute('aria-busy');
-    }
-  });
-}
-
-function wireOnboardingControl() {
-  const guide = document.querySelector('.guide');
-  const button = document.querySelector('[data-action="show-onboarding"]');
-  const status = document.querySelector('[data-onboarding-status]');
+function wireSettingsControl() {
+  const button = document.querySelector('[data-action="show-settings"]');
+  const status = document.querySelector('[data-settings-status]');
   button.addEventListener('click', async () => {
     button.disabled = true;
-    button.setAttribute('aria-busy', 'true');
-    guide.dataset.state = 'busy';
     status.textContent = '';
     try {
-      await activeTabRequest('golens-show-onboarding');
-      status.textContent = 'Quick tour opened in this tab.';
-      guide.dataset.state = 'success';
+      await activeTabRequest('golens-show-settings');
+      window.close();
     } catch (error) {
-      status.textContent = error.message || 'Open a GitLab merge request first.';
-      guide.dataset.state = 'error';
-    } finally {
+      status.textContent = error.message || 'Open a supported GitLab page first.';
       button.disabled = false;
-      button.removeAttribute('aria-busy');
     }
   });
 }
 
 async function initialise() {
   const settings = await chrome.storage.sync.get(defaults);
-  shortcutBindings = globalThis.GoLensShortcuts.mergeBindings(settings.shortcutBindings);
-  for (const input of document.querySelectorAll('[data-setting]')) {
-    const key = input.dataset.setting;
-    input.checked = settings[key];
-    input.addEventListener('change', async () => {
-      await chrome.storage.sync.set({ [key]: input.checked });
-      if (key !== 'enabled') return;
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: 'golens-enabled', enabled: input.checked }).catch(() => undefined);
-    });
-  }
-
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== 'sync') return;
-    if (changes.shortcutBindings) {
-      shortcutBindings = globalThis.GoLensShortcuts.mergeBindings(changes.shortcutBindings.newValue);
-      renderShortcutBindings();
-    }
-    for (const [key, change] of Object.entries(changes)) {
-      const input = document.querySelector(`[data-setting="${key}"]`);
-      if (input && typeof change.newValue === 'boolean') input.checked = change.newValue;
-    }
+  const enabled = document.querySelector('[data-setting="enabled"]');
+  enabled.checked = settings.enabled;
+  enabled.addEventListener('change', async () => {
+    await chrome.storage.sync.set({ enabled: enabled.checked });
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: 'golens-enabled', enabled: enabled.checked }).catch(() => undefined);
   });
-  wireShortcutControls();
-  wireCacheControls();
-  wireHostAccess();
-  wireOnboardingControl();
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'sync' && typeof changes.enabled?.newValue === 'boolean') enabled.checked = changes.enabled.newValue;
+  });
+  wireSettingsControl();
   wireFullProjectControl();
-  await refreshHostAccess();
-  await refreshFullProjectState();
-  await refreshCacheSize();
+  await Promise.all([refreshFullProjectState(), refreshCacheSize()]);
 }
 
 initialise();

@@ -1,7 +1,7 @@
 (() => {
   const shortcutDefaults = globalThis.GoLensShortcuts?.defaultBindings?.() || {};
   const defaults = { enabled: true, hideGeneratedFiles: false, shortcutBindings: shortcutDefaults };
-  const ONBOARDING_VERSION = 7;
+  const ONBOARDING_VERSION = 8;
   const ONBOARDING_STORAGE_KEY = 'golensOnboardingVersion';
   const FRIDAY_MR_CREATE_STORAGE_KEY = 'golensFridayMergeRequestCreation';
   const FULL_FILE_EXPANSION_TIMEOUT_MS = 15000;
@@ -22,6 +22,7 @@
     fullPreload: { status: 'idle', message: '', progress: null },
     fullPreloadRunID: 0,
     onboardingReturnFocus: null,
+    settingsReturnFocus: null,
     autoCollapsedGeneratedFolders: new Set(),
     celebrationStatus: null,
     celebrationRunID: 0,
@@ -597,6 +598,53 @@
     }
   }
 
+  function closeSettingsOverlay({ restoreFocus = true } = {}) {
+    const host = document.getElementById('golens-settings-root');
+    if (!host) return;
+    host.remove();
+    if (restoreFocus) state.settingsReturnFocus?.focus?.();
+    state.settingsReturnFocus = null;
+    const queuedMoment = state.queuedMascotMoment;
+    state.queuedMascotMoment = '';
+    if (queuedMoment && state.enabled && state.pageActive) setTimeout(() => showMascotMoment(queuedMoment), 0);
+  }
+
+  function showSettingsOverlay() {
+    const existing = document.getElementById('golens-settings-root');
+    if (existing) {
+      existing.shadowRoot?.querySelector('iframe')?.focus();
+      return;
+    }
+    closeOnboarding();
+    state.settingsReturnFocus = document.activeElement;
+    const host = document.createElement('div');
+    host.id = 'golens-settings-root';
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <style>
+        :host { all:initial; position:fixed; inset:0; z-index:var(--golens-z-modal); color-scheme:dark; }
+        * { box-sizing:border-box; }
+        .backdrop { position:absolute; inset:0; display:grid; place-items:center; overflow:auto; padding:32px; background:rgba(7,10,14,.76); backdrop-filter:blur(3px); }
+        iframe { display:block; width:min(1080px,calc(100vw - 64px)); height:min(690px,calc(100dvh - 64px)); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-overlay); background:var(--golens-surface-canvas); box-shadow:var(--golens-shadow-overlay); }
+        iframe:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:3px; }
+        @media (max-width:760px) { .backdrop { padding:12px; } iframe { width:calc(100vw - 24px); height:calc(100dvh - 24px); } }
+        @media (prefers-reduced-motion:reduce) { .backdrop { backdrop-filter:none; } }
+      </style>
+      <div class="backdrop" data-action="close-settings-backdrop" role="dialog" aria-modal="true" aria-label="GoLens settings">
+        <iframe src="${chrome.runtime.getURL('settings.html')}" title="GoLens settings"></iframe>
+      </div>
+    `;
+    shadow.querySelector('[data-action="close-settings-backdrop"]').addEventListener('click', (event) => {
+      if (event.target === event.currentTarget) closeSettingsOverlay();
+    });
+    const frame = shadow.querySelector('iframe');
+    frame.addEventListener('load', () => {
+      host.dataset.loaded = 'true';
+      frame.focus();
+    }, { once: true });
+    document.body.append(host);
+  }
+
   function onboardingFeatureIcon(name) {
     if (name === 'brand') {
       return `<span class="feature-icon feature-icon-brand" data-feature-icon="brand" aria-hidden="true"><img src="${chrome.runtime.getURL('assets/icons/golens-32.png')}" alt=""></span>`;
@@ -771,7 +819,7 @@
               <button class="tour-tab" id="golens-tour-tab-controls" type="button" role="tab" aria-selected="true" aria-controls="golens-tour-controls"><span class="tab-icon" aria-hidden="true"><img src="${chrome.runtime.getURL('assets/icons/golens-32.png')}" alt=""></span><span>Page controls</span></button>
               <button class="tour-tab" id="golens-tour-tab-go" type="button" role="tab" aria-selected="false" aria-controls="golens-tour-go" tabindex="-1"><span class="tab-icon" aria-hidden="true"><span class="tab-symbol">Go</span></span><span>Go intelligence</span></button>
               <button class="tour-tab" id="golens-tour-tab-diff" type="button" role="tab" aria-selected="false" aria-controls="golens-tour-diff" tabindex="-1"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 1.75h10M3 14.25h10M8 3.25v3.5m0-3.5L6.25 5M8 3.25 9.75 5M8 12.75v-3.5m0 3.5L6.25 11M8 12.75 9.75 11"></path></svg></span><span>Diff helpers</span></button>
-              <button class="tour-tab" id="golens-tour-tab-popup" type="button" role="tab" aria-selected="false" aria-controls="golens-tour-popup" tabindex="-1"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path><circle cx="16" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg></span><span>Extension menu</span></button>
+              <button class="tour-tab" id="golens-tour-tab-popup" type="button" role="tab" aria-selected="false" aria-controls="golens-tour-popup" tabindex="-1"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path><circle cx="16" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg></span><span>Settings</span></button>
             </nav>
             <div class="tour-panels">
               <section class="tour-panel" id="golens-tour-controls" role="tabpanel" aria-labelledby="golens-tour-tab-controls" tabindex="0">
@@ -816,16 +864,17 @@
                 </ul>
               </section>
               <section class="tour-panel" id="golens-tour-popup" role="tabpanel" aria-labelledby="golens-tour-tab-popup" tabindex="0" hidden>
-                <p class="chapter-label">Open from the browser toolbar</p>
-                <h2>Global settings and cache control</h2>
-                <p class="chapter-intro">The extension menu manages behavior shared by all open GitLab tabs and gives you direct control over stored source.</p>
+                <p class="chapter-label">Open from the compact browser menu</p>
+                <h2>Tabbed settings and cache control</h2>
+                <p class="chapter-intro">Keep active-project caching close, then open the large settings overlay for behavior shared by every GitLab tab.</p>
                 <ul class="feature-list">
+                  <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Open the settings overlay</strong><p>Use the gear in the compact browser menu to open a large tabbed settings surface over the active GitLab page. Close it with <kbd>Esc</kbd>, the close button, or the backdrop.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Set global review preferences</strong><p>Enable or disable GoLens everywhere and choose whether GitLab-marked generated files should be hidden.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Customize every shortcut</strong><p>Record, clear, or reset each navigation binding separately. Assigning a binding already in use moves it to the newly chosen action.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Approve self-hosted GitLab origins</strong><p>GitLab.com works automatically. Add or remove each self-hosted HTTP(S) origin from the extension menu so GoLens only runs where you explicitly allow it.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache the full project</strong><p>Broaden navigation beyond related MR packages. Progress and availability are reported against the active merge request.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('database')}<div><strong>Inspect or clear the source cache</strong><p>See its browser storage size, package count, and source-record count, or remove every cached snapshot at once.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('replay')}<div><strong>Replay this complete tour</strong><p>Choose <span class="feature-note">Show quick tour</span> whenever you need a refresher.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('replay')}<div><strong>Replay this complete tour</strong><p>Open the Help settings page and choose <span class="feature-note">Show quick tour</span> whenever you need a refresher.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Keep repository source local</strong><p>Source stays inside your browser, this extension, and your signed-in GitLab origin. Requests are same-origin and pinned to the merge request commit.</p></div></li>
                 </ul>
               </section>
@@ -1108,7 +1157,7 @@
 
   function requestMascotMoment(kind) {
     if (!state.enabled || !state.pageActive) return;
-    if (document.getElementById('golens-onboarding-root')) {
+    if (document.getElementById('golens-onboarding-root') || document.getElementById('golens-settings-root')) {
       state.queuedMascotMoment = kind;
       return;
     }
@@ -1512,6 +1561,7 @@
     state.fullPreloadRunID++;
     cancelCelebrationActivity({ resetStatus: true });
     closeOnboarding();
+    closeSettingsOverlay({ restoreFocus: false });
     removeFullFileButtons();
     restoreGeneratedDiffFiles();
     restoreGoTestFileRows();
@@ -1608,6 +1658,7 @@
       state.fullPreloadRunID++;
       setPreloadState('idle');
       state.fullPreload = { status: 'idle', message: 'Not cached', progress: null };
+      sendResponse({ ok: true, result: { invalidated: true } });
     }
     if (message?.type === 'golens-preload-full-project') {
       sendResponse({ ok: true, result: startFullProjectPreload() });
@@ -1623,8 +1674,26 @@
         sendResponse({ ok: false, error: 'Open a GitLab merge request first.' });
         return;
       }
+      closeSettingsOverlay({ restoreFocus: false });
       showOnboarding();
       sendResponse({ ok: true, result: { shown: true } });
+    }
+    if (message?.type === 'golens-show-settings') {
+      if (!isGitLab()) {
+        sendResponse({ ok: false, error: 'Open a supported GitLab page first.' });
+        return;
+      }
+      showSettingsOverlay();
+      sendResponse({ ok: true, result: { shown: true } });
+    }
+    if (message?.type === 'golens-close-settings') {
+      closeSettingsOverlay();
+      sendResponse({ ok: true, result: { closed: true } });
+    }
+    if (message?.type === 'golens-settings-ready') {
+      const host = document.getElementById('golens-settings-root');
+      if (host) host.dataset.ready = 'true';
+      sendResponse({ ok: Boolean(host), result: { ready: Boolean(host) } });
     }
   });
 

@@ -61,6 +61,39 @@ async function connectDevTools(url) {
   return { socket, send };
 }
 
+async function sendExtensionTabMessage(port, pageURL, messageType, deadline) {
+  let connection;
+  try {
+    while (Date.now() < deadline) {
+      const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json()).catch(() => []);
+      const worker = targets.find((candidate) => candidate.type === 'service_worker' && candidate.url.endsWith('/go-semantic-worker.js'));
+      if (!worker?.webSocketDebuggerUrl) {
+        await delay(50);
+        continue;
+      }
+      connection = await connectDevTools(worker.webSocketDebuggerUrl);
+      const result = await connection.send('Runtime.evaluate', {
+        expression: `(async () => {
+          const tabs = await chrome.tabs.query({});
+          const tab = tabs.find((candidate) => candidate.url === ${JSON.stringify(pageURL)});
+          if (!tab?.id) return { ok:false, error:'fixture tab unavailable' };
+          try { return await chrome.tabs.sendMessage(tab.id, { type:${JSON.stringify(messageType)} }); }
+          catch (error) { return { ok:false, error:error.message }; }
+        })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (result.result.value?.ok) return result.result.value;
+      connection.socket.close();
+      connection = null;
+      await delay(50);
+    }
+    throw new Error(`Extension message ${messageType} did not reach ${pageURL}`);
+  } finally {
+    connection?.socket.close();
+  }
+}
+
 async function stopBrowser(child) {
   if (child.exitCode !== null) return;
   child.kill('SIGTERM');
@@ -70,7 +103,7 @@ async function stopBrowser(child) {
   ]);
 }
 
-async function runBrowser(url, completionExpression, profile) {
+async function runBrowser(url, completionExpression, profile, { extensionMessage = '' } = {}) {
   const args = [
     '--headless=new',
     '--disable-gpu',
@@ -107,6 +140,7 @@ async function runBrowser(url, completionExpression, profile) {
     const deadline = Date.now() + 30000;
     const target = await devToolsTarget(endpointURL.port, url, deadline);
     connection = await connectDevTools(target.webSocketDebuggerUrl);
+    if (extensionMessage) await sendExtensionTabMessage(endpointURL.port, url, extensionMessage, deadline);
     while (Date.now() < deadline) {
       try {
         const completion = await connection.send('Runtime.evaluate', {
@@ -506,6 +540,13 @@ try {
     /data-golens-discussion-line-link=""[^>]+href="http:\/\/127\.0\.0\.1:\d+\/group\/project\/-\/merge_requests\/44\/diffs\?diff_id=77&amp;start_sha=abc#filehash_0_12"/,
     `overview discussion button did not preserve GitLab's exact line target\n${overview.stderr}`
   );
+
+  const settings = await runBrowser(overviewURL, `
+    document.getElementById('golens-settings-root')?.dataset.loaded === 'true'
+      && document.getElementById('golens-settings-root')?.dataset.ready === 'true'
+      && document.getElementById('golens-settings-root')?.shadowRoot?.querySelector('iframe')?.src.endsWith('/settings.html')
+  `, profile, { extensionMessage: 'golens-show-settings' });
+  assert.match(settings.stdout, /id="golens-settings-root" data-loaded="true" data-ready="true"/, `settings overlay iframe did not load inside GitLab\n${settings.stderr}`);
 
   const firstURL = `http://127.0.0.1:${port}/group/project/-/merge_requests/42/diffs`;
   const { stdout, stderr } = await runBrowser(firstURL, `

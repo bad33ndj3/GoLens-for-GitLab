@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 
-test('onboarding opens once, is accessible, and can be replayed from the popup', async () => {
+test('onboarding opens once, is accessible, and can be replayed from settings', async () => {
   const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
   window.document.write(`
     <!doctype html>
@@ -70,7 +70,7 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
     'Page controls',
     'Go intelligence',
     'Diff helpers',
-    'Extension menu',
+    'Settings',
   ]);
   assert.equal(tourTabs[0].getAttribute('aria-selected'), 'true');
   assert.equal(tourPanels[0].hidden, false);
@@ -96,6 +96,7 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
     'Spot Go test files',
     'Optionally hide generated files',
     'Jump from overview discussions to code',
+    'Open the settings overlay',
     'Set global review preferences',
     'Customize every shortcut',
     'Approve self-hosted GitLab origins',
@@ -105,14 +106,14 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
     'Keep repository source local',
   ]);
   const featureIcons = [...firstDialog.querySelectorAll('[data-feature-icon]')];
-  assert.equal(featureIcons.length, 27);
+  assert.equal(featureIcons.length, 28);
   assert.ok(featureIcons.every((icon) => icon.querySelector('svg, img')), 'every feature uses a visual icon');
   assert.equal(firstDialog.querySelector('.feature-mark'), null, 'legacy text and Unicode markers were removed');
   const onboardingStyles = firstHost.shadowRoot.querySelector('style').textContent;
   assert.match(onboardingStyles, /var\(--golens-surface-panel\)/);
   assert.match(onboardingStyles, /\.feature-icon \{[^}]*width:40px;[^}]*height:40px;/);
   assert.match(onboardingStyles, /\.feature-icon svg \{[^}]*width:24px;[^}]*height:24px;[^}]*stroke-width:1\.75;/);
-  assert.equal(onboardingVersion, 7);
+  assert.equal(onboardingVersion, 8);
   assert.equal(navigationStarts, 1);
 
   const nextButton = firstDialog.querySelector('[data-action="next-onboarding"]');
@@ -178,7 +179,21 @@ test('onboarding opens once, is accessible, and can be replayed from the popup',
   assert.ok(replayHost, 'popup replay did not reopen onboarding');
   replayHost.shadowRoot.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(window.document.getElementById('golens-onboarding-root'), null);
-  assert.equal(onboardingVersion, 7);
+
+  messageListener({ type: 'golens-show-settings' }, {}, (value) => { response = value; });
+  assert.equal(response.ok, true);
+  const settingsHost = window.document.getElementById('golens-settings-root');
+  assert.ok(settingsHost, 'the compact popup did not open the page-level settings overlay');
+  const settingsFrame = settingsHost.shadowRoot.querySelector('iframe');
+  const settingsDialog = settingsHost.shadowRoot.querySelector('[role="dialog"]');
+  assert.equal(settingsDialog.getAttribute('aria-modal'), 'true');
+  assert.equal(settingsFrame.title, 'GoLens settings');
+  assert.match(settingsFrame.src, /settings\.html$/);
+  assert.match(settingsHost.shadowRoot.querySelector('style').textContent, /width:min\(1080px/);
+  messageListener({ type: 'golens-close-settings' }, {}, (value) => { response = value; });
+  assert.equal(response.ok, true);
+  assert.equal(window.document.getElementById('golens-settings-root'), null);
+  assert.equal(onboardingVersion, 8);
 
   let fullscreenElement = null;
   Object.defineProperty(window.document, 'fullscreenElement', { configurable: true, get: () => fullscreenElement });

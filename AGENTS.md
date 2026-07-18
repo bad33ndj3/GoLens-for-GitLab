@@ -7,7 +7,7 @@ GoLens for GitLab is a dependency-light Manifest V3 browser extension.
 - `content.js` detects GitLab merge requests, mounts the three-button AI-sidebar control strip, owns focus mode and file-search shortcuts, and renders first-run onboarding.
 - `go-navigation.js` connects diff interactions to GitLab source fetching and semantic RPC.
 - `go-semantic-core.js` contains the parser-backed Go symbol index; `go-semantic-worker.js` exposes it through the extension service worker.
-- `popup.*`, `gitlab-lens.css`, and `manifest.json` define the extension UI and configuration.
+- `popup.*` defines compact active-review controls; `settings.*` defines the tabbed settings iframe; `gitlab-lens.css` and `manifest.json` complete the extension UI and configuration.
 - `tests/` contains Node unit tests and the headless browser smoke test.
 - `assets/` contains extension artwork. `vendor/` contains checked-in Tree-sitter runtime files and the Go grammar.
 - `experiments/` documents non-production investigations; do not make production behavior depend on them.
@@ -28,7 +28,7 @@ The manifest injects `go-navigation.js` and `content.js` automatically on GitLab
 
 GitLab navigation can replace the current merge request without reinjecting content scripts. Keep page setup and teardown idempotent, reconcile Turbo/PJAX DOM changes, propagate `chrome.storage.sync` changes to every open tab, and cancel in-flight source requests when a page or GoLens session ends. Exiting browser fullscreen with Escape must also leave review focus.
 
-The three page controls, from top to bottom, turn GoLens on or off, enter or leave fullscreen review focus, and cache related Go packages for the MR head. Hover a Go identifier for its signature and documentation. Plain-click selects its loaded-diff occurrences; Cmd-click on macOS or Ctrl-click elsewhere resolves definitions, usages, or interface implementations. Configurable shortcuts move between occurrences, hunks, files, and in-diff semantic history; `Cmd/Ctrl+P` focuses GitLab's file search and `Shift+F` clears it by default. The toolbar popup is the separate control plane for the global switch, shortcut bindings, self-hosted origin approval, full-project caching, cache size and clearing, and replaying the quick tour.
+The three page controls, from top to bottom, turn GoLens on or off, enter or leave fullscreen review focus, and cache related Go packages for the MR head. Hover a Go identifier for its signature and documentation. Plain-click selects its loaded-diff occurrences; Cmd-click on macOS or Ctrl-click elsewhere resolves definitions, usages, or interface implementations. Configurable shortcuts move between occurrences, hunks, files, and in-diff semantic history; `Cmd/Ctrl+P` focuses GitLab's file search and `Shift+F` clears it by default. The compact toolbar popup owns global enablement, active-project cache status, full-project caching, and the settings entry point. Its gear opens the large tabbed `settings.html` extension iframe inside `#golens-settings-root`; that surface owns review preferences, shortcuts, self-hosted origin approval, cache management, and tour replay.
 
 Keep source access same-origin and commit-pinned. `go-navigation.js` fetches through the signed-in GitLab session and sends semantic work to `go-semantic-worker.js`; the worker parses with checked-in Tree-sitter assets and persists source snapshots in IndexedDB. `chrome.storage.sync.enabled` owns the global preference. `chrome.storage.local.golensOnboardingVersion` owns per-install onboarding state. Popup-to-tab messages belong in `content.js`; cache statistics and clearing are worker messages.
 
@@ -36,7 +36,7 @@ Follow GitLab pagination headers when present and retain the documented page-siz
 
 ## Onboarding Contract
 
-The first supported GitLab MR shows onboarding once per installation. The popup's **Show quick tour** button must always be able to replay it. Keep the modal isolated in `#golens-onboarding-root` Shadow DOM, keyboard accessible as an ARIA modal dialog, dismissible with Escape, and visually aligned with the compact dark/orange/cyan extension UI. Keep its copy synchronized with shipped controls and shortcuts; do not document legacy checklist, dock, dashboard, or `?` help behavior that is not present in production.
+The first supported GitLab MR shows onboarding once per installation. The settings Help page's **Show quick tour** button must always be able to replay it. Keep the modal isolated in `#golens-onboarding-root` Shadow DOM, keyboard accessible as an ARIA modal dialog, dismissible with Escape, and visually aligned with the compact dark/orange/cyan extension UI. Keep its copy synchronized with shipped controls and shortcuts; do not document legacy checklist, dock, dashboard, or `?` help behavior that is not present in production.
 
 Treat onboarding as the complete user-facing feature inventory, including small helpers and popup-only controls. Every added, removed, or changed user-visible behavior must update the relevant onboarding chapter and `tests/content-onboarding.test.js` in the same change; if a behavior genuinely should not be taught, record the reason in the PR description. Keep related capabilities grouped into short navigable chapters rather than one dense screen. When the tour changes materially, increment `ONBOARDING_VERSION` in `content.js` so existing installations see the updated tour once.
 
@@ -48,7 +48,7 @@ Use modern JavaScript modules where supported, two-space indentation, semicolons
 
 Tests use Node's built-in `node:test` and `assert`; DOM fixtures use `happy-dom`. Name tests `*.test.js` and browser scenarios `*-smoke.mjs`. Add regression coverage for GitLab DOM variants, ref/path extraction, worker protocols, and symbol-resolution edge cases. Never allow missing or ambiguous symbols to navigate speculatively.
 
-Put popup DOM, storage, and active-tab message coverage in `tests/popup.test.js`. Cover onboarding first-show, persistence, accessibility, and replay in a focused Happy DOM test; reserve `tests/browser-smoke.mjs` for real extension injection and GitLab integration.
+Put compact popup DOM, storage, and active-tab message coverage in `tests/popup.test.js`; put tabbed settings, permission, cache, and replay coverage in `tests/settings.test.js`. Cover onboarding first-show, persistence, accessibility, overlay mounting, and replay in a focused Happy DOM test; reserve `tests/browser-smoke.mjs` for real extension injection and GitLab integration.
 
 ## Commit & Pull Request Guidelines
 

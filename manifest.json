@@ -40,6 +40,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "settings.html",
         "assets/icons/golens-32.png",
         "assets/icons/golens-128.png",
         "assets/celebrations/golens-approved.png",

@@ -35,7 +35,7 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   globalThis.chrome = {
     storage: {
       sync: { async get(defaults) { return defaults; }, async set() {} },
-      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 7 }; }, async set() {} },
+      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 8 }; }, async set() {} },
       onChanged: { addListener() {} },
     },
     runtime: {

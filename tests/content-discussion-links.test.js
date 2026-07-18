@@ -56,7 +56,7 @@ test('adds exact Changes links to overview line discussions', async () => {
   globalThis.chrome = {
     storage: {
       sync: { async get(defaults) { return defaults; }, async set() {} },
-      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 7 }; }, async set() {} },
+      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 8 }; }, async set() {} },
       onChanged: { addListener(listener) { storageListener = listener; } },
     },
     runtime: {

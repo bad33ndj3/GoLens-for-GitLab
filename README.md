@@ -41,7 +41,7 @@ GoLens for GitLab is a dependency-light Manifest V3 extension for GitLab.com and
 3. Choose **Load unpacked** and select the repository folder.
 4. Refresh a GitLab.com merge-request Changes page.
 
-The three-button control appears beside GitLab's AI-panel button. For a self-hosted instance, open the popup and approve that exact HTTP(S) origin first, then refresh its merge-request page. Use the popup to manage approved origins, enable GoLens globally, cache a full project, clear cached source, or replay the quick tour.
+The three-button control appears beside GitLab's AI-panel button. The compact toolbar popup controls global enablement and full-project caching. Use its gear button to open the large tabbed settings overlay on GitLab, where you can configure shortcuts, approve self-hosted origins, manage cached source, or replay the quick tour. After approving a self-hosted HTTP(S) origin, refresh its merge-request page.
 
 ## Development
 
