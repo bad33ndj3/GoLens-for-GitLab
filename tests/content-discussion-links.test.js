@@ -68,8 +68,16 @@ test('adds exact Changes links to overview line discussions', async () => {
   const settle = async () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
   };
+  const waitFor = async (predicate) => {
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline) {
+      if (predicate()) return;
+      await settle();
+    }
+    assert.ok(predicate(), 'timed out waiting for discussion-link reconciliation');
+  };
   await import('../content.js?content-discussion-links-test');
-  await settle();
+  await waitFor(() => window.document.querySelector('#line-discussion [data-golens-discussion-line-link]'));
 
   const link = window.document.querySelector('#line-discussion [data-golens-discussion-line-link]');
   assert.ok(link);
@@ -88,22 +96,22 @@ test('adds exact Changes links to overview line discussions', async () => {
   const streamedTarget = '/group/project/-/merge_requests/42/diffs?diff_id=78#otherhash_4_9';
   streamed.innerHTML = lineDiscussion('streamed-discussion', streamedTarget);
   window.document.getElementById('activity').append(streamed.firstElementChild);
-  await settle();
+  await waitFor(() => window.document.querySelector('#streamed-discussion [data-golens-discussion-line-link]'));
   assert.equal(
     window.document.querySelector('#streamed-discussion [data-golens-discussion-line-link]').href,
     `https://gitlab.example${streamedTarget}`
   );
 
   storageListener({ enabled: { oldValue: true, newValue: false } }, 'sync');
-  await settle();
+  await waitFor(() => !window.document.querySelector('[data-golens-discussion-line-link]'));
   assert.equal(window.document.querySelector('[data-golens-discussion-line-link]'), null);
 
   storageListener({ enabled: { oldValue: false, newValue: true } }, 'sync');
-  await settle();
+  await waitFor(() => window.document.querySelector('#line-discussion [data-golens-discussion-line-link]'));
   assert.ok(window.document.querySelector('#line-discussion [data-golens-discussion-line-link]'));
 
   window.happyDOM.setURL('https://gitlab.example/group/project/-/merge_requests/42/diffs');
   window.document.dispatchEvent(new window.Event('turbo:load'));
-  await settle();
+  await waitFor(() => !window.document.querySelector('[data-golens-discussion-line-link]'));
   assert.equal(window.document.querySelector('[data-golens-discussion-line-link]'), null);
 });
