@@ -55,6 +55,23 @@ function renderShortcutBindings() {
     button.setAttribute('aria-pressed', String(recordingShortcut === actionID));
     button.closest('.shortcut-row').querySelector('.shortcut-clear').disabled = !shortcutBindings[actionID];
   }
+  const preset = document.querySelector('[data-shortcut-preset]');
+  if (preset && !recordingShortcut) {
+    preset.value = globalThis.GoLensShortcuts.presetForBindings(shortcutBindings);
+    document.querySelector('[data-action="apply-shortcut-preset"]').disabled = !preset.value;
+  }
+}
+
+async function applyShortcutPreset(presetID) {
+  const bindings = globalThis.GoLensShortcuts.presetBindings(presetID);
+  if (!bindings) return false;
+  recordingShortcut = '';
+  shortcutBindings = bindings;
+  await chrome.storage.sync.set({ shortcutBindings });
+  const preset = globalThis.GoLensShortcuts.presets.find(({ id }) => id === presetID);
+  document.querySelector('[data-shortcut-status]').textContent = `${preset.label} shortcuts applied. You can customize individual actions below.`;
+  renderShortcutBindings();
+  return true;
 }
 
 async function saveShortcut(actionID, binding) {
@@ -71,6 +88,20 @@ async function saveShortcut(actionID, binding) {
 
 function wireShortcutControls() {
   const list = document.querySelector('[data-shortcut-list]');
+  const presetSelect = document.querySelector('[data-shortcut-preset]');
+  const customOption = document.createElement('option');
+  customOption.value = '';
+  customOption.textContent = 'Custom';
+  presetSelect.append(customOption);
+  for (const preset of globalThis.GoLensShortcuts.presets) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.textContent = `${preset.label} — ${preset.description}`;
+    presetSelect.append(option);
+  }
+  presetSelect.addEventListener('change', () => {
+    document.querySelector('[data-action="apply-shortcut-preset"]').disabled = !presetSelect.value;
+  });
   for (const action of globalThis.GoLensShortcuts.actions) {
     const row = document.createElement('div');
     row.className = 'shortcut-row';
@@ -83,11 +114,12 @@ function wireShortcutControls() {
     row.querySelector('.shortcut-clear').addEventListener('click', () => saveShortcut(action.id, ''));
     list.append(row);
   }
+  document.querySelector('[data-action="apply-shortcut-preset"]').addEventListener('click', () => applyShortcutPreset(presetSelect.value));
   document.querySelector('[data-action="reset-shortcuts"]').addEventListener('click', async () => {
     recordingShortcut = '';
     shortcutBindings = globalThis.GoLensShortcuts.defaultBindings();
     await chrome.storage.sync.set({ shortcutBindings });
-    document.querySelector('[data-shortcut-status]').textContent = 'All shortcuts reset.';
+    document.querySelector('[data-shortcut-status]').textContent = 'GoLens defaults restored.';
     renderShortcutBindings();
   });
   renderShortcutBindings();

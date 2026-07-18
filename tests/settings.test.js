@@ -71,6 +71,9 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
   tabs[1].click();
   assert.equal(window.document.querySelector('[data-page-title]').textContent, 'Keyboard shortcuts');
   assert.equal(window.document.querySelectorAll('[data-shortcut-binding]').length, 11);
+  const presetSelect = window.document.querySelector('[data-shortcut-preset]');
+  assert.deepEqual([...presetSelect.options].map((option) => option.value), ['', 'golens', 'vscode', 'intellij', 'vim']);
+  assert.equal(presetSelect.value, 'golens');
   const focusBinding = window.document.querySelector('[data-shortcut-binding="focusFileSearch"]');
   focusBinding.click();
   const primaryModifier = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || '') ? { metaKey: true } : { ctrlKey: true };
@@ -78,6 +81,16 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(savedSettings.at(-1).shortcutBindings.focusFileSearch, 'Primary+Alt+ArrowDown');
   assert.equal(savedSettings.at(-1).shortcutBindings.nextOccurrence, '');
+  assert.equal(presetSelect.value, '');
+
+  presetSelect.value = 'vim';
+  presetSelect.dispatchEvent(new window.Event('change'));
+  window.document.querySelector('[data-action="apply-shortcut-preset"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(savedSettings.at(-1).shortcutBindings.semanticJump, 'Ctrl+BracketRight');
+  assert.equal(savedSettings.at(-1).shortcutBindings.nextOccurrence, 'KeyN');
+  assert.equal(presetSelect.value, 'vim');
+  assert.match(window.document.querySelector('[data-shortcut-status]').textContent, /Vim-style shortcuts applied/);
 
   tabs[2].click();
   const hostForm = window.document.querySelector('[data-host-form]');

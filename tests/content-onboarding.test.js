@@ -98,7 +98,7 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
     'Jump from overview discussions to code',
     'Open the settings overlay',
     'Set global review preferences',
-    'Customize every shortcut',
+    'Choose a familiar keymap',
     'Approve self-hosted GitLab origins',
     'Cache the full project',
     'Inspect or clear the source cache',
@@ -113,7 +113,7 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   assert.match(onboardingStyles, /var\(--golens-surface-panel\)/);
   assert.match(onboardingStyles, /\.feature-icon \{[^}]*width:40px;[^}]*height:40px;/);
   assert.match(onboardingStyles, /\.feature-icon svg \{[^}]*width:24px;[^}]*height:24px;[^}]*stroke-width:1\.75;/);
-  assert.equal(onboardingVersion, 8);
+  assert.equal(onboardingVersion, 9);
   assert.equal(navigationStarts, 1);
 
   const nextButton = firstDialog.querySelector('[data-action="next-onboarding"]');
@@ -193,7 +193,7 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   messageListener({ type: 'golens-close-settings' }, {}, (value) => { response = value; });
   assert.equal(response.ok, true);
   assert.equal(window.document.getElementById('golens-settings-root'), null);
-  assert.equal(onboardingVersion, 8);
+  assert.equal(onboardingVersion, 9);
 
   let fullscreenElement = null;
   Object.defineProperty(window.document, 'fullscreenElement', { configurable: true, get: () => fullscreenElement });

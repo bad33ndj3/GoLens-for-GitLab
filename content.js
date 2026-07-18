@@ -1,7 +1,7 @@
 (() => {
   const shortcutDefaults = globalThis.GoLensShortcuts?.defaultBindings?.() || {};
   const defaults = { enabled: true, hideGeneratedFiles: false, shortcutBindings: shortcutDefaults };
-  const ONBOARDING_VERSION = 8;
+  const ONBOARDING_VERSION = 9;
   const ONBOARDING_STORAGE_KEY = 'golensOnboardingVersion';
   const FRIDAY_MR_CREATE_STORAGE_KEY = 'golensFridayMergeRequestCreation';
   const FULL_FILE_EXPANSION_TIMEOUT_MS = 15000;
@@ -870,7 +870,7 @@
                 <ul class="feature-list">
                   <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Open the settings overlay</strong><p>Use the gear in the compact browser menu to open a large tabbed settings surface over the active GitLab page. Close it with <kbd>Esc</kbd>, the close button, or the backdrop.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Set global review preferences</strong><p>Enable or disable GoLens everywhere and choose whether GitLab-marked generated files should be hidden.</p></div></li>
-                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Customize every shortcut</strong><p>Record, clear, or reset each navigation binding separately. Assigning a binding already in use moves it to the newly chosen action.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Choose a familiar keymap</strong><p>Apply GoLens, VS Code, IntelliJ IDEA, or Vim-style bindings, then customize or clear any individual action. Vim-style changes shortcuts only; it does not add modes or command sequences.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Approve self-hosted GitLab origins</strong><p>GitLab.com works automatically. Add or remove each self-hosted HTTP(S) origin from the extension menu so GoLens only runs where you explicitly allow it.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache the full project</strong><p>Broaden navigation beyond related MR packages. Progress and availability are reported against the active merge request.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('database')}<div><strong>Inspect or clear the source cache</strong><p>See its browser storage size, package count, and source-record count, or remove every cached snapshot at once.</p></div></li>

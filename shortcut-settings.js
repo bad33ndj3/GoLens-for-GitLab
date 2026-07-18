@@ -13,11 +13,54 @@
     { id: 'historyForward', label: 'Go forward', defaultBinding: 'Ctrl+Shift+Minus' },
   ];
   const ACTION_IDS = new Set(ACTIONS.map(({ id }) => id));
+  const PRESETS = [
+    { id: 'golens', label: 'GoLens', description: 'Browser-safe IDE defaults' },
+    { id: 'vscode', label: 'VS Code', description: 'VS Code navigation conventions' },
+    { id: 'intellij', label: 'IntelliJ IDEA', description: 'IntelliJ Windows/Linux keymap conventions' },
+    { id: 'vim', label: 'Vim-style', description: 'Single-key Vim navigation, without modes' },
+  ];
+  const PRESET_BINDINGS = {
+    vscode: {
+      focusFileSearch: 'Primary+KeyP', clearFileSearch: 'Shift+KeyF', semanticJump: 'Primary+F12',
+      previousOccurrence: 'Shift+F3', nextOccurrence: 'F3',
+      previousHunk: 'Alt+Shift+F5', nextHunk: 'Alt+F5',
+      previousFile: 'Ctrl+PageUp', nextFile: 'Ctrl+PageDown',
+      historyBack: 'Ctrl+Minus', historyForward: 'Ctrl+Shift+Minus',
+    },
+    intellij: {
+      focusFileSearch: 'Ctrl+Shift+KeyN', clearFileSearch: 'Shift+KeyF', semanticJump: 'Ctrl+KeyB',
+      previousOccurrence: 'Shift+F3', nextOccurrence: 'F3',
+      previousHunk: 'Ctrl+Alt+Shift+ArrowUp', nextHunk: 'Ctrl+Alt+Shift+ArrowDown',
+      previousFile: 'Alt+ArrowLeft', nextFile: 'Alt+ArrowRight',
+      historyBack: 'Ctrl+Alt+ArrowLeft', historyForward: 'Ctrl+Alt+ArrowRight',
+    },
+    vim: {
+      focusFileSearch: 'Slash', clearFileSearch: '', semanticJump: 'Ctrl+BracketRight',
+      previousOccurrence: 'Shift+KeyN', nextOccurrence: 'KeyN',
+      previousHunk: 'BracketLeft', nextHunk: 'BracketRight',
+      previousFile: 'Ctrl+KeyP', nextFile: 'Ctrl+KeyN',
+      historyBack: 'Ctrl+KeyO', historyForward: 'Ctrl+KeyI',
+    },
+  };
   const MODIFIER_ORDER = ['Primary', 'Ctrl', 'Alt', 'Shift', 'Meta'];
   const CODE_LABELS = { BracketLeft: '[', BracketRight: ']', Minus: '-', Equal: '=', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Space: 'Space', Escape: 'Esc' };
 
   function isMac() { return /Mac|iPhone|iPad/.test(globalThis.navigator?.platform || ''); }
   function defaultBindings() { return Object.fromEntries(ACTIONS.map(({ id, defaultBinding }) => [id, defaultBinding])); }
+  PRESET_BINDINGS.golens = defaultBindings();
+
+  function presetBindings(presetID) {
+    const preset = PRESET_BINDINGS[presetID];
+    return preset ? { ...preset } : null;
+  }
+
+  function presetForBindings(bindings) {
+    const normalized = mergeBindings(bindings);
+    return PRESETS.find(({ id }) => {
+      const preset = PRESET_BINDINGS[id];
+      return ACTIONS.every(({ id: actionID }) => normalized[actionID] === preset[actionID]);
+    })?.id || '';
+  }
 
   function normalizeBinding(binding) {
     if (binding === '') return '';
@@ -80,5 +123,5 @@
     return { bindings: next, displaced };
   }
 
-  globalThis.GoLensShortcuts = { actions: ACTIONS.map((action) => ({ ...action })), defaultBindings, mergeBindings, normalizeBinding, bindingForEvent, matchesEvent, displayBinding, assignBinding };
+  globalThis.GoLensShortcuts = { actions: ACTIONS.map((action) => ({ ...action })), presets: PRESETS.map((preset) => ({ ...preset })), defaultBindings, presetBindings, presetForBindings, mergeBindings, normalizeBinding, bindingForEvent, matchesEvent, displayBinding, assignBinding };
 })();

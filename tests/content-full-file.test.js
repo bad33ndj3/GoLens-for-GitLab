@@ -124,7 +124,7 @@ test('adds idempotent full-file controls for Rapid and legacy diffs', async () =
   globalThis.chrome = {
     storage: {
       sync: { async get(defaults) { return defaults; }, async set() {} },
-      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 8 }; }, async set() {} },
+      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 9 }; }, async set() {} },
       onChanged: { addListener(listener) { storageListener = listener; } },
     },
     runtime: {

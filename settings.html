@@ -57,6 +57,11 @@
 
         <section class="settings-panel" id="settings-panel-shortcuts" role="tabpanel" aria-labelledby="settings-tab-shortcuts" data-settings-panel="shortcuts" hidden>
           <div class="shortcut-heading"><div><h2>Keyboard shortcuts</h2><p>Click a binding, then press a new shortcut.</p></div><button type="button" data-action="reset-shortcuts">Reset defaults</button></div>
+          <div class="shortcut-preset">
+            <label for="golens-shortcut-preset"><strong>Keymap preset</strong><small>Applying a preset replaces the bindings below. You can still edit every action afterward.</small></label>
+            <select id="golens-shortcut-preset" data-shortcut-preset aria-label="Shortcut keymap preset"></select>
+            <button type="button" data-action="apply-shortcut-preset">Apply preset</button>
+          </div>
           <div class="shortcut-list" data-shortcut-list></div>
           <p class="inline-status" data-shortcut-status role="status" aria-live="polite"></p>
         </section>
