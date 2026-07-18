@@ -14,6 +14,7 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
         <div data-testid="file-browser"><input id="file-search" placeholder="Search (e.g. *.vue)" value="*.go"></div>
         <textarea id="comment-editor"></textarea>
         <div id="rich-editor" contenteditable="true"></div>
+        <div id="dialog" role="dialog"><button id="dialog-button">Keep focus</button></div>
       </div>
     </body></html>
   `);
@@ -23,16 +24,18 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   globalThis.MutationObserver = window.MutationObserver;
   globalThis.Event = window.Event;
   globalThis.CustomEvent = window.CustomEvent;
+  const navigationActions = [];
   globalThis.GoLensGoNavigation = {
     init() {},
     teardown() {},
+    runNavigationAction(action) { navigationActions.push(action); return true; },
     async mergeRequestPreloadStatus() { return { status: 'missing' }; },
     invalidateCacheState() {},
   };
   globalThis.chrome = {
     storage: {
       sync: { async get(defaults) { return defaults; }, async set() {} },
-      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 6 }; }, async set() {} },
+      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 7 }; }, async set() {} },
       onChanged: { addListener() {} },
     },
     runtime: {
@@ -41,6 +44,7 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
     },
   };
 
+  await import('../shortcut-settings.js?content-shortcuts-test');
   await import('../content.js?content-shortcuts-test');
   await wait(0);
 
@@ -49,25 +53,44 @@ test('file-search shortcuts do not consume input in GitLab editors', async () =>
   const richEditor = window.document.getElementById('rich-editor');
 
   commentEditor.focus();
-  const shiftF = new window.KeyboardEvent('keydown', { key: 'F', shiftKey: true, bubbles: true, cancelable: true });
+  const shiftF = new window.KeyboardEvent('keydown', { key: 'F', code: 'KeyF', shiftKey: true, bubbles: true, cancelable: true });
   commentEditor.dispatchEvent(shiftF);
   assert.equal(shiftF.defaultPrevented, false);
   assert.equal(fileSearch.value, '*.go');
   assert.equal(window.document.activeElement, commentEditor);
 
-  const commandP = new window.KeyboardEvent('keydown', { key: 'p', metaKey: true, bubbles: true, cancelable: true });
+  const commandP = new window.KeyboardEvent('keydown', { key: 'p', code: 'KeyP', metaKey: true, bubbles: true, cancelable: true });
   richEditor.dispatchEvent(commandP);
   assert.equal(commandP.defaultPrevented, false);
   assert.equal(fileSearch.value, '*.go');
 
-  const pageShiftF = new window.KeyboardEvent('keydown', { key: 'F', shiftKey: true, bubbles: true, cancelable: true });
+  window.document.body.tabIndex = -1;
+  window.document.body.focus();
+  const pageShiftF = new window.KeyboardEvent('keydown', { key: 'F', code: 'KeyF', shiftKey: true, bubbles: true, cancelable: true });
   window.document.body.dispatchEvent(pageShiftF);
   assert.equal(pageShiftF.defaultPrevented, true);
   assert.equal(fileSearch.value, '');
 
   fileSearch.value = '*.go';
-  const pageCommandP = new window.KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true, cancelable: true });
+  const pageCommandP = new window.KeyboardEvent('keydown', { key: 'p', code: 'KeyP', metaKey: true, bubbles: true, cancelable: true });
   window.document.body.dispatchEvent(pageCommandP);
   assert.equal(pageCommandP.defaultPrevented, true);
   assert.equal(window.document.activeElement, fileSearch);
+
+  fileSearch.value = '*.go';
+  const searchShiftF = new window.KeyboardEvent('keydown', { key: 'F', code: 'KeyF', shiftKey: true, bubbles: true, cancelable: true });
+  fileSearch.dispatchEvent(searchShiftF);
+  assert.equal(searchShiftF.defaultPrevented, false);
+  assert.equal(fileSearch.value, '*.go');
+
+  const dialogButton = window.document.getElementById('dialog-button');
+  dialogButton.focus();
+  dialogButton.dispatchEvent(new window.KeyboardEvent('keydown', { key: ']', code: 'BracketRight', altKey: true, bubbles: true, cancelable: true }));
+  assert.deepEqual(navigationActions, []);
+
+  window.document.body.focus();
+  const nextOccurrence = new window.KeyboardEvent('keydown', { key: ']', code: 'BracketRight', altKey: true, bubbles: true, cancelable: true });
+  window.document.body.dispatchEvent(nextOccurrence);
+  assert.equal(nextOccurrence.defaultPrevented, true);
+  assert.deepEqual(navigationActions, ['nextOccurrence']);
 });

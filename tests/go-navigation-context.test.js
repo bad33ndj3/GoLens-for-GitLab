@@ -743,3 +743,29 @@ test('extracts paths and file context from current Rapid Diffs custom elements',
   );
   assert.deepEqual(helpers.lineContextFor(cell), { line: 9, side: 'new' });
 });
+
+test('finds identifier-boundary occurrences only in loaded Go diff code', () => {
+  const previousDocument = globalThis.document;
+  const previousNodeFilter = globalThis.NodeFilter;
+  const window = new Window({ url: globalThis.location.href });
+  const sha = 'd'.repeat(40);
+  window.document.body.innerHTML = `
+    <section class="diff-file" data-file-path="pkg/run.go">
+      <a class="file-title-name" href="https://gitlab.example/group/project/-/blob/${sha}/pkg/run.go">pkg/run.go</a>
+      <table><tbody>
+        <tr class="new"><td class="new_line"><a aria-label="Added line 1">1</a></td><td class="line_content">Run Runner Run</td></tr>
+        <tr><td class="new_line"><a aria-label="Added line 2">2</a></td><td class="line_content"><span>Run</span>()</td></tr>
+      </tbody></table>
+    </section>`;
+  globalThis.document = window.document;
+  globalThis.NodeFilter = window.NodeFilter;
+  try {
+    assert.equal(helpers.occurrenceRanges('Run').length, 3);
+    assert.equal(helpers.identifierBoundary('_'), false);
+    assert.equal(helpers.hunkTargets().length, 1);
+    assert.equal(helpers.locationKey({ path: 'pkg/run.go', line: 2 }), 'pkg/run.go:2:new');
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.NodeFilter = previousNodeFilter;
+  }
+});

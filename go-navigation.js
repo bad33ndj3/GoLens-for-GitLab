@@ -47,6 +47,14 @@
     fullSearch: null,
     abortController: null,
     ui: null,
+    selectedIdentifier: '',
+    occurrences: [],
+    occurrenceIndex: -1,
+    occurrenceRefreshTimer: null,
+    diffObserver: null,
+    history: [],
+    historyIndex: -1,
+    elementNavigation: { hunk: null, file: null },
   };
 
   function projectContext() {
@@ -175,9 +183,16 @@
     return hashMatch ? Number(hashMatch[1]) : 0;
   }
 
-  function lineAnchorFor(root, line) {
+  function lineAnchorFor(root, line, preferredSide = '') {
     const matches = [...root.querySelectorAll('a[href*="#"], [data-line-number]')]
       .filter((anchor) => lineFromAnchor(anchor) === line);
+    if (preferredSide) {
+      const preferred = matches.find((anchor) => {
+        const context = `${anchor.getAttribute('aria-label') || ''} ${anchor.closest('td, [role="cell"], [role="gridcell"]')?.className || ''}`;
+        return preferredSide === 'old' ? /deleted|old/i.test(context) : !/deleted|old/i.test(context);
+      });
+      if (preferred) return preferred;
+    }
     return matches.find((anchor) => !/deleted|old/i.test(`${anchor.getAttribute('aria-label') || ''} ${anchor.closest('td, [role="cell"], [role="gridcell"]')?.className || ''}`)) || matches[0] || null;
   }
 
@@ -205,9 +220,9 @@
     });
   }
 
-  async function revealLine(root, line) {
+  async function revealLine(root, line, preferredSide = '') {
     for (let attempt = 0; attempt < 25; attempt++) {
-      const target = lineAnchorFor(root, line);
+      const target = lineAnchorFor(root, line, preferredSide);
       if (target) return target;
       const visibleLines = [...root.querySelectorAll('a[href*="#"], [data-line-number]')].map(lineFromAnchor);
       const direction = expansionDirectionForLine(line, visibleLines);
@@ -219,7 +234,7 @@
       button.click();
       await updated;
     }
-    return lineAnchorFor(root, line);
+    return lineAnchorFor(root, line, preferredSide);
   }
 
   function lineContextFor(cell) {
@@ -1248,6 +1263,7 @@
       path: line.side === 'old' ? file.oldPath : file.newPath,
       line: line.line,
       character: target.character + 1,
+      side: line.side,
     };
   }
 
@@ -1324,12 +1340,9 @@
     const matchingRoots = [...document.querySelectorAll('diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]')];
     return matchingRoots.find((candidate) => {
       const data = rapidFileData(candidate);
-      const visiblePath = candidate.getAttribute('data-file-path')
-        || data.new_path
-        || data.old_path
-        || candidate.querySelector('[data-testid="file-title"], .file-title-name, .rd-diff-file-link')?.textContent
-        || '';
-      return normalizePath(visiblePath) === definition.path;
+      const paths = [candidate.getAttribute('data-file-path'), data.new_path, data.old_path, candidate.querySelector('[data-testid="file-title"], .file-title-name, .rd-diff-file-link')?.textContent]
+        .filter(Boolean).map(normalizePath);
+      return paths.includes(normalizePath(definition.path));
     });
   }
 
@@ -1339,14 +1352,58 @@
       : { kind: 'newTab', label: 'Open in a new tab' };
   }
 
-  async function openDefinition(definition) {
+  function locationKey(location) {
+    return location ? `${location.path}:${location.line}:${location.side || 'new'}` : '';
+  }
+
+  function flashDestination(target) {
+    if (!target) return;
+    target.removeAttribute('data-golens-navigation-destination');
+    void target.offsetWidth;
+    target.setAttribute('data-golens-navigation-destination', '');
+    setTimeout(() => target.removeAttribute('data-golens-navigation-destination'), 1300);
+  }
+
+  async function navigateToLocation(location, { smooth = true } = {}) {
+    const root = visibleDiffRootForDefinition(location);
+    if (!root) return false;
+    const line = await revealLine(root, location.line, location.side);
+    const target = line?.closest('tr, [role="row"]') || root;
+    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    target.scrollIntoView({ behavior: smooth && !reducedMotion ? 'smooth' : 'auto', block: 'center' });
+    flashDestination(target);
+    return true;
+  }
+
+  function recordSemanticJump(source, destination) {
+    if (!source || !destination || locationKey(source) === locationKey(destination)) return;
+    const retained = state.history.slice(0, state.historyIndex + 1);
+    if (locationKey(retained.at(-1)) !== locationKey(source)) retained.push(source);
+    retained.push(destination);
+    state.history = retained.slice(-100);
+    state.historyIndex = state.history.length - 1;
+  }
+
+  async function navigateHistory(direction) {
+    const nextIndex = state.historyIndex + direction;
+    if (nextIndex < 0 || nextIndex >= state.history.length) {
+      toast(direction < 0 ? 'No earlier semantic location.' : 'No later semantic location.');
+      return false;
+    }
+    if (!await navigateToLocation(state.history[nextIndex])) {
+      toast('That semantic location is no longer loaded in this diff.');
+      return false;
+    }
+    state.historyIndex = nextIndex;
+    return true;
+  }
+
+  async function openDefinition(definition, sourceLocation = null) {
     const destinationLine = destinationLineForDefinition(definition);
     const root = visibleDiffRootForDefinition(definition);
     if (root) {
-      const line = await revealLine(root, destinationLine);
-      const target = line?.closest('tr, [role="row"]') || root;
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      target.animate?.([{ outline: '2px solid #fc6d26' }, { outline: '2px solid transparent' }], { duration: 1600 });
+      const destination = { path: definition.path, line: destinationLine, side: 'new' };
+      if (await navigateToLocation(destination)) recordSemanticJump(sourceLocation, destination);
       return;
     }
     const context = projectContext();
@@ -1408,6 +1465,7 @@
   }
 
   function choiceButton({ title, fullTitle = title, context = '', documentation = '', kind = '', definition = null, externalURL = '' }) {
+    const sourceLocation = sourceLocationForTarget(state.activeTarget);
     const destination = definition ? definitionDestination(definition) : { kind: 'newTab', label: 'Open in a new tab' };
     const button = document.createElement('button');
     const copy = document.createElement('span');
@@ -1441,7 +1499,7 @@
     button.append(copy, destinationIcon(destination));
     button.addEventListener('click', () => {
       hidePopover();
-      if (definition) openDefinition(definition);
+      if (definition) openDefinition(definition, sourceLocation);
       else if (externalURL) window.open(externalURL, '_blank', 'noopener');
     });
     return button;
@@ -1916,6 +1974,161 @@
     return caret ? { ...caret, cell, x: event.clientX, y: event.clientY } : null;
   }
 
+  const DIFF_ROOT_SELECTOR = 'diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]';
+  const CODE_CELL_SELECTOR = 'td.line_content, td[class*="line-content"], [data-testid="diff-line-content"], [data-testid="rd-diff-line-content"], .rd-diff-code, .rd-diff-line-code';
+
+  function diffFileRoots() {
+    return [...document.querySelectorAll(DIFF_ROOT_SELECTOR)].filter((candidate) => {
+      const outerRapid = candidate.parentElement?.closest?.('diff-file');
+      return !outerRapid || outerRapid === candidate;
+    });
+  }
+
+  function identifierBoundary(character) { return !character || !/[\p{L}\p{N}_]/u.test(character); }
+
+  function occurrenceRanges(identifier) {
+    const occurrences = [];
+    if (!identifier) return occurrences;
+    for (const root of diffFileRoots()) {
+      const firstCell = root.querySelector(CODE_CELL_SELECTOR);
+      if (!firstCell || !fileContextFor(firstCell)) continue;
+      for (const cell of root.querySelectorAll(CODE_CELL_SELECTOR)) {
+        const cellSource = cell.textContent || '';
+        const walker = document.createTreeWalker(cell, globalThis.NodeFilter?.SHOW_TEXT || 4);
+        let node;
+        while ((node = walker.nextNode())) {
+          const text = node.nodeValue || '';
+          const prefix = document.createRange();
+          prefix.selectNodeContents(cell);
+          try { prefix.setEnd(node, 0); } catch { continue; }
+          const nodeOffset = prefix.toString().length;
+          let from = 0;
+          while (from <= text.length - identifier.length) {
+            const index = text.indexOf(identifier, from);
+            if (index < 0) break;
+            const end = index + identifier.length;
+            const hit = identifierAtCharacter(cellSource, nodeOffset + index);
+            if (identifierBoundary(text[index - 1]) && identifierBoundary(text[end]) && hit?.identifier === identifier && hit.character === nodeOffset + index) {
+              const range = document.createRange();
+              range.setStart(node, index);
+              range.setEnd(node, end);
+              occurrences.push({ range, cell, row: cell.closest('tr, [role="row"]') || cell });
+            }
+            from = index + identifier.length;
+          }
+        }
+      }
+    }
+    return occurrences;
+  }
+
+  function paintOccurrences() {
+    const highlights = globalThis.CSS?.highlights;
+    if (!highlights || typeof globalThis.Highlight !== 'function') return;
+    highlights.delete('golens-symbol-occurrence');
+    highlights.delete('golens-symbol-current');
+    if (!state.occurrences.length) return;
+    highlights.set('golens-symbol-occurrence', new globalThis.Highlight(...state.occurrences.map(({ range }) => range)));
+    if (state.occurrenceIndex >= 0) highlights.set('golens-symbol-current', new globalThis.Highlight(state.occurrences[state.occurrenceIndex].range));
+  }
+
+  function refreshOccurrences() {
+    clearTimeout(state.occurrenceRefreshTimer);
+    state.occurrenceRefreshTimer = null;
+    const previousCell = state.occurrences[state.occurrenceIndex]?.cell;
+    state.occurrences = occurrenceRanges(state.selectedIdentifier);
+    state.occurrenceIndex = previousCell ? state.occurrences.findIndex(({ cell }) => cell === previousCell) : (state.occurrences.length ? 0 : -1);
+    if (state.occurrenceIndex < 0 && state.occurrences.length) state.occurrenceIndex = 0;
+    paintOccurrences();
+  }
+
+  function scheduleOccurrenceRefresh() {
+    if (!state.selectedIdentifier || state.occurrenceRefreshTimer) return;
+    state.occurrenceRefreshTimer = setTimeout(refreshOccurrences, 30);
+  }
+
+  function clearSelectedSymbol() {
+    state.selectedIdentifier = '';
+    state.occurrences = [];
+    state.occurrenceIndex = -1;
+    clearTimeout(state.occurrenceRefreshTimer);
+    state.occurrenceRefreshTimer = null;
+    globalThis.CSS?.highlights?.delete('golens-symbol-occurrence');
+    globalThis.CSS?.highlights?.delete('golens-symbol-current');
+  }
+
+  function selectSymbol(target) {
+    state.selectedIdentifier = target.identifier;
+    refreshOccurrences();
+    const index = state.occurrences.findIndex(({ cell }) => cell === target.cell);
+    if (index >= 0) state.occurrenceIndex = index;
+    paintOccurrences();
+  }
+
+  function navigateOccurrence(direction) {
+    if (!state.occurrences.length) {
+      toast(state.selectedIdentifier ? `No loaded occurrences of ${state.selectedIdentifier}.` : 'Click a Go symbol to select it first.');
+      return false;
+    }
+    state.occurrenceIndex = (state.occurrenceIndex + direction + state.occurrences.length) % state.occurrences.length;
+    const occurrence = state.occurrences[state.occurrenceIndex];
+    paintOccurrences();
+    occurrence.row.scrollIntoView({ behavior: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+    flashDestination(occurrence.row);
+    toast(`${state.selectedIdentifier} · ${state.occurrenceIndex + 1} of ${state.occurrences.length}`);
+    return true;
+  }
+
+  function changedRow(row) {
+    if (row.matches?.('.new, .old, .added, .deleted, [data-hunk-lines]')) return true;
+    return [...row.querySelectorAll('a[aria-label]')].some((anchor) => /^(?:added|removed) line\s+\d+/i.test(anchor.getAttribute('aria-label') || ''));
+  }
+
+  function hunkTargets() {
+    const explicit = [...document.querySelectorAll('[data-hunk-lines], .diff-hunk, [data-testid="diff-hunk"], [data-testid="rd-diff-hunk"]')];
+    if (explicit.length) return explicit;
+    const hunks = [];
+    for (const root of diffFileRoots()) {
+      let previousChanged = false;
+      for (const row of root.querySelectorAll('tr, [role="row"]')) {
+        const changed = changedRow(row);
+        if (changed && !previousChanged) hunks.push(row);
+        previousChanged = changed;
+      }
+    }
+    return hunks;
+  }
+
+  function navigateElements(elements, direction, emptyMessage, kind) {
+    if (!elements.length) { toast(emptyMessage); return false; }
+    const currentIndex = elements.indexOf(state.elementNavigation[kind]);
+    let index;
+    if (currentIndex >= 0) index = (currentIndex + direction + elements.length) % elements.length;
+    else {
+      const viewportPoint = innerHeight * .35;
+      const firstAfter = elements.findIndex((element) => element.getBoundingClientRect().top >= viewportPoint);
+      index = direction > 0 ? (firstAfter < 0 ? 0 : firstAfter) : (firstAfter <= 0 ? elements.length - 1 : firstAfter - 1);
+    }
+    const target = elements[index];
+    state.elementNavigation[kind] = target;
+    target.scrollIntoView({ behavior: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    flashDestination(target);
+    return true;
+  }
+
+  function runNavigationAction(action) {
+    if (!state.enabled) return false;
+    if (action === 'previousOccurrence') return navigateOccurrence(-1);
+    if (action === 'nextOccurrence') return navigateOccurrence(1);
+    if (action === 'previousHunk') return navigateElements(hunkTargets(), -1, 'No loaded diff hunks.', 'hunk');
+    if (action === 'nextHunk') return navigateElements(hunkTargets(), 1, 'No loaded diff hunks.', 'hunk');
+    if (action === 'previousFile') return navigateElements(diffFileRoots(), -1, 'No loaded diff files.', 'file');
+    if (action === 'nextFile') return navigateElements(diffFileRoots(), 1, 'No loaded diff files.', 'file');
+    if (action === 'historyBack') { navigateHistory(-1); return true; }
+    if (action === 'historyForward') { navigateHistory(1); return true; }
+    return false;
+  }
+
   function markTarget(element) {
     if (state.activeElement === element) return;
     state.activeElement?.removeAttribute('data-golens-go-target');
@@ -1973,6 +2186,7 @@
 
   function onKeyDown(event) {
     if (event.key !== 'Escape') return;
+    if ([...event.composedPath(), document.activeElement].some((target) => target?.closest?.('input, textarea, select, [contenteditable], dialog, [role="dialog"], [aria-modal="true"]'))) return;
     const fullSearchOpen = state.ui && !state.ui.shadowRoot.querySelector('.full-search-backdrop').hidden;
     if (fullSearchOpen) {
       event.preventDefault();
@@ -1980,7 +2194,13 @@
       minimizeFullSearch();
       return;
     }
-    if (state.popoverMode === 'hidden') return;
+    if (state.popoverMode === 'hidden') {
+      if (state.selectedIdentifier) {
+        event.preventDefault();
+        clearSelectedSymbol();
+      }
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     hidePopover();
@@ -2001,6 +2221,10 @@
     if (eventIsInsideUI(event)) return;
     if (!(event.metaKey || event.ctrlKey)) {
       dismissPinnedPopoverFromOutside(event);
+      const selection = globalThis.getSelection?.();
+      const target = (!selection || selection.isCollapsed) ? targetAtEvent(event) : null;
+      if (target) selectSymbol(target);
+      else if (!codeCellFor(event.target)) clearSelectedSymbol();
       return;
     }
     const target = targetAtEvent(event);
@@ -2025,10 +2249,10 @@
       else if (result.status === 'resolved' && result.isDefinition) {
         showLoading(`Finding usages of ${target.identifier}…`, target);
         const references = await findReferencesAt(target, result.definition);
-        if (referenceNavigationAction(references) === 'open') openDefinition(references.locations[0]);
+        if (referenceNavigationAction(references) === 'open') openDefinition(references.locations[0], sourceLocationForTarget(target));
         else showResult(references, target);
       }
-      else if (result.status === 'resolved') openDefinition(result.definition);
+      else if (result.status === 'resolved') openDefinition(result.definition, sourceLocationForTarget(target));
       else if (result.status === 'projectPackage') {
         showResult(result, target);
         pinPopover(target);
@@ -2053,6 +2277,8 @@
     document.addEventListener('click', onClick, true);
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('visibilitychange', refreshMergeRequestRefs, true);
+    state.diffObserver = new MutationObserver(scheduleOccurrenceRefresh);
+    state.diffObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
     status('idle', 'Go intelligence · hover code to start');
   }
 
@@ -2073,6 +2299,12 @@
     state.abortController?.abort();
     state.abortController = null;
     clearTimeout(state.hoverTimer);
+    state.diffObserver?.disconnect();
+    state.diffObserver = null;
+    clearSelectedSymbol();
+    state.history = [];
+    state.historyIndex = -1;
+    state.elementNavigation = { hunk: null, file: null };
     clearPinnedPopover();
     markTarget(null);
     document.removeEventListener('mousemove', onMouseMove, true);
@@ -2116,6 +2348,7 @@
     preloadFullProject,
     fullProjectPreloadStatus,
     invalidateCacheState,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown },
+    runNavigationAction,
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, changedRow, hunkTargets, locationKey },
   };
 })();

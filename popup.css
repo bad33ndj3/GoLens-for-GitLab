@@ -33,6 +33,20 @@ input[type="checkbox"]:focus-visible { outline:2px solid var(--golens-accent-foc
 .preference-switch code { color:var(--golens-text-secondary); font:inherit; }
 .preference-switch input { margin-top:2px; }
 
+.shortcut-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.shortcut-heading button { padding:2px 0; background:transparent; color:var(--golens-text-muted); font-size:10px; text-decoration:underline; text-decoration-color:transparent; text-underline-offset:3px; }
+.shortcut-heading button:hover { color:var(--golens-text-primary); text-decoration-color:currentColor; }
+.shortcut-list { display:grid; gap:5px; }
+.shortcut-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:5px; align-items:center; min-height:30px; }
+.shortcut-row > span { color:var(--golens-text-secondary); font-size:11px; }
+.shortcut-binding { min-width:78px; min-height:27px; padding:0 7px; border:1px solid var(--golens-border-default); border-bottom-width:2px; border-radius:var(--golens-radius-control); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:650 10px/1 var(--golens-font-mono); }
+.shortcut-binding:hover { border-color:var(--golens-accent-info); background:var(--golens-surface-hover); }
+.shortcut-binding[data-recording="true"] { border-color:var(--golens-accent-primary); color:var(--golens-accent-primary-hover); }
+.shortcut-clear { width:26px; height:26px; border-radius:var(--golens-radius-control); background:transparent; color:var(--golens-text-muted); font-size:15px; }
+.shortcut-clear:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+.shortcut-clear:disabled { cursor:default; opacity:.25; }
+.shortcut-status { min-height:15px; margin-top:6px; color:var(--golens-text-muted); font-size:10px; }
+
 .host-access { display:grid; gap:10px; }
 .host-access .section-heading { margin-bottom:0; }
 .host-form { display:grid; gap:5px; }

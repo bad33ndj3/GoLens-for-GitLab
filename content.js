@@ -1,6 +1,7 @@
 (() => {
-  const defaults = { enabled: true, hideGeneratedFiles: false };
-  const ONBOARDING_VERSION = 6;
+  const shortcutDefaults = globalThis.GoLensShortcuts?.defaultBindings?.() || {};
+  const defaults = { enabled: true, hideGeneratedFiles: false, shortcutBindings: shortcutDefaults };
+  const ONBOARDING_VERSION = 7;
   const ONBOARDING_STORAGE_KEY = 'golensOnboardingVersion';
   const FRIDAY_MR_CREATE_STORAGE_KEY = 'golensFridayMergeRequestCreation';
   const FULL_FILE_EXPANSION_TIMEOUT_MS = 15000;
@@ -791,7 +792,9 @@
                 <ul class="feature-list">
                   <li class="feature">${onboardingFeatureIcon('hover')}<div><strong>Hover for Go insight</strong><p>See a symbol’s kind, signature, documentation, and source location. Hovering a definition also finds its usages.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Modifier-click to navigate</strong><p><kbd>Cmd</kbd>-click on macOS or <kbd>Ctrl</kbd>-click elsewhere. Uses go to definitions, definitions find usages, and interfaces find implementations.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Select and revisit occurrences</strong><p>Plain-click a Go identifier to highlight same-spelling occurrences in the loaded diff. Use your previous and next occurrence shortcuts to move between them.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Stay in the diff when possible</strong><p>Targets already in the diff scroll into view. Other project files open at the exact line in a new tab; packages, built-ins, and standard-library symbols open their directory or documentation.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Retrace semantic jumps</strong><p>Go back and forward through in-diff definition and usage jumps without changing the browser’s page history.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('copy')}<div><strong>Use the small popover tools</strong><p>Move into the result to pin it, copy its <span class="feature-note">file:line:column</span>, expand long signatures, choose ambiguous matches, or press <kbd>Esc</kbd> to close.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Check the search scope</strong><p>Every usage and implementation result says whether GoLens searched the current package, a limited set of indexed packages, or the complete project. Use <span class="feature-note">Show more</span> for additional matches.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Search the complete project explicitly</strong><p>Incomplete results can exhaust GitLab’s commit-pinned code search and index only matching Go packages. The progress dialog can be minimized or cancelled, then GoLens refreshes the result when coverage is complete.</p></div></li>
@@ -806,6 +809,7 @@
                   <li class="feature">${onboardingFeatureIcon('rapid')}<div><strong>Use Rapid Diffs automatically</strong><p>When GitLab offers its Rapid Diffs opt-in on the Changes page, GoLens enables it for the review.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('fullFile')}<div><strong>Show a full file</strong><p>Use the expand icon in a file header to reveal all available lines, then switch back to changes-only where GitLab supports it.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Reach file search from the keyboard</strong><p><kbd>Cmd/Ctrl P</kbd> focuses and selects GitLab’s file search. <kbd>Shift F</kbd> clears it and returns to the diff.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Move by hunk or file</strong><p>Use individually configurable previous and next shortcuts to cross loaded change blocks and files. Each destination is briefly highlighted.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('testFile')}<div><strong>Spot Go test files</strong><p>Files ending in <span class="feature-note">_test.go</span> receive a subtle green label in the file tree.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('generated')}<div><strong>Optionally hide generated files</strong><p>Enable this in the extension menu to hide files GitLab marks as generated through <span class="feature-note">.gitattributes</span>. Large collapsed files stay visible, and generated-only folders are dimmed.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('discussion')}<div><strong>Jump from overview discussions to code</strong><p>Line discussions on the merge request overview gain a <span class="feature-note">View in changes</span> link to the exact commented line.</p></div></li>
@@ -817,6 +821,7 @@
                 <p class="chapter-intro">The extension menu manages behavior shared by all open GitLab tabs and gives you direct control over stored source.</p>
                 <ul class="feature-list">
                   <li class="feature">${onboardingFeatureIcon('settings')}<div><strong>Set global review preferences</strong><p>Enable or disable GoLens everywhere and choose whether GitLab-marked generated files should be hidden.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Customize every shortcut</strong><p>Record, clear, or reset each navigation binding separately. Assigning a binding already in use moves it to the newly chosen action.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Approve self-hosted GitLab origins</strong><p>GitLab.com works automatically. Add or remove each self-hosted HTTP(S) origin from the extension menu so GoLens only runs where you explicitly allow it.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache the full project</strong><p>Broaden navigation beyond related MR packages. Progress and availability are reported against the active merge request.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('database')}<div><strong>Inspect or clear the source cache</strong><p>See its browser storage size, package count, and source-record count, or remove every cached snapshot at once.</p></div></li>
@@ -1439,15 +1444,15 @@
       || [...document.querySelectorAll('input[placeholder]')].find((input) => /search\s*\(e\.g\.\s*\*\.vue\)/i.test(input.placeholder));
   }
 
-  function isEditableShortcutEvent(event) {
-    return event.composedPath().some((target) => {
-      const editable = target?.closest?.('input, textarea, [contenteditable]');
-      return Boolean(
-        editable
-        && !editable.disabled
-        && !editable.readOnly
-        && editable.getAttribute('contenteditable') !== 'false',
-      );
+  function isBlockedShortcutEvent(event) {
+    const search = nativeFileSearch();
+    const targets = [...event.composedPath(), document.activeElement].filter(Boolean);
+    return targets.some((target) => {
+      if (target === search) return true;
+      const blocked = target?.closest?.('input, textarea, select, [contenteditable], dialog, [role="dialog"], [aria-modal="true"]');
+      if (!blocked) return false;
+      if (!blocked.matches?.('input, textarea, select, [contenteditable]')) return true;
+      return !blocked.disabled && !blocked.readOnly && blocked.getAttribute('contenteditable') !== 'false';
     });
   }
 
@@ -1469,13 +1474,17 @@
   }
 
   document.addEventListener('keydown', (event) => {
-    if (!state.enabled || !isMergeRequest() || event.isComposing || isEditableShortcutEvent(event)) return;
-    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'p' && focusNativeFileSearch()) {
-      event.preventDefault();
-    }
-    if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'f' && closeNativeFileSearch()) {
-      event.preventDefault();
-    }
+    if (!state.enabled || !isMergeRequest() || event.isComposing || isBlockedShortcutEvent(event)) return;
+    const shortcuts = globalThis.GoLensShortcuts;
+    const bindings = shortcuts?.mergeBindings(state.settings.shortcutBindings);
+    if (!shortcuts || !bindings) return;
+    const action = shortcuts.actions.find(({ id }) => shortcuts.matchesEvent(bindings[id], event))?.id;
+    if (!action) return;
+    let handled = false;
+    if (action === 'focusFileSearch') handled = focusNativeFileSearch();
+    else if (action === 'clearFileSearch') handled = closeNativeFileSearch();
+    else handled = globalThis.GoLensGoNavigation?.runNavigationAction?.(action) === true;
+    if (handled) event.preventDefault();
   }, true);
   document.addEventListener('click', onNativeMergeRequestActionClick, true);
 
@@ -1552,6 +1561,7 @@
     if (!isGitLab()) return;
     try {
       state.settings = await chrome.storage.sync.get(defaults);
+      state.settings = { ...state.settings, shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(state.settings.shortcutBindings) || state.settings.shortcutBindings };
     } catch {
       state.settings = defaults;
     }
@@ -1576,6 +1586,9 @@
       if (areaName !== 'sync') return;
       if (typeof changes.hideGeneratedFiles?.newValue === 'boolean') {
         state.settings = { ...state.settings, hideGeneratedFiles: changes.hideGeneratedFiles.newValue };
+      }
+      if (changes.shortcutBindings) {
+        state.settings = { ...state.settings, shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(changes.shortcutBindings.newValue) || changes.shortcutBindings.newValue };
       }
       if (changes.enabled && changes.enabled.newValue !== state.enabled) {
         setEnabled(changes.enabled.newValue).catch(() => undefined);

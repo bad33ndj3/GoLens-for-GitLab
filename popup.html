@@ -35,6 +35,14 @@
           <input type="checkbox" data-setting="hideGeneratedFiles" aria-label="Hide .gitattributes generated files">
         </label>
       </section>
+      <section class="shortcuts" aria-labelledby="shortcuts-title">
+        <div class="section-heading shortcut-heading">
+          <div><h2 id="shortcuts-title">Keyboard shortcuts</h2><p>Click a binding, then press a new shortcut.</p></div>
+          <button type="button" data-action="reset-shortcuts">Reset all</button>
+        </div>
+        <div class="shortcut-list" data-shortcut-list></div>
+        <p class="shortcut-status" data-shortcut-status role="status" aria-live="polite"></p>
+      </section>
       <section class="host-access" aria-labelledby="host-access-title">
         <div class="section-heading">
           <h2 id="host-access-title">Self-hosted GitLab</h2>
@@ -75,6 +83,7 @@
       </button>
       <p class="guide-status" data-onboarding-status role="status"></p>
     </footer>
+    <script src="shortcut-settings.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

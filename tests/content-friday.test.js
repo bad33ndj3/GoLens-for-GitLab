@@ -47,7 +47,7 @@ test('uses the Friday beer kart for MR creation, approval, and merge after 16:00
     storage: {
       sync: { async get(defaults) { return defaults; }, async set() {} },
       local: {
-        async get(defaults) { return { ...defaults, golensOnboardingVersion: 6 }; },
+        async get(defaults) { return { ...defaults, golensOnboardingVersion: 7 }; },
         async set() {},
       },
       onChanged: { addListener() {} },

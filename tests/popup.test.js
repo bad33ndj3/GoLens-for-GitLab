@@ -67,13 +67,24 @@ test('popup starts full-project caching in the active MR tab and restores comple
     },
   };
 
+  await import('../shortcut-settings.js?popup-test');
   await import('../popup.js?popup-test');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(requestedDefaults, { enabled: true, hideGeneratedFiles: false });
+  assert.deepEqual(requestedDefaults, { enabled: true, hideGeneratedFiles: false, shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() });
   const generatedFilesSetting = window.document.querySelector('[data-setting="hideGeneratedFiles"]');
   assert.ok(generatedFilesSetting.checked);
   assert.match(window.document.querySelector('.preferences').textContent, /\.gitattributes/);
   assert.match(window.document.querySelector('.preferences').textContent, /large collapsed files remain visible/);
+  assert.equal(window.document.querySelectorAll('[data-shortcut-binding]').length, 10);
+  assert.match(window.document.querySelector('[data-shortcut-binding="focusFileSearch"]').textContent, /P/);
+  const focusBinding = window.document.querySelector('[data-shortcut-binding="focusFileSearch"]');
+  focusBinding.click();
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { code: 'BracketRight', key: ']', altKey: true, bubbles: true, cancelable: true }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const rebound = savedSettings.at(-1).shortcutBindings;
+  assert.equal(rebound.focusFileSearch, 'Alt+BracketRight');
+  assert.equal(rebound.nextOccurrence, '');
+  assert.match(window.document.querySelector('[data-shortcut-status]').textContent, /Next occurrence is now unassigned/);
   assert.match(window.document.querySelector('.host-access').textContent, /GitLab.com works automatically/);
   assert.match(window.document.querySelector('[data-host-list]').textContent, /No self-hosted origins allowed/);
   assert.doesNotMatch(window.document.querySelector('[data-host-list]').textContent, /%2A/i);

@@ -116,3 +116,26 @@ html.gitlab-lens-review-focus :is(
   text-underline-offset: 2px !important;
   cursor: pointer;
 }
+
+::highlight(golens-symbol-occurrence) {
+  background: color-mix(in srgb, var(--golens-info, #3794ff) 24%, transparent);
+  color: inherit;
+}
+
+::highlight(golens-symbol-current) {
+  background: color-mix(in srgb, var(--golens-primary, #fc6d26) 42%, transparent);
+  text-decoration: underline 2px var(--golens-primary, #fc6d26);
+}
+
+[data-golens-navigation-destination] {
+  animation: golens-navigation-destination 1300ms ease-out;
+}
+
+@keyframes golens-navigation-destination {
+  0%,20% { outline:2px solid var(--golens-primary, #fc6d26); outline-offset:2px; background-color:color-mix(in srgb,var(--golens-primary, #fc6d26) 14%,transparent); }
+  100% { outline:2px solid transparent; outline-offset:2px; background-color:transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-golens-navigation-destination] { animation:none; outline:2px solid var(--golens-primary, #fc6d26); outline-offset:2px; }
+}

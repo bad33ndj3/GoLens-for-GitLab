@@ -14,6 +14,7 @@ const extensionFiles = [
   'SECURITY.md',
   'THIRD_PARTY_NOTICES.md',
   'manifest.json',
+  'shortcut-settings.js',
   'content.js',
   'golens-theme.css',
   'gitlab-lens.css',

@@ -1,6 +1,83 @@
-const defaults = { enabled: true, hideGeneratedFiles: false };
+const defaults = { enabled: true, hideGeneratedFiles: false, shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() };
 let activeTabID = null;
 let fullCachePoll = null;
+let shortcutBindings = globalThis.GoLensShortcuts.defaultBindings();
+let recordingShortcut = '';
+
+function shortcutAction(actionID) {
+  return globalThis.GoLensShortcuts.actions.find(({ id }) => id === actionID);
+}
+
+function renderShortcutBindings() {
+  for (const button of document.querySelectorAll('[data-shortcut-binding]')) {
+    const actionID = button.dataset.shortcutBinding;
+    button.textContent = recordingShortcut === actionID ? 'Press keys…' : globalThis.GoLensShortcuts.displayBinding(shortcutBindings[actionID]);
+    button.dataset.recording = String(recordingShortcut === actionID);
+    button.setAttribute('aria-pressed', String(recordingShortcut === actionID));
+    button.closest('.shortcut-row').querySelector('.shortcut-clear').disabled = !shortcutBindings[actionID];
+  }
+}
+
+async function saveShortcut(actionID, binding) {
+  const result = globalThis.GoLensShortcuts.assignBinding(shortcutBindings, actionID, binding);
+  shortcutBindings = result.bindings;
+  await chrome.storage.sync.set({ shortcutBindings });
+  const status = document.querySelector('[data-shortcut-status]');
+  const action = shortcutAction(actionID);
+  if (result.displaced) {
+    status.textContent = `${action.label} updated; ${shortcutAction(result.displaced).label} is now unassigned.`;
+  } else {
+    status.textContent = binding ? `${action.label} updated.` : `${action.label} is now unassigned.`;
+  }
+  renderShortcutBindings();
+}
+
+function wireShortcutControls() {
+  const list = document.querySelector('[data-shortcut-list]');
+  for (const action of globalThis.GoLensShortcuts.actions) {
+    const row = document.createElement('div');
+    row.className = 'shortcut-row';
+    row.innerHTML = `<span>${action.label}</span><button class="shortcut-binding" type="button" data-shortcut-binding="${action.id}" aria-pressed="false"></button><button class="shortcut-clear" type="button" aria-label="Clear ${action.label}" title="Clear shortcut">×</button>`;
+    const binding = row.querySelector('.shortcut-binding');
+    binding.addEventListener('click', () => {
+      recordingShortcut = recordingShortcut === action.id ? '' : action.id;
+      document.querySelector('[data-shortcut-status]').textContent = recordingShortcut ? 'Press a shortcut. Escape cancels; Backspace clears.' : '';
+      renderShortcutBindings();
+    });
+    row.querySelector('.shortcut-clear').addEventListener('click', () => saveShortcut(action.id, ''));
+    list.append(row);
+  }
+  document.addEventListener('keydown', (event) => {
+    if (!recordingShortcut) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.code === 'Escape') {
+      recordingShortcut = '';
+      document.querySelector('[data-shortcut-status]').textContent = 'Recording cancelled.';
+      renderShortcutBindings();
+      return;
+    }
+    if (['Backspace', 'Delete'].includes(event.code)) {
+      const actionID = recordingShortcut;
+      recordingShortcut = '';
+      saveShortcut(actionID, '');
+      return;
+    }
+    const binding = globalThis.GoLensShortcuts.bindingForEvent(event);
+    if (!binding) return;
+    const actionID = recordingShortcut;
+    recordingShortcut = '';
+    saveShortcut(actionID, binding);
+  }, true);
+  document.querySelector('[data-action="reset-shortcuts"]').addEventListener('click', async () => {
+    recordingShortcut = '';
+    shortcutBindings = globalThis.GoLensShortcuts.defaultBindings();
+    await chrome.storage.sync.set({ shortcutBindings });
+    document.querySelector('[data-shortcut-status]').textContent = 'All shortcuts reset.';
+    renderShortcutBindings();
+  });
+  renderShortcutBindings();
+}
 
 function normalizeGitLabOrigin(value) {
   const candidate = String(value || '').trim();
@@ -268,6 +345,7 @@ function wireOnboardingControl() {
 
 async function initialise() {
   const settings = await chrome.storage.sync.get(defaults);
+  shortcutBindings = globalThis.GoLensShortcuts.mergeBindings(settings.shortcutBindings);
   for (const input of document.querySelectorAll('[data-setting]')) {
     const key = input.dataset.setting;
     input.checked = settings[key];
@@ -281,11 +359,16 @@ async function initialise() {
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'sync') return;
+    if (changes.shortcutBindings) {
+      shortcutBindings = globalThis.GoLensShortcuts.mergeBindings(changes.shortcutBindings.newValue);
+      renderShortcutBindings();
+    }
     for (const [key, change] of Object.entries(changes)) {
       const input = document.querySelector(`[data-setting="${key}"]`);
       if (input && typeof change.newValue === 'boolean') input.checked = change.newValue;
     }
   });
+  wireShortcutControls();
   wireCacheControls();
   wireHostAccess();
   wireOnboardingControl();

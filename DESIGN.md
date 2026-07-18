@@ -85,7 +85,8 @@ Figure 1. GoLens keeps GitLab integration in the page, semantic work in the exte
 
 | Component | Responsibility | Primary state or dependency | Failure behavior |
 | --- | --- | --- | --- |
-| `content.js` | Detect GitLab merge requests; mount and reconcile controls; own focus mode, onboarding, confirmed review celebrations, generated-file behavior, full-file actions, and shortcuts; bridge popup messages to the active tab. | GitLab DOM, `chrome.storage.sync`, `chrome.storage.local` | Leaves non-GitLab and non-MR pages untouched. Waits for the exact mount anchor. Tears down page state when the MR changes or GoLens is disabled. |
+| `shortcut-settings.js` | Define portable shortcut actions, defaults, normalization, display labels, matching, and duplicate reassignment. | `chrome.storage.sync.shortcutBindings`, platform modifier conventions | Invalid stored entries fall back to defaults; explicitly cleared actions stay unassigned. |
+| `content.js` | Detect GitLab merge requests; mount and reconcile controls; own focus mode, onboarding, confirmed review celebrations, generated-file behavior, full-file actions, and shortcut dispatch; bridge popup messages to the active tab. | GitLab DOM, `chrome.storage.sync`, `chrome.storage.local` | Leaves non-GitLab and non-MR pages untouched. Suppresses shortcuts in editors, searches, and dialogs. Waits for the exact mount anchor and tears down page state when the MR changes or GoLens is disabled. |
 | `go-navigation.js` | Adapt GitLab diff DOM to semantic inputs; fetch GitLab trees, blobs, diffs, approval and discussion state, and search results; manage progress; render Go popovers; open exact destinations. | Signed-in GitLab session, active MR refs, long-lived worker port | Aborts fetches and rejects pending RPCs on teardown. Shows explicit errors or missing/ambiguous results instead of guessing. |
 | `go-semantic-worker.js` | Initialize Tree-sitter, dispatch semantic RPC, serialize mutations, restore durable snapshots, and handle cache statistics and clearing. | `go-semantic-core.js`, `go-semantic-cache.js`, checked-in WASM | Rejects unknown methods. Resets failed parser initialization for retry. Serializes cache/index mutations so clearing cannot race writes. |
 | `go-semantic-core.js` | Build an in-memory, DOM-independent Go symbol and identifier-candidate index; resolve definitions, references, documentation, and implementations. | Tree-sitter syntax trees and indexed package/project snapshots | Returns typed `notFound`, `ambiguous`, `needsPackage`, or unsupported results when evidence is insufficient. |
@@ -113,6 +114,10 @@ Figure 1. GoLens keeps GitLab integration in the page, semantic work in the exte
 5. The pointer-transparent Shadow DOM overlay removes itself after the mascot moment, waits behind first-run onboarding, is cancelled during teardown, and uses a static presentation when reduced motion is requested.
 
 ### Symbol hover and navigation
+
+Plain-clicking a Go token records a loaded-diff text selection and paints identifier-boundary matches through the CSS Custom Highlight API. A mutation observer refreshes ranges as Rapid Diffs streams content. Shortcut actions traverse those occurrences, explicit or inferred hunks, and loaded file roots without modifying GitLab's code DOM.
+
+In-diff semantic jumps record their exact source and destination in a bounded, per-MR memory history. Back and forward reveal collapsed target lines when possible; leaving the MR or disabling GoLens clears selection and history. New-tab destinations remain browser history only.
 
 1. Pointer or modifier-click input is accepted only while GoLens is enabled on a merge request and the target belongs to a supported Go diff cell.
 2. `go-navigation.js` derives the file path, old/new side, line, rendered identifier occurrence, project, and immutable ref from GitLab's DOM and MR metadata.

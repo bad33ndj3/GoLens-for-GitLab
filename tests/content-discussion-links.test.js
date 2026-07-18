@@ -56,7 +56,7 @@ test('adds exact Changes links to overview line discussions', async () => {
   globalThis.chrome = {
     storage: {
       sync: { async get(defaults) { return defaults; }, async set() {} },
-      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 6 }; }, async set() {} },
+      local: { async get(defaults) { return { ...defaults, golensOnboardingVersion: 7 }; }, async set() {} },
       onChanged: { addListener(listener) { storageListener = listener; } },
     },
     runtime: {
@@ -66,8 +66,7 @@ test('adds exact Changes links to overview line discussions', async () => {
   };
 
   const settle = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   };
   await import('../content.js?content-discussion-links-test');
   await settle();
