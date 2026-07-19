@@ -23,6 +23,10 @@ GoLens stores:
   may synchronize this value between signed-in browser profiles under its own
   privacy policy.
 - The completed onboarding version in `chrome.storage.local`.
+- MR-local bookmarks in `chrome.storage.local`. Bookmark records contain the
+  GitLab origin, project and merge-request identity, head commit, file path,
+  old/new side, line or range, and bounded SHA-256 context fingerprints. They
+  do not contain source excerpts and are not synchronized between browsers.
 - Commit-pinned source snapshots and semantic-cache metadata in extension
   IndexedDB storage. This can include GitLab origins, project and package
   paths, merge-request identifiers, commit and blob identifiers, file paths,
@@ -31,6 +35,9 @@ GoLens stores:
 Cached source remains in the browser profile until you clear it from the GoLens
 popup, remove the extension, or clear the extension's browser data. Disabling
 GoLens does not clear the cache.
+
+Bookmarks remain until you remove them from the MR bookmark drawer, remove the
+extension, or clear the extension's browser data.
 
 ## Sharing and remote processing
 

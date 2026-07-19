@@ -56,6 +56,16 @@
     history: [],
     historyIndex: -1,
     elementNavigation: { hunk: null, file: null },
+    bookmarkStore: null,
+    bookmarkScope: null,
+    bookmarkRecords: [],
+    bookmarkListeners: new Set(),
+    bookmarkStorageUnsubscribe: null,
+    bookmarkRefreshTimer: null,
+    bookmarkNavigationIndex: -1,
+    bookmarkSurfaces: new Map(),
+    bookmarkSelectionUI: null,
+    focusedBookmarkLocation: null,
   };
 
   function projectContext() {
@@ -160,6 +170,20 @@
     return { root, path: newPath, oldPath, newPath, packagePath: dirname(newPath), ref: parsed.ref };
   }
 
+  function bookmarkFileContextFor(node) {
+    const root = diffRootFor(node);
+    if (!root) return null;
+    const fileData = rapidFileData(root);
+    const title = root.querySelector('[data-testid="file-title"], .file-title-name, .diff-file-header a[href*="/-/blob/"], .rd-diff-file-link, [data-testid="rd-diff-file-header"] a[href*="/-/blob/"]');
+    const fallbackPath = normalizePath(root.getAttribute('data-file-path') || root.getAttribute('data-path') || title?.textContent || '');
+    const oldPath = normalizePath(fileData.old_path || fallbackPath);
+    const newPath = normalizePath(fileData.new_path || fallbackPath);
+    if (!oldPath && !newPath) return null;
+    const links = [...root.querySelectorAll('a[href*="/-/blob/"]')];
+    const parsed = links.map((link) => parseBlobLink(link, newPath) || parseBlobLink(link, oldPath)).find(Boolean);
+    return { root, oldPath: oldPath || newPath, newPath: newPath || oldPath, ref: parsed?.ref || '' };
+  }
+
   function codeCellFor(target) {
     const direct = target?.closest('td.line_content, td[class*="line-content"], [data-testid="diff-line-content"], [data-testid="rd-diff-line-content"], .rd-diff-code, .rd-diff-line-code');
     if (direct) return direct;
@@ -253,6 +277,36 @@
       return { line, side: position === 'old' || (!position && /deleted|old/i.test(label)) ? 'old' : 'new' };
     }
     return null;
+  }
+
+  function bookmarkLineContextFor(node) {
+    const row = node?.closest?.('tr, [role="row"]');
+    if (!row) return null;
+    const directCell = node.closest?.('td, [role="cell"], [role="gridcell"]');
+    const cells = [...row.querySelectorAll(':scope > td, :scope > [role="cell"], :scope > [role="gridcell"]')];
+    const candidates = directCell ? [directCell, ...cells.filter((cell) => cell !== directCell)] : cells;
+    for (const candidate of candidates) {
+      const anchor = candidate.querySelector?.('a[href*="#"], [data-line-number]');
+      const line = lineFromAnchor(anchor || candidate);
+      if (!line) continue;
+      const position = candidate.getAttribute('data-position') || anchor?.getAttribute('data-position') || '';
+      const label = `${anchor?.getAttribute('aria-label') || ''} ${candidate.className || ''}`;
+      const side = position === 'old' || (!position && /deleted|old/i.test(label)) ? 'old' : 'new';
+      return { line, side, row, lineCell: candidate };
+    }
+    return null;
+  }
+
+  function bookmarkLocationForNode(node) {
+    const file = bookmarkFileContextFor(node);
+    const line = bookmarkLineContextFor(node);
+    if (!file || !line) return null;
+    return {
+      path: line.side === 'old' ? file.oldPath : file.newPath,
+      side: line.side,
+      startLine: line.line,
+      endLine: line.line,
+    };
   }
 
   function isCodeCharacter(source, character) {
@@ -2202,6 +2256,361 @@
     return true;
   }
 
+  function bookmarkScopeKey(scope) {
+    return scope ? `${scope.origin}\u0000${scope.project}\u0000${scope.mrIid}\u0000${scope.headSha}` : '';
+  }
+
+  async function currentBookmarkScope() {
+    const context = projectContext();
+    const mrIid = mergeRequestIID();
+    if (!context || !mrIid) return null;
+    let domHeadSha = '';
+    for (const root of diffFileRoots()) {
+      const file = bookmarkFileContextFor(root);
+      if (COMMIT_SHA.test(file?.ref || '')) { domHeadSha = file.ref.toLowerCase(); break; }
+    }
+    let refs = await mergeRequestRefs();
+    if (domHeadSha && COMMIT_SHA.test(refs.headSha || '') && refs.headSha.toLowerCase() !== domHeadSha) {
+      clearMergeRequestRefs();
+      refs = await mergeRequestRefs();
+    }
+    let headSha = refs.headSha || '';
+    if (!COMMIT_SHA.test(headSha)) headSha = domHeadSha;
+    return COMMIT_SHA.test(headSha) ? { origin: location.origin, project: context.project, mrIid, headSha: headSha.toLowerCase() } : null;
+  }
+
+  function bookmarkRootForLocation(locationValue) {
+    return diffFileRoots().find((root) => {
+      const file = bookmarkFileContextFor(root);
+      return file && (locationValue.side === 'old' ? file.oldPath : file.newPath) === locationValue.path;
+    }) || null;
+  }
+
+  function bookmarkCodeCell(row, side) {
+    const cells = [...row.querySelectorAll(CODE_CELL_SELECTOR)];
+    return cells.find((cell) => lineContextFor(cell)?.side === side) || (cells.length === 1 ? cells[0] : null);
+  }
+
+  function visibleBookmarkLine(locationValue, lineNumber) {
+    const root = bookmarkRootForLocation(locationValue);
+    if (!root) return null;
+    for (const row of root.querySelectorAll('tr, [role="row"]')) {
+      const cells = [...row.querySelectorAll(CODE_CELL_SELECTOR)];
+      const cell = cells.find((candidate) => {
+        const line = lineContextFor(candidate);
+        return line?.line === lineNumber && line.side === locationValue.side;
+      });
+      if (cell) return { root, row, cell, text: cell.textContent || '' };
+    }
+    return null;
+  }
+
+  function bookmarkLabel(record) {
+    const line = visibleBookmarkLine(record.location, record.location.startLine);
+    const context = (line?.text || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    const range = record.location.startLine === record.location.endLine
+      ? `L${record.location.startLine}`
+      : `L${record.location.startLine}–${record.location.endLine}`;
+    return context || `${record.location.path} · ${range}`;
+  }
+
+  async function bookmarkAnchorForLocation(locationValue) {
+    const lines = [];
+    for (let line = locationValue.startLine; line <= locationValue.endLine; line++) {
+      const visible = visibleBookmarkLine(locationValue, line);
+      if (!visible) return { symbol: '', selectionHash: '', beforeHash: '', afterHash: '' };
+      lines.push(visible.text);
+    }
+    const before = visibleBookmarkLine(locationValue, locationValue.startLine - 1)?.text || '';
+    const after = visibleBookmarkLine(locationValue, locationValue.endLine + 1)?.text || '';
+    const selected = sourceLocationForTarget(state.activeTarget);
+    const symbol = selected && selected.path === locationValue.path && selected.side === locationValue.side
+      && selected.line >= locationValue.startLine && selected.line <= locationValue.endLine
+      ? state.activeTarget?.identifier || '' : '';
+    const hash = globalThis.GoLensBookmarks?.hashText;
+    return {
+      symbol,
+      selectionHash: await hash(lines.join('\n')),
+      beforeHash: await hash(before),
+      afterHash: await hash(after),
+    };
+  }
+
+  function bookmarkSelectionState() {
+    const selection = globalThis.getSelection?.();
+    if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode) return { location: null, invalid: false };
+    const nodeElement = (node) => node.nodeType === 1 ? node : node.parentElement;
+    const anchorCell = codeCellFor(nodeElement(selection.anchorNode));
+    const focusCell = codeCellFor(nodeElement(selection.focusNode));
+    if (!anchorCell || !focusCell) return { location: null, invalid: true };
+    const anchorFile = bookmarkFileContextFor(anchorCell);
+    const focusFile = bookmarkFileContextFor(focusCell);
+    const anchorLine = lineContextFor(anchorCell);
+    const focusLine = lineContextFor(focusCell);
+    if (!anchorFile || !focusFile || !anchorLine || !focusLine || anchorFile.root !== focusFile.root || anchorLine.side !== focusLine.side) {
+      return { location: null, invalid: true };
+    }
+    const startLine = Math.min(anchorLine.line, focusLine.line);
+    const endLine = Math.max(anchorLine.line, focusLine.line);
+    const path = anchorLine.side === 'old' ? anchorFile.oldPath : anchorFile.newPath;
+    for (let line = startLine; line <= endLine; line++) {
+      if (!visibleBookmarkLine({ path, side: anchorLine.side }, line)) return { location: null, invalid: true };
+    }
+    return { location: { path, side: anchorLine.side, startLine, endLine }, invalid: false };
+  }
+
+  function removeBookmarkSelectionUI() {
+    state.bookmarkSelectionUI?.remove();
+    state.bookmarkSelectionUI = null;
+  }
+
+  function reconcileBookmarkSelectionUI() {
+    removeBookmarkSelectionUI();
+    if (!state.enabled) return;
+    const selection = globalThis.getSelection?.();
+    const selectionState = bookmarkSelectionState();
+    if (!selectionState.location || !selection?.rangeCount) return;
+    const bounds = selection.getRangeAt(0).getBoundingClientRect();
+    const host = document.createElement('div');
+    host.id = 'golens-bookmark-selection-root';
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <style>
+        :host { all:initial; position:fixed; z-index:var(--golens-z-popover,2147483001); left:${Math.max(8, Math.min(innerWidth - 190, bounds.right + 8))}px; top:${Math.max(8, Math.min(innerHeight - 42, bounds.bottom + 6))}px; color-scheme:dark; }
+        button { border:1px solid var(--golens-border-default,#4b5563); border-radius:6px; padding:6px 9px; background:var(--golens-surface-raised,#20242b); color:var(--golens-text-primary,#f3f4f6); font:600 12px/1.2 system-ui,sans-serif; box-shadow:var(--golens-shadow-sm,0 4px 12px rgba(0,0,0,.3)); cursor:pointer; }
+        button:hover { border-color:var(--golens-primary,#fc6d26); }
+        button:focus-visible { outline:2px solid var(--golens-focus-ring,#3794ff); outline-offset:2px; }
+      </style><button type="button">Bookmark selected lines</button>`;
+    shadow.querySelector('button').addEventListener('click', () => void toggleBookmarkAt(selectionState.location));
+    document.body.append(host);
+    state.bookmarkSelectionUI = host;
+  }
+
+  function bookmarkSnapshot() {
+    const scope = state.bookmarkScope;
+    const records = state.bookmarkRecords.map((record) => ({ ...record, stale: record.scope.headSha !== scope?.headSha, label: bookmarkLabel(record) }));
+    return { scope, current: records.filter((record) => !record.stale), stale: records.filter((record) => record.stale) };
+  }
+
+  function emitBookmarkSnapshot() {
+    const snapshot = bookmarkSnapshot();
+    for (const listener of state.bookmarkListeners) listener(snapshot);
+  }
+
+  function subscribeBookmarks(listener) {
+    state.bookmarkListeners.add(listener);
+    listener(bookmarkSnapshot());
+    return () => state.bookmarkListeners.delete(listener);
+  }
+
+  function bookmarkMarkerCells() {
+    const cells = new Set();
+    for (const root of diffFileRoots()) {
+      for (const anchor of root.querySelectorAll('a[href*="#"], [data-line-number]')) {
+        if (!lineFromAnchor(anchor)) continue;
+        const cell = anchor.closest('td, [role="cell"], [role="gridcell"]');
+        if (cell) cells.add(cell);
+      }
+    }
+    return [...cells];
+  }
+
+  function reconcileDiffBookmarkMarkers(records) {
+    if (!state.enabled) {
+      document.querySelectorAll('[data-golens-bookmark-marker]').forEach((marker) => marker.remove());
+      return;
+    }
+    const retained = new Set();
+    for (const cell of bookmarkMarkerCells()) {
+      const locationValue = bookmarkLocationForNode(cell);
+      if (!locationValue) continue;
+      const matchingRecord = records.find((record) => record.scope.headSha === state.bookmarkScope?.headSha
+        && record.location.path === locationValue.path && record.location.side === locationValue.side
+        && locationValue.startLine >= record.location.startLine && locationValue.startLine <= record.location.endLine);
+      const bookmarked = Boolean(matchingRecord);
+      let button = [...cell.children].find((child) => child.matches?.('[data-golens-bookmark-marker]'));
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'golens-bookmark-marker';
+        button.dataset.golensBookmarkMarker = '';
+        button.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.25h8v11.5L8 11.1l-4 2.65z"></path></svg>';
+        button.addEventListener('focus', () => { state.focusedBookmarkLocation = bookmarkLocationForNode(button); });
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const targetLocation = bookmarkLocationForNode(button);
+          state.focusedBookmarkLocation = targetLocation;
+          const record = state.bookmarkRecords.find((candidate) => candidate.scope.headSha === state.bookmarkScope?.headSha
+            && candidate.location.path === targetLocation?.path && candidate.location.side === targetLocation?.side
+            && targetLocation.startLine >= candidate.location.startLine && targetLocation.startLine <= candidate.location.endLine);
+          if (record) void removeBookmark(record).then(() => toast('Bookmark removed.')).catch(() => toast('Could not update the bookmark.'));
+          else void toggleBookmarkAt(targetLocation);
+        });
+        cell.append(button);
+      }
+      retained.add(button);
+      button.setAttribute('aria-pressed', String(bookmarked));
+      button.setAttribute('aria-label', `${bookmarked ? 'Remove' : 'Add'} bookmark on ${locationValue.side} line ${locationValue.startLine}`);
+      button.title = bookmarked ? 'Remove bookmark' : 'Bookmark this line';
+    }
+    document.querySelectorAll('[data-golens-bookmark-marker]').forEach((marker) => { if (!retained.has(marker)) marker.remove(); });
+  }
+
+  function bookmarkProjectionMutation(mutation) {
+    const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+    return nodes.length > 0 && nodes.every((node) => node.nodeType === 1 && (
+      node.matches?.('[data-golens-bookmark-marker], #golens-bookmark-selection-root')
+      || node.querySelector?.('[data-golens-bookmark-marker], #golens-bookmark-selection-root')
+    ));
+  }
+
+  function registerBookmarkSurface(id, adapter) {
+    if (!id || !adapter) return () => {};
+    state.bookmarkSurfaces.set(id, adapter);
+    adapter.reconcileMarkers?.(state.bookmarkRecords);
+    return () => state.bookmarkSurfaces.delete(id);
+  }
+
+  async function refreshBookmarks() {
+    clearTimeout(state.bookmarkRefreshTimer);
+    state.bookmarkRefreshTimer = null;
+    const scope = await currentBookmarkScope();
+    state.bookmarkScope = scope;
+    state.bookmarkRecords = scope && state.bookmarkStore ? await state.bookmarkStore.list(scope) : [];
+    for (const adapter of state.bookmarkSurfaces.values()) adapter.reconcileMarkers?.(state.bookmarkRecords);
+    emitBookmarkSnapshot();
+    return bookmarkSnapshot();
+  }
+
+  function scheduleBookmarkRefresh() {
+    if (state.bookmarkRefreshTimer) return;
+    state.bookmarkRefreshTimer = setTimeout(() => refreshBookmarks().catch(() => undefined), 20);
+  }
+
+  async function toggleBookmarkAt(locationValue) {
+    if (!state.bookmarkStore || !state.bookmarkScope) await refreshBookmarks();
+    if (!state.bookmarkStore || !state.bookmarkScope || !locationValue) {
+      toast('Bookmarking is unavailable until the MR head is known.');
+      return false;
+    }
+    try {
+      const anchor = await bookmarkAnchorForLocation(locationValue);
+      const result = await state.bookmarkStore.toggle({ scope: state.bookmarkScope, location: locationValue, anchor });
+      await refreshBookmarks();
+      toast(result.action === 'added' ? 'Bookmark added.' : 'Bookmark removed.');
+      removeBookmarkSelectionUI();
+      return true;
+    } catch {
+      toast('Could not update the bookmark.');
+      return false;
+    }
+  }
+
+  function orderedCurrentBookmarks() {
+    const roots = diffFileRoots();
+    const pathOrder = new Map();
+    roots.forEach((root, index) => {
+      const file = bookmarkFileContextFor(root);
+      if (file) { pathOrder.set(`old:${file.oldPath}`, index); pathOrder.set(`new:${file.newPath}`, index); }
+    });
+    return state.bookmarkRecords.filter((record) => record.scope.headSha === state.bookmarkScope?.headSha).sort((left, right) => {
+      const leftOrder = pathOrder.get(`${left.location.side}:${left.location.path}`) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = pathOrder.get(`${right.location.side}:${right.location.path}`) ?? Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder || left.location.startLine - right.location.startLine || left.location.side.localeCompare(right.location.side);
+    });
+  }
+
+  async function revealBookmark(record) {
+    for (const adapter of state.bookmarkSurfaces.values()) {
+      if (await adapter.reveal?.(record.location)) return true;
+    }
+    toast('That bookmark is not available in the current review surface.');
+    return false;
+  }
+
+  async function navigateBookmark(direction) {
+    const records = orderedCurrentBookmarks();
+    if (!records.length) { toast('No bookmarks in this MR head.'); return false; }
+    state.bookmarkNavigationIndex = (state.bookmarkNavigationIndex + direction + records.length) % records.length;
+    const record = records[state.bookmarkNavigationIndex];
+    if (await revealBookmark(record)) toast(`Bookmark ${state.bookmarkNavigationIndex + 1} of ${records.length}.`);
+    return true;
+  }
+
+  async function removeBookmark(record) {
+    if (!state.bookmarkStore) return false;
+    await state.bookmarkStore.remove(record);
+    await refreshBookmarks();
+    return true;
+  }
+
+  async function clearBookmarks(mode = 'all') {
+    if (!state.bookmarkStore || !state.bookmarkScope) return 0;
+    const count = await state.bookmarkStore.clear(state.bookmarkScope, mode);
+    await refreshBookmarks();
+    return count;
+  }
+
+  async function bookmarkRecoveryCandidates(lines, record) {
+    const length = record.location.endLine - record.location.startLine + 1;
+    const lineHashes = await Promise.all(lines.map((line) => globalThis.GoLensBookmarks.hashText(line)));
+    const candidates = [];
+    for (let index = 0; index <= lines.length - length; index++) {
+      const selected = lines.slice(index, index + length).join('\n');
+      if (record.anchor.symbol && !selected.includes(record.anchor.symbol)) continue;
+      const beforeHash = lineHashes[index - 1] || '';
+      const afterHash = lineHashes[index + length] || '';
+      const beforeMatches = Boolean(record.anchor.beforeHash && beforeHash === record.anchor.beforeHash);
+      const afterMatches = Boolean(record.anchor.afterHash && afterHash === record.anchor.afterHash);
+      if (!beforeMatches && !afterMatches) continue;
+      const selectionHash = length === 1 ? lineHashes[index] : await globalThis.GoLensBookmarks.hashText(selected);
+      const anchor = { symbol: record.anchor.symbol, selectionHash, beforeHash, afterHash };
+      const selectionAndContext = Boolean(record.anchor.selectionHash && selectionHash === record.anchor.selectionHash && (beforeMatches || afterMatches));
+      const adjacentContext = Boolean(record.anchor.beforeHash && record.anchor.afterHash && beforeMatches && afterMatches);
+      if (selectionAndContext || adjacentContext) candidates.push({ index, anchor });
+      if (candidates.length > 1) break;
+    }
+    return candidates;
+  }
+
+  async function recoverBookmark(record) {
+    if (!record || !state.bookmarkScope || record.scope.headSha === state.bookmarkScope.headSha) return { status: 'current' };
+    const refs = await mergeRequestRefs();
+    const ref = record.location.side === 'old' ? (refs.startSha || refs.baseSha) : refs.headSha;
+    if (!COMMIT_SHA.test(ref || '')) return { status: 'unavailable', message: 'The current MR side ref is unavailable.' };
+    let source;
+    try { source = await fetchSource(record.location.path, ref); }
+    catch { return { status: 'missing', message: 'The bookmarked file is unavailable at the current MR ref.' }; }
+    const lines = source.replace(/\r\n?/g, '\n').split('\n');
+    const length = record.location.endLine - record.location.startLine + 1;
+    const candidates = await bookmarkRecoveryCandidates(lines, record);
+    if (candidates.length !== 1) return {
+      status: candidates.length ? 'ambiguous' : 'missing',
+      message: candidates.length ? 'Nearby context matches more than one location.' : 'No safe context match was found.',
+    };
+    const candidate = candidates[0];
+    const locationValue = { ...record.location, startLine: candidate.index + 1, endLine: candidate.index + length };
+    await state.bookmarkStore.recover(record, { scope: state.bookmarkScope, location: locationValue, anchor: candidate.anchor });
+    await refreshBookmarks();
+    return { status: 'recovered', record: state.bookmarkRecords.find((item) => item.id === record.id) };
+  }
+
+  async function revealDiffBookmark(locationValue) {
+    let root = bookmarkRootForLocation(locationValue);
+    if (!root) return false;
+    const collapsed = [...root.querySelectorAll('button, [role="button"]')].find((button) =>
+      !button.disabled && /(?:expand|show diff|load diff|show file)/i.test(`${button.textContent} ${button.getAttribute('aria-label') || ''}`)
+    );
+    if (collapsed && !lineAnchorFor(root, locationValue.startLine, locationValue.side)) {
+      const updated = waitForDiffUpdate(root);
+      collapsed.click();
+      await updated;
+      root = bookmarkRootForLocation(locationValue) || root;
+    }
+    return navigateToLocation({ path: locationValue.path, line: locationValue.startLine, side: locationValue.side });
+  }
+
   function runNavigationAction(action) {
     if (!state.enabled) return false;
     if (action === 'semanticJump') {
@@ -2218,6 +2627,18 @@
     if (action === 'nextFile') return navigateElements(diffFileRoots(), 1, 'No loaded diff files.', 'file');
     if (action === 'historyBack') { navigateHistory(-1); return true; }
     if (action === 'historyForward') { navigateHistory(1); return true; }
+    if (action === 'toggleBookmark') {
+      const selectionState = bookmarkSelectionState();
+      if (selectionState.invalid) { toast('Select contiguous lines in one file and one diff side.'); return true; }
+      const selectedTarget = sourceLocationForTarget(targetForSelectedOccurrence());
+      const fallback = selectedTarget ? { path: selectedTarget.path, side: selectedTarget.side, startLine: selectedTarget.line, endLine: selectedTarget.line } : null;
+      const locationValue = selectionState.location || state.focusedBookmarkLocation || fallback;
+      if (!locationValue) toast('Focus a diff line or select contiguous lines first.');
+      else void toggleBookmarkAt(locationValue);
+      return true;
+    }
+    if (action === 'previousBookmark') { void navigateBookmark(-1); return true; }
+    if (action === 'nextBookmark') { void navigateBookmark(1); return true; }
     return false;
   }
 
@@ -2372,12 +2793,30 @@
     if (state.enabled || !/\/-\/merge_requests\/\d+/.test(location.pathname)) return;
     state.enabled = true;
     state.abortController = new AbortController();
+    if (!state.bookmarkStore && globalThis.GoLensBookmarks?.createStore) {
+      state.bookmarkStore = globalThis.GoLensBookmarks.createStore();
+      state.bookmarkStorageUnsubscribe = state.bookmarkStore.subscribe(scheduleBookmarkRefresh);
+    }
+    if (!state.bookmarkSurfaces.has('gitlab-diff')) {
+      registerBookmarkSurface('gitlab-diff', {
+        extractSelection: bookmarkSelectionState,
+        reconcileMarkers: reconcileDiffBookmarkMarkers,
+        reveal: revealDiffBookmark,
+        recoverCandidates: recoverBookmark,
+      });
+    }
     document.addEventListener('mousemove', onMouseMove, true);
     document.addEventListener('click', onClick, true);
     document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('mouseup', reconcileBookmarkSelectionUI, true);
     document.addEventListener('visibilitychange', refreshMergeRequestRefs, true);
-    state.diffObserver = new MutationObserver(scheduleOccurrenceRefresh);
+    state.diffObserver = new MutationObserver((mutations) => {
+      if (mutations.length && mutations.every(bookmarkProjectionMutation)) return;
+      scheduleOccurrenceRefresh();
+      scheduleBookmarkRefresh();
+    });
     state.diffObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    void refreshBookmarks();
     status('idle', 'Go intelligence · hover code to start');
   }
 
@@ -2406,11 +2845,18 @@
     state.history = [];
     state.historyIndex = -1;
     state.elementNavigation = { hunk: null, file: null };
+    state.bookmarkNavigationIndex = -1;
+    state.focusedBookmarkLocation = null;
+    clearTimeout(state.bookmarkRefreshTimer);
+    state.bookmarkRefreshTimer = null;
+    removeBookmarkSelectionUI();
+    document.querySelectorAll('[data-golens-bookmark-marker]').forEach((marker) => marker.remove());
     clearPinnedPopover();
     markTarget(null);
     document.removeEventListener('mousemove', onMouseMove, true);
     document.removeEventListener('click', onClick, true);
     document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('mouseup', reconcileBookmarkSelectionUI, true);
     document.removeEventListener('visibilitychange', refreshMergeRequestRefs, true);
     const cancellation = new Error('Go intelligence request cancelled');
     for (const pending of state.pending.values()) {
@@ -2451,6 +2897,15 @@
     invalidateCacheState,
     runNavigationAction,
     offerShortcutCoach,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked },
+    subscribeBookmarks,
+    refreshBookmarks,
+    bookmarkSnapshot,
+    toggleBookmarkAt,
+    revealBookmark,
+    removeBookmark,
+    clearBookmarks,
+    recoverBookmark,
+    registerBookmarkSurface,
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked },
   };
 })();

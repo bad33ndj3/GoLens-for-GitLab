@@ -11,6 +11,9 @@
     { id: 'nextFile', label: 'Next file', defaultBinding: 'Alt+PageDown' },
     { id: 'historyBack', label: 'Go back', defaultBinding: 'Ctrl+Minus' },
     { id: 'historyForward', label: 'Go forward', defaultBinding: 'Ctrl+Shift+Minus' },
+    { id: 'toggleBookmark', label: 'Toggle bookmark', defaultBinding: 'Alt+KeyM' },
+    { id: 'previousBookmark', label: 'Previous bookmark', defaultBinding: 'Alt+Comma' },
+    { id: 'nextBookmark', label: 'Next bookmark', defaultBinding: 'Alt+Period' },
   ];
   const ACTION_IDS = new Set(ACTIONS.map(({ id }) => id));
   const PRESETS = [
@@ -26,6 +29,7 @@
       previousHunk: 'Alt+Shift+F5', nextHunk: 'Alt+F5',
       previousFile: 'Ctrl+PageUp', nextFile: 'Ctrl+PageDown',
       historyBack: 'Ctrl+Minus', historyForward: 'Ctrl+Shift+Minus',
+      toggleBookmark: 'Alt+KeyM', previousBookmark: 'Alt+Comma', nextBookmark: 'Alt+Period',
     },
     intellij: {
       focusFileSearch: 'Ctrl+Shift+KeyN', clearFileSearch: 'Shift+KeyF', semanticJump: 'Ctrl+KeyB',
@@ -33,6 +37,7 @@
       previousHunk: 'Ctrl+Alt+Shift+ArrowUp', nextHunk: 'Ctrl+Alt+Shift+ArrowDown',
       previousFile: 'Alt+ArrowLeft', nextFile: 'Alt+ArrowRight',
       historyBack: 'Ctrl+Alt+ArrowLeft', historyForward: 'Ctrl+Alt+ArrowRight',
+      toggleBookmark: 'Alt+KeyM', previousBookmark: 'Alt+Comma', nextBookmark: 'Alt+Period',
     },
     vim: {
       focusFileSearch: 'Slash', clearFileSearch: '', semanticJump: 'Ctrl+BracketRight',
@@ -40,6 +45,7 @@
       previousHunk: 'BracketLeft', nextHunk: 'BracketRight',
       previousFile: 'Ctrl+KeyP', nextFile: 'Ctrl+KeyN',
       historyBack: 'Ctrl+KeyO', historyForward: 'Ctrl+KeyI',
+      toggleBookmark: 'Alt+KeyM', previousBookmark: 'Alt+Comma', nextBookmark: 'Alt+Period',
     },
   };
   const MODIFIER_ORDER = ['Primary', 'Ctrl', 'Alt', 'Shift', 'Meta'];
