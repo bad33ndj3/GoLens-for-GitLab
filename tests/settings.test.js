@@ -74,7 +74,7 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
 
   tabs[1].click();
   assert.equal(window.document.querySelector('[data-page-title]').textContent, 'Keyboard shortcuts');
-  assert.equal(window.document.querySelectorAll('[data-shortcut-binding]').length, 11);
+  assert.equal(window.document.querySelectorAll('[data-shortcut-binding]').length, 14);
   const presetSelect = window.document.querySelector('[data-shortcut-preset]');
   assert.deepEqual([...presetSelect.options].map((option) => option.value), ['', 'golens', 'vscode', 'intellij', 'vim']);
   assert.equal(presetSelect.value, 'golens');

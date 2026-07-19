@@ -10,6 +10,7 @@ before(async () => {
     origin: 'https://gitlab.example',
     pathname: '/group/project/-/merge_requests/42/diffs',
   };
+  await import('../bookmark-store.js?go-navigation-context-test');
   await import('../go-navigation.js');
   helpers = globalThis.GoLensGoNavigation.__test;
 });
@@ -775,4 +776,78 @@ test('finds identifier-boundary occurrences only in loaded Go diff code', () => 
     globalThis.document = previousDocument;
     globalThis.NodeFilter = previousNodeFilter;
   }
+});
+
+test('extracts distinct old and new bookmark locations for non-Go diff lines', () => {
+  const window = new Window({ url: globalThis.location.href });
+  const sha = 'e'.repeat(40);
+  window.document.body.innerHTML = `
+    <section class="diff-file" data-file-path="README.md">
+      <a class="file-title-name" href="https://gitlab.example/group/project/-/blob/${sha}/README.md">README.md</a>
+      <table><tbody><tr>
+        <td class="old_line"><a href="#old_12" aria-label="Deleted line 12">12</a></td><td class="line_content old">old</td>
+        <td class="new_line"><a href="#new_12" aria-label="Added line 12">12</a></td><td class="line_content new">new</td>
+      </tr></tbody></table>
+    </section>`;
+  assert.deepEqual(helpers.bookmarkLocationForNode(window.document.querySelector('.old_line')), {
+    path: 'README.md', side: 'old', startLine: 12, endLine: 12,
+  });
+  assert.deepEqual(helpers.bookmarkLocationForNode(window.document.querySelector('.new_line')), {
+    path: 'README.md', side: 'new', startLine: 12, endLine: 12,
+  });
+  assert.equal(helpers.bookmarkFileContextFor(window.document.querySelector('.line_content')).newPath, 'README.md');
+});
+
+test('accepts only contiguous bookmark selections within one file and side', () => {
+  const previousDocument = globalThis.document;
+  const previousGetSelection = globalThis.getSelection;
+  const window = new Window({ url: globalThis.location.href });
+  const sha = 'f'.repeat(40);
+  window.document.body.innerHTML = `
+    <section class="diff-file" data-file-path="docs/review.md">
+      <a class="file-title-name" href="https://gitlab.example/group/project/-/blob/${sha}/docs/review.md">docs/review.md</a>
+      <table><tbody>
+        <tr><td class="new_line"><a aria-label="Added line 4">4</a></td><td class="line_content" id="line-4">first</td></tr>
+        <tr><td class="new_line"><a aria-label="Added line 5">5</a></td><td class="line_content" id="line-5">second</td></tr>
+      </tbody></table>
+    </section>`;
+  globalThis.document = window.document;
+  globalThis.getSelection = () => window.getSelection();
+  try {
+    const selection = window.getSelection();
+    const range = window.document.createRange();
+    range.setStart(window.document.getElementById('line-4').firstChild, 0);
+    range.setEnd(window.document.getElementById('line-5').firstChild, 6);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    assert.deepEqual(helpers.bookmarkSelectionState(), {
+      location: { path: 'docs/review.md', side: 'new', startLine: 4, endLine: 5 }, invalid: false,
+    });
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.getSelection = previousGetSelection;
+  }
+});
+
+test('recovers stale bookmarks only from one safe context match', async () => {
+  const hash = globalThis.GoLensBookmarks.hashText;
+  const original = ['before()', 'Target(old)', 'after()'];
+  const record = {
+    location: { path: 'pkg/review.go', side: 'new', startLine: 2, endLine: 2 },
+    anchor: {
+      symbol: 'Target',
+      selectionHash: await hash(original[1]),
+      beforeHash: await hash(original[0]),
+      afterHash: await hash(original[2]),
+    },
+  };
+  const moved = ['header', 'before()', 'Target(new)', 'after()', 'footer'];
+  const unique = await helpers.bookmarkRecoveryCandidates(moved, record);
+  assert.equal(unique.length, 1);
+  assert.equal(unique[0].index, 2);
+  assert.notEqual(unique[0].anchor.selectionHash, record.anchor.selectionHash, 'both adjacent lines may safely recover an edited bookmarked line');
+
+  const ambiguous = await helpers.bookmarkRecoveryCandidates([...moved, ...moved], record);
+  assert.equal(ambiguous.length, 2);
+  assert.equal((await helpers.bookmarkRecoveryCandidates(['before()', 'Other()', 'after()'], record)).length, 0, 'the stored symbol remains a required constraint');
 });

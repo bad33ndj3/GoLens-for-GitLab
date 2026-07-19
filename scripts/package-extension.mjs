@@ -15,6 +15,7 @@ const extensionFiles = [
   'THIRD_PARTY_NOTICES.md',
   'manifest.json',
   'shortcut-settings.js',
+  'bookmark-store.js',
   'content.js',
   'golens-theme.css',
   'gitlab-lens.css',

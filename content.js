@@ -32,6 +32,9 @@
     discussionRunID: 0,
     discussionPollTimer: null,
     queuedMascotMoment: '',
+    bookmarkSnapshot: { scope: null, current: [], stale: [] },
+    bookmarkUnsubscribe: null,
+    bookmarkDrawerReturnFocus: null,
   };
 
   function isGitLab() {
@@ -565,6 +568,11 @@
         .preload-toggle[data-count-size="small"] :is(.preload-count,.preload-fill-count) { font-size:8px; }
         .preload-toggle[data-count-size="tiny"] :is(.preload-count,.preload-fill-count) { font-size:7px; letter-spacing:-.1em; }
         .preload-toggle.is-indeterminate .preload-fill { width:42%; animation:preload-sweep 1s ease-in-out infinite; transition:none; }
+        .bookmark-toggle { color:var(--golens-info); overflow:visible; }
+        .bookmark-toggle[aria-expanded="true"] { border-color:var(--golens-info); background:var(--golens-info-soft); color:var(--golens-info-hover); }
+        .bookmark-count { position:absolute; right:-4px; bottom:-4px; min-width:15px; height:15px; padding:0 3px; border:2px solid var(--golens-surface-panel); border-radius:999px; background:var(--golens-primary); color:var(--golens-text-inverse); font:800 8px/11px var(--golens-font-mono); font-variant-numeric:tabular-nums; }
+        .bookmark-count[hidden], .bookmark-stale[hidden] { display:none; }
+        .bookmark-stale { position:absolute; top:2px; right:2px; width:7px; height:7px; border:1px solid var(--golens-surface-panel); border-radius:50%; background:var(--golens-warning,#d99530); }
         @keyframes preload-sweep { from { transform:translateX(-110%); } to { transform:translateX(250%); } }
         @media (prefers-reduced-motion:reduce) { button,button img,.preload-fill { transition:none; } button:active:not(:disabled) { transform:none; } .preload-toggle.is-indeterminate .preload-fill { width:100%; animation:none; opacity:.45; } }
       </style>
@@ -579,10 +587,198 @@
           </span>
           <svg class="preload-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>
         </button>
+        <button class="bookmark-toggle" data-action="bookmarks" title="Open MR bookmarks" aria-label="Open MR bookmarks" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h12v17l-6-4-6 4z"></path></svg>
+          <span class="bookmark-count" aria-hidden="true" hidden></span>
+          <span class="bookmark-stale" aria-hidden="true" hidden></span>
+        </button>
       </div>
       `;
     mountControlsInAiPanels(host);
     wireControls(shadow);
+    ensureBookmarkSubscription();
+    renderBookmarkControl(shadow);
+  }
+
+  function ensureBookmarkSubscription() {
+    if (state.bookmarkUnsubscribe || !globalThis.GoLensGoNavigation?.subscribeBookmarks) return;
+    state.bookmarkUnsubscribe = globalThis.GoLensGoNavigation.subscribeBookmarks((snapshot) => {
+      state.bookmarkSnapshot = snapshot;
+      renderBookmarkControl();
+      renderBookmarkDrawer();
+    });
+  }
+
+  function renderBookmarkControl(shadow = document.getElementById('gitlab-lens-root')?.shadowRoot) {
+    const button = shadow?.querySelector('[data-action="bookmarks"]');
+    if (!button) return;
+    const count = state.bookmarkSnapshot.current.length;
+    const stale = state.bookmarkSnapshot.stale.length;
+    const badge = button.querySelector('.bookmark-count');
+    badge.textContent = count > 99 ? '99+' : String(count);
+    badge.hidden = count === 0;
+    button.querySelector('.bookmark-stale').hidden = stale === 0;
+    button.disabled = !state.enabled;
+    const label = `Open MR bookmarks · ${count} current${stale ? `, ${stale} stale` : ''}`;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  }
+
+  function closeBookmarkDrawer({ restoreFocus = true } = {}) {
+    const host = document.getElementById('golens-bookmark-drawer-root');
+    if (!host) return;
+    host.remove();
+    document.getElementById('gitlab-lens-root')?.shadowRoot?.querySelector('[data-action="bookmarks"]')?.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) state.bookmarkDrawerReturnFocus?.focus?.();
+    state.bookmarkDrawerReturnFocus = null;
+  }
+
+  function bookmarkRangeLabel(record) {
+    return record.location.startLine === record.location.endLine
+      ? `L${record.location.startLine}`
+      : `L${record.location.startLine}–${record.location.endLine}`;
+  }
+
+  function createBookmarkListItem(record, stale) {
+    const item = document.createElement('li');
+    item.className = 'bookmark-item';
+    item.dataset.stale = String(stale);
+    const main = document.createElement('div');
+    main.className = 'bookmark-main';
+    const path = document.createElement('strong');
+    path.textContent = record.location.path;
+    path.title = record.location.path;
+    const meta = document.createElement('span');
+    meta.className = 'bookmark-meta';
+    meta.textContent = `${bookmarkRangeLabel(record)} · ${record.location.side} side${stale ? ' · stale' : ''}`;
+    const context = document.createElement('span');
+    context.className = 'bookmark-context';
+    context.textContent = record.label;
+    main.append(path, meta, context);
+    const actions = document.createElement('div');
+    actions.className = 'bookmark-actions';
+    if (stale) {
+      const recover = document.createElement('button');
+      recover.type = 'button';
+      recover.dataset.bookmarkAction = 'recover';
+      recover.dataset.bookmarkId = record.id;
+      recover.textContent = 'Recover';
+      actions.append(recover);
+    } else {
+      const jump = document.createElement('button');
+      jump.type = 'button';
+      jump.dataset.bookmarkAction = 'jump';
+      jump.dataset.bookmarkId = record.id;
+      jump.textContent = 'Jump';
+      actions.append(jump);
+    }
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'quiet';
+    remove.dataset.bookmarkAction = 'remove';
+    remove.dataset.bookmarkId = record.id;
+    remove.setAttribute('aria-label', `Remove bookmark ${record.location.path} ${bookmarkRangeLabel(record)}`);
+    remove.textContent = 'Remove';
+    actions.append(remove);
+    item.append(main, actions);
+    return item;
+  }
+
+  function renderBookmarkSection(shadow, selector, records, stale) {
+    const list = shadow.querySelector(selector);
+    list.replaceChildren();
+    if (!records.length) {
+      const empty = document.createElement('li');
+      empty.className = 'bookmark-empty';
+      empty.textContent = stale ? 'No stale bookmarks.' : 'No bookmarks for this MR head.';
+      list.append(empty);
+      return;
+    }
+    records.forEach((record) => list.append(createBookmarkListItem(record, stale)));
+  }
+
+  function renderBookmarkDrawer() {
+    const shadow = document.getElementById('golens-bookmark-drawer-root')?.shadowRoot;
+    if (!shadow) return;
+    renderBookmarkSection(shadow, '[data-bookmark-list="current"]', state.bookmarkSnapshot.current, false);
+    renderBookmarkSection(shadow, '[data-bookmark-list="stale"]', state.bookmarkSnapshot.stale, true);
+    shadow.querySelector('[data-bookmark-section="stale"]').hidden = state.bookmarkSnapshot.stale.length === 0;
+    shadow.querySelector('[data-clear="current"]').disabled = state.bookmarkSnapshot.current.length === 0;
+    shadow.querySelector('[data-clear="stale"]').disabled = state.bookmarkSnapshot.stale.length === 0;
+    shadow.querySelector('[data-clear="all"]').disabled = state.bookmarkSnapshot.current.length + state.bookmarkSnapshot.stale.length === 0;
+  }
+
+  function showBookmarkDrawer() {
+    const existing = document.getElementById('golens-bookmark-drawer-root');
+    if (existing) { closeBookmarkDrawer(); return; }
+    const trigger = document.getElementById('gitlab-lens-root')?.shadowRoot?.querySelector('[data-action="bookmarks"]');
+    if (!trigger) return;
+    state.bookmarkDrawerReturnFocus = trigger;
+    trigger.setAttribute('aria-expanded', 'true');
+    const bounds = state.controlsHost?.getBoundingClientRect();
+    const host = document.createElement('aside');
+    host.id = 'golens-bookmark-drawer-root';
+    host.style.setProperty('--golens-bookmark-drawer-left', `${Math.max(12, Math.min(innerWidth - 392, (bounds?.left || innerWidth - 420) - 382))}px`);
+    host.style.setProperty('--golens-bookmark-drawer-top', `${Math.max(12, Math.min(innerHeight - 520, bounds?.top || 72))}px`);
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `
+      <style>
+        :host { all:initial; position:fixed; z-index:var(--golens-z-popover); left:var(--golens-bookmark-drawer-left); top:var(--golens-bookmark-drawer-top); width:min(380px,calc(100vw - 24px)); max-height:min(500px,calc(100vh - 24px)); color-scheme:dark; color:var(--golens-text-primary); font:13px/1.4 var(--golens-font-ui); }
+        * { box-sizing:border-box; }
+        .drawer { display:flex; max-height:inherit; flex-direction:column; overflow:hidden; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-overlay); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-overlay); }
+        header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid var(--golens-border-subtle); }
+        h2,h3,p { margin:0; } h2 { font-size:14px; } h3 { padding:10px 14px 6px; color:var(--golens-text-secondary); font-size:11px; letter-spacing:.06em; text-transform:uppercase; }
+        .scroll { overflow:auto; padding-bottom:8px; }
+        ul { display:grid; gap:6px; margin:0; padding:0 8px; list-style:none; }
+        .bookmark-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; padding:9px; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-raised); }
+        .bookmark-item[data-stale="true"] { border-style:dashed; opacity:.86; }
+        .bookmark-main { display:grid; min-width:0; gap:2px; } strong,.bookmark-context { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } strong { font:650 12px/1.3 var(--golens-font-mono); }
+        .bookmark-meta { color:var(--golens-info); font:600 11px/1.3 var(--golens-font-mono); } .bookmark-context { color:var(--golens-text-secondary); font-size:11px; }
+        .bookmark-actions { display:flex; gap:4px; }
+        button { border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-xs); padding:5px 7px; background:var(--golens-primary-soft); color:var(--golens-primary-hover); font:650 11px/1.2 var(--golens-font-ui); cursor:pointer; }
+        button.quiet,header button,.footer button { background:transparent; color:var(--golens-text-secondary); } button:hover:not(:disabled) { border-color:var(--golens-primary); color:var(--golens-text-primary); } button:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:2px; } button:disabled { opacity:.4; cursor:default; }
+        .bookmark-empty { padding:12px; color:var(--golens-text-muted); text-align:center; }
+        .footer { display:flex; flex-wrap:wrap; gap:6px; padding:10px; border-top:1px solid var(--golens-border-subtle); }
+        .status { min-height:18px; padding:0 12px 8px; color:var(--golens-text-secondary); font-size:11px; }
+      </style>
+      <section class="drawer" role="dialog" aria-label="MR bookmarks">
+        <header><h2>MR bookmarks</h2><button type="button" data-action="close" aria-label="Close bookmarks">Close</button></header>
+        <div class="scroll">
+          <section><h3>Current head</h3><ul data-bookmark-list="current"></ul></section>
+          <section data-bookmark-section="stale"><h3>Stale after head change</h3><ul data-bookmark-list="stale"></ul></section>
+        </div>
+        <p class="status" role="status" aria-live="polite"></p>
+        <div class="footer"><button type="button" data-clear="current">Clear current</button><button type="button" data-clear="stale">Clear stale</button><button type="button" data-clear="all">Clear all for MR</button></div>
+      </section>`;
+    shadow.querySelector('[data-action="close"]').addEventListener('click', () => closeBookmarkDrawer());
+    shadow.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeBookmarkDrawer(); }
+    });
+    shadow.addEventListener('click', async (event) => {
+      const action = event.target.closest('[data-bookmark-action]');
+      const clear = event.target.closest('[data-clear]');
+      const status = shadow.querySelector('.status');
+      if (action) {
+        const record = [...state.bookmarkSnapshot.current, ...state.bookmarkSnapshot.stale].find((item) => item.id === action.dataset.bookmarkId);
+        if (!record) return;
+        if (action.dataset.bookmarkAction === 'jump') await globalThis.GoLensGoNavigation.revealBookmark(record);
+        if (action.dataset.bookmarkAction === 'remove') await globalThis.GoLensGoNavigation.removeBookmark(record);
+        if (action.dataset.bookmarkAction === 'recover') {
+          action.disabled = true;
+          status.textContent = 'Checking commit-pinned context…';
+          const result = await globalThis.GoLensGoNavigation.recoverBookmark(record);
+          status.textContent = result.status === 'recovered' ? 'Bookmark recovered.' : result.message || 'Bookmark could not be recovered safely.';
+        }
+      }
+      if (clear) {
+        const mode = clear.dataset.clear === 'current' ? 'current' : clear.dataset.clear;
+        const count = await globalThis.GoLensGoNavigation.clearBookmarks(mode);
+        status.textContent = count ? `Cleared ${count} bookmark${count === 1 ? '' : 's'}.` : 'No matching bookmarks to clear.';
+      }
+    });
+    document.body.append(host);
+    renderBookmarkDrawer();
+    shadow.querySelector('[data-action="close"]').focus();
   }
 
   function closeOnboarding() {
@@ -705,6 +901,10 @@
       discussion: {
         tone: 'brand',
         body: '<path d="M5 18l-2 3V7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3z"></path><path d="M9 11h7m-3-3 3 3-3 3"></path>',
+      },
+      bookmark: {
+        tone: 'brand',
+        body: '<path d="M6 3.5h12v17l-6-4-6 4z"></path>',
       },
       settings: {
         tone: 'neutral',
@@ -832,7 +1032,7 @@
             <h2>Four things to remember</h2>
             <p class="step-intro">The complete feature guide stays available in Settings under Help.</p>
             <ul class="essentials">
-              <li class="essential">${onboardingFeatureIcon('brand')}<div><strong>Use the three page controls</strong><p>Toggle GoLens, enter review focus, or cache related packages.</p></div></li>
+              <li class="essential">${onboardingFeatureIcon('brand')}<div><strong>Use the review controls</strong><p>Toggle GoLens, enter review focus, or cache related packages.</p></div></li>
               <li class="essential">${onboardingFeatureIcon('hover')}<div><strong>Hover for Go insight</strong><p>See signatures, documentation, source locations, and usages.</p></div></li>
               <li class="essential">${onboardingFeatureIcon('search')}<div><strong>Plain-click selects occurrences</strong><p>Move through matching identifiers in the loaded diff.</p></div></li>
               <li class="essential">${onboardingFeatureIcon('navigate')}<div><strong><kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click follows code</strong><p>Resolve definitions, usages, and interface implementations.</p></div></li>
@@ -995,6 +1195,7 @@
                   <li class="feature">${onboardingFeatureIcon('brand')}<div><strong>Turn GoLens on or off</strong><p>The logo controls GoLens globally and syncs across open GitLab tabs.</p></div></li>
                     <li class="feature">${onboardingFeatureIcon('focus')}<div><strong>Enter fullscreen review focus</strong><p>Hide GitLab chrome, widen the diff, and leave with <kbd>Esc</kbd> or the focus button.</p></div></li>
                     <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache related MR packages</strong><p>Fetch changed and related Go packages at the MR head, with progress and completion states.</p></div></li>
+                    <li class="feature">${onboardingFeatureIcon('bookmark')}<div><strong>Keep local MR bookmarks</strong><p>Open the fourth control to revisit marked lines and ranges, clear current or stale entries, and recover only uniquely matched destinations after a head change.</p></div></li>
                     <li class="feature">${onboardingFeatureIcon('brand')}<div><strong>Mark review milestones</strong><p>The mascot marks completed caches, resolved discussions, approvals, merges, and the Friday beer-kart celebration. Reduced motion stays static.</p></div></li>
                 </ul>
               </section>
@@ -1023,6 +1224,7 @@
                   <li class="feature">${onboardingFeatureIcon('fullFile')}<div><strong>Show a full file</strong><p>Expand a file beyond changed lines, then return to changes-only.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Reach file search from the keyboard</strong><p><kbd>Cmd/Ctrl P</kbd> focuses file search; <kbd>Shift F</kbd> clears it and returns.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Move by hunk or file</strong><p>Configured shortcuts move between hunks and files with a brief destination highlight.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('bookmark')}<div><strong>Bookmark lines and ranges</strong><p>Use a gutter marker, select contiguous lines on one diff side, or configure toggle/previous/next bookmark shortcuts. Old and new sides stay distinct.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('testFile')}<div><strong>Spot Go test files</strong><p><span class="feature-note">_test.go</span> files receive a subtle green file-tree label.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('generated')}<div><strong>Optionally hide generated files</strong><p>Hide <span class="feature-note">.gitattributes</span>-marked files while keeping large collapsed files visible.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('discussion')}<div><strong>Jump from overview discussions to code</strong><p><span class="feature-note">View in changes</span> opens the exact commented line.</p></div></li>
@@ -1039,6 +1241,7 @@
                   <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Approve self-hosted GitLab origins</strong><p>Add or remove each trusted HTTP(S) origin explicitly; GitLab.com works automatically.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache the full project</strong><p>Broaden navigation beyond related MR packages with visible progress.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('database')}<div><strong>Inspect or clear the source cache</strong><p>Review cache size and record counts, or remove all snapshots.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('bookmark')}<div><strong>Keep bookmarks private</strong><p>Only minimal location metadata and context fingerprints are stored locally. Source excerpts are not stored with bookmarks or synchronized.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('replay')}<div><strong>Replay this complete tour</strong><p>Open this feature guide again from Settings under Help.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('lock')}<div><strong>Keep repository source local</strong><p>Source stays in your browser and signed-in GitLab origin, with commit-pinned same-origin requests.</p></div></li>
                 </ul>
@@ -1131,6 +1334,7 @@
       renderControlState(shadow);
     });
     shadow.querySelector('[data-action="preload"]').addEventListener('click', preloadMergeRequest);
+    shadow.querySelector('[data-action="bookmarks"]').addEventListener('click', showBookmarkDrawer);
   }
 
   function setPreloadState(status, { message = '', progress = null } = {}) {
@@ -1197,6 +1401,7 @@
     focus.disabled = !enabled;
     focus.setAttribute('aria-pressed', String(enabled && inReviewFocus()));
     renderPreloadState(shadow, enabled);
+    renderBookmarkControl(shadow);
   }
 
   async function preloadMergeRequest() {
@@ -1737,6 +1942,7 @@
     cancelCelebrationActivity({ resetStatus: true });
     closeOnboarding();
     closeSettingsOverlay({ restoreFocus: false });
+    closeBookmarkDrawer({ restoreFocus: false });
     removeFullFileButtons();
     restoreGeneratedDiffFiles();
     restoreGoTestFileRows();
@@ -1747,6 +1953,7 @@
     state.controlsMounted = false;
     state.preload = { status: 'idle', message: '', progress: null };
     state.fullPreload = { status: 'idle', message: 'Not cached', progress: null };
+    state.bookmarkSnapshot = { scope: null, current: [], stale: [] };
   }
 
   async function reconcilePage() {

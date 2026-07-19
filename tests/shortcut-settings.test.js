@@ -23,6 +23,9 @@ test('normalizes, displays, and matches portable shortcut bindings', () => {
     nextFile: 'Alt+PageDown',
     historyBack: 'Ctrl+Minus',
     historyForward: 'Ctrl+Shift+Minus',
+    toggleBookmark: 'Alt+KeyM',
+    previousBookmark: 'Alt+Comma',
+    nextBookmark: 'Alt+Period',
   });
 });
 
