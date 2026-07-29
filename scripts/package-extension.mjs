@@ -17,6 +17,7 @@ const extensionFiles = [
   'shortcut-settings.js',
   'bookmark-store.js',
   'content.js',
+  'extension-cache-ui.js',
   'golens-theme.css',
   'gitlab-lens.css',
   'go-navigation.js',

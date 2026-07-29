@@ -1,3 +1,6 @@
+import { cacheRequest, createFullProjectCacheController, formatBytes } from './extension-cache-ui.js';
+import { grantedSelfHostedPatterns, normalizeGitLabOrigin } from './gitlab-host-access.js';
+
 const defaults = { enabled: true, hideGeneratedFiles: false, shortcutCoachEnabled: true, shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() };
 const pageMeta = {
   general: ['General', 'Choose how GoLens behaves across GitLab reviews.'],
@@ -6,10 +9,17 @@ const pageMeta = {
   cache: ['Source cache', 'Inspect and manage commit-pinned source stored in this browser.'],
   help: ['Help', 'Open the complete feature guide whenever you need a refresher.'],
 };
-let activeTabID = null;
-let fullCachePoll = null;
 let shortcutBindings = globalThis.GoLensShortcuts.defaultBindings();
 let recordingShortcut = '';
+const cacheUI = createFullProjectCacheController({
+  panel: document.querySelector('[data-cache-panel]'),
+  button: document.querySelector('[data-action="cache-full-project"]'),
+  status: document.querySelector('[data-full-cache-status]'),
+  progress: document.querySelector('[data-full-cache-progress]'),
+  sizeOutput: document.querySelector('[data-cache-size]'),
+  idleMessage: 'Not cached',
+  completeMessage: 'Cached',
+});
 
 function shortcutAction(actionID) {
   return globalThis.GoLensShortcuts.actions.find(({ id }) => id === actionID);
@@ -125,36 +135,6 @@ function wireShortcutControls() {
   renderShortcutBindings();
 }
 
-function normalizeGitLabOrigin(value) {
-  const candidate = String(value || '').trim();
-  if (!candidate) throw new Error('Enter your self-hosted GitLab URL.');
-  if (/\*|%2a/i.test(candidate)) throw new Error('Enter one exact GitLab origin, without wildcards.');
-  let url;
-  try {
-    url = new URL(candidate.includes('://') ? candidate : `https://${candidate}`);
-  } catch {
-    throw new Error('Enter a valid HTTP or HTTPS GitLab URL.');
-  }
-  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) throw new Error('Enter a valid HTTP or HTTPS GitLab URL without credentials.');
-  return url.origin;
-}
-
-function selfHostedPatterns(origins = []) {
-  const patterns = new Set();
-  for (const value of origins) {
-    const candidate = String(value).replace(/\/\*$/, '');
-    if (/\*|%2a/i.test(candidate)) continue;
-    try {
-      const url = new URL(candidate);
-      if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) continue;
-      if (url.origin !== 'https://gitlab.com') patterns.add(`${url.origin}/*`);
-    } catch {
-      // Ignore named permissions and malformed legacy values.
-    }
-  }
-  return [...patterns].sort();
-}
-
 async function syncHostAccess() {
   const response = await chrome.runtime.sendMessage({ type: 'golens-sync-host-access' });
   if (!response?.ok) throw new Error(response?.error || 'Unable to update GitLab host access.');
@@ -163,7 +143,7 @@ async function syncHostAccess() {
 async function refreshHostAccess() {
   const list = document.querySelector('[data-host-list]');
   const granted = await chrome.permissions.getAll();
-  const patterns = selfHostedPatterns(granted.origins);
+  const patterns = grantedSelfHostedPatterns(granted.origins);
   list.replaceChildren();
   if (!patterns.length) {
     const empty = document.createElement('p');
@@ -232,101 +212,7 @@ function wireHostAccess() {
   });
 }
 
-function formatBytes(bytes) {
-  if (!bytes) return 'Empty';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / 1024 ** index;
-  return `${value >= 10 || index === 0 ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
-}
-
-async function cacheRequest(type) {
-  const response = await chrome.runtime.sendMessage({ type });
-  if (!response?.ok) throw new Error(response?.error || 'Cache request failed');
-  return response.result;
-}
-
-async function refreshCacheSize() {
-  const output = document.querySelector('[data-cache-size]');
-  try {
-    const stats = await cacheRequest('golens-cache-stats');
-    output.textContent = formatBytes(stats.bytes);
-    output.title = `${stats.sources} stored source records across ${stats.packages} package snapshots and ${stats.projects} project snapshots`;
-  } catch {
-    output.textContent = 'Unavailable';
-    output.removeAttribute('title');
-  }
-}
-
-async function activeTabRequest(type) {
-  if (!activeTabID) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    activeTabID = tab?.id || null;
-  }
-  if (!activeTabID) throw new Error('Open a supported GitLab page.');
-  const response = await chrome.tabs.sendMessage(activeTabID, { type });
-  if (!response?.ok) throw new Error(response?.error || 'The active GitLab tab did not respond.');
-  return response.result;
-}
-
-function stopFullCachePolling() {
-  if (fullCachePoll) clearInterval(fullCachePoll);
-  fullCachePoll = null;
-}
-
-function renderFullProjectState(state) {
-  const panel = document.querySelector('[data-cache-panel]');
-  const button = document.querySelector('[data-action="cache-full-project"]');
-  const status = document.querySelector('[data-full-cache-status]');
-  const progress = document.querySelector('[data-full-cache-progress]');
-  const busy = state.status === 'busy';
-  const complete = state.status === 'complete';
-  const unavailable = state.status === 'unavailable';
-  panel.dataset.state = state.status || 'idle';
-  button.disabled = busy || complete || unavailable;
-  button.dataset.state = state.status || 'idle';
-  button.toggleAttribute('aria-busy', busy);
-  button.textContent = complete ? 'Full project cached' : busy ? 'Caching full project…' : 'Cache full project';
-  status.textContent = state.message || (complete ? 'Cached' : 'Not cached');
-  const percentage = Number.isFinite(state.progress?.percentage) ? state.progress.percentage : null;
-  progress.hidden = !busy;
-  if (percentage === null || state.progress?.phase === 'discovering') progress.removeAttribute('value');
-  else progress.value = Math.max(0, Math.min(100, percentage));
-  if (busy) startFullCachePolling();
-  else stopFullCachePolling();
-}
-
-function startFullCachePolling() {
-  if (fullCachePoll) return;
-  fullCachePoll = setInterval(async () => {
-    try {
-      const state = await activeTabRequest('golens-full-project-status');
-      renderFullProjectState(state);
-      if (state.status === 'complete') await refreshCacheSize();
-    } catch (error) {
-      renderFullProjectState({ status: 'error', message: error.message || 'Unable to read project cache status.', progress: null });
-    }
-  }, 400);
-}
-
-async function refreshFullProjectState() {
-  try {
-    renderFullProjectState(await activeTabRequest('golens-full-project-status'));
-  } catch {
-    renderFullProjectState({ status: 'unavailable', message: 'Open a supported GitLab merge request.', progress: null });
-  }
-}
-
 function wireCacheControls() {
-  const fullButton = document.querySelector('[data-action="cache-full-project"]');
-  fullButton.addEventListener('click', async () => {
-    fullButton.disabled = true;
-    try {
-      renderFullProjectState(await activeTabRequest('golens-preload-full-project'));
-    } catch (error) {
-      renderFullProjectState({ status: 'error', message: error.message || 'Unable to start full project cache.', progress: null });
-    }
-  });
   const panel = document.querySelector('[data-cache-panel]');
   const clearButton = document.querySelector('[data-action="clear-cache"]');
   const status = document.querySelector('[data-cache-status]');
@@ -339,8 +225,8 @@ function wireCacheControls() {
       const cleared = await cacheRequest('golens-clear-cache');
       status.textContent = `Cleared ${formatBytes(cleared.bytes)} of cached source.`;
       panel.dataset.clearState = 'success';
-      try { await activeTabRequest('golens-cache-invalidated'); } catch { /* The cache is still cleared. */ }
-      await Promise.all([refreshCacheSize(), refreshFullProjectState()]);
+      try { await cacheUI.activeTabRequest('golens-cache-invalidated'); } catch { /* The cache is still cleared. */ }
+      await Promise.all([cacheUI.refreshCacheSize(), cacheUI.refreshFullProjectState()]);
     } catch (error) {
       status.textContent = error.message || 'Unable to clear cache.';
       panel.dataset.clearState = 'error';
@@ -351,11 +237,11 @@ function wireCacheControls() {
 }
 
 function wireOverlayControls() {
-  document.querySelector('[data-action="close-settings"]').addEventListener('click', () => activeTabRequest('golens-close-settings').catch(() => window.close()));
+  document.querySelector('[data-action="close-settings"]').addEventListener('click', () => cacheUI.activeTabRequest('golens-close-settings').catch(() => window.close()));
   document.querySelector('[data-action="show-onboarding"]').addEventListener('click', async () => {
     const status = document.querySelector('[data-onboarding-status]');
     try {
-      await activeTabRequest('golens-show-onboarding');
+      await cacheUI.activeTabRequest('golens-show-onboarding');
     } catch (error) {
       status.textContent = error.message || 'Open a GitLab merge request first.';
     }
@@ -384,7 +270,7 @@ function wireOverlayControls() {
       return;
     }
     if (event.key === 'Escape') {
-      activeTabRequest('golens-close-settings').catch(() => window.close());
+      cacheUI.activeTabRequest('golens-close-settings').catch(() => window.close());
       return;
     }
     if (event.key !== 'Tab') return;
@@ -431,11 +317,12 @@ async function initialise() {
   showSettingsPage(document.querySelector('[role="tab"][aria-selected="true"]')?.dataset.settingsTab);
   wireShortcutControls();
   wireHostAccess();
+  cacheUI.wireFullProjectControl();
   wireCacheControls();
   wireOverlayControls();
-  await Promise.all([refreshHostAccess(), refreshFullProjectState(), refreshCacheSize()]);
+  await Promise.all([refreshHostAccess(), cacheUI.refreshFullProjectState(), cacheUI.refreshCacheSize()]);
   document.querySelector('[role="tab"][aria-selected="true"]')?.focus();
-  activeTabRequest('golens-settings-ready').catch(() => undefined);
+  cacheUI.activeTabRequest('golens-settings-ready').catch(() => undefined);
 }
 
 initialise();
