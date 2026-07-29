@@ -611,7 +611,7 @@ const server = createServer((request, response) => {
     const query = url.searchParams.get('search') || '';
     const paths = query === 'example.com/project/contracts'
       ? ['service/runner.go']
-      : query === 'Run(' || query === 'Runner'
+    : query === 'Run' || query === 'Run(' || query === 'Runner'
       ? ['contracts/runner.go', 'service/runner.go', 'internal/mocks/runner.go']
       : [];
     response.setHeader('content-type', 'application/json');

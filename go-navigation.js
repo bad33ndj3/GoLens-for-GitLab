@@ -933,6 +933,21 @@
     return 'Related MR cache ready';
   }
 
+  function implementationSearchTerms(interfaceRecord, interfacesByIdentity = new Map()) {
+    const terms = new Set();
+    const visited = new Set();
+    const collect = (record) => {
+      if (!record || visited.has(record.identity)) return;
+      visited.add(record.identity);
+      for (const methodName of record.methodNames || []) {
+        if (methodName) terms.add(methodName);
+      }
+      for (const embeddedIdentity of record.embedded || []) collect(interfacesByIdentity.get(embeddedIdentity));
+    };
+    collect(interfaceRecord);
+    return [...terms].sort();
+  }
+
   async function mergeRequestPreloadStatus() {
     const context = projectContext();
     if (!context) throw new Error('GitLab project context is unavailable.');
@@ -1027,6 +1042,10 @@
     let searchStatus = 'limited';
     const modulePath = await modulePathFor(ref);
     const referencedImports = seedPackages.flatMap((packagePath) => relations.get(packagePath)?.referencedImports || []);
+    const availableInterfaces = new Map();
+    for (const relation of relations.values()) {
+      for (const interfaceRecord of relation.interfaces || []) availableInterfaces.set(interfaceRecord.identity, interfaceRecord);
+    }
     const relevantInterfaces = new Map();
     for (const packagePath of seedPackages) {
       for (const interfaceRecord of relations.get(packagePath)?.interfaces || []) relevantInterfaces.set(interfaceRecord.identity, interfaceRecord);
@@ -1063,7 +1082,9 @@
 
       report(relatedLoadingProgress('searching', 0, 0, { phaseDetail: 'implementations' }));
       for (const interfaceRecord of relevantInterfaces.values()) {
-        for (const candidate of await searchCandidates(interfaceRecord.name)) candidates.add(candidate);
+        for (const term of implementationSearchTerms(interfaceRecord, availableInterfaces)) {
+          for (const candidate of await searchCandidates(term)) candidates.add(candidate);
+        }
       }
     }
 
@@ -2907,6 +2928,6 @@
     clearBookmarks,
     recoverBookmark,
     registerBookmarkSurface,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, implementationSearchTerms, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked },
   };
 })();

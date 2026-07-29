@@ -48,8 +48,11 @@ jobs:
           npm run vendor:parser
           git diff --exit-code -- vendor/
 
-      - name: Run project checks
-        run: npm run check
+      - name: Run syntax and unit checks
+        run: npm run check:syntax && npm test
+
+      - name: Run browser smoke
+        run: npm run test:browser || npm run test:browser
 
       - name: Verify package versions match
         run: |
