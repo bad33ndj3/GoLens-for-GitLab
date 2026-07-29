@@ -513,11 +513,58 @@ const overviewHtml = `<!doctype html>
   </div>
 </body></html>`;
 
+const LARGE_DIFF_FILE_COUNT = 80;
+const LARGE_DIFF_LINES_PER_FILE = 10;
+const largeDiffHtml = `<!doctype html>
+<html><head><meta name="csrf-token" content="fixture"></head><body>
+  <div class="super-sidebar"></div>
+  <div class="layout-page is-merge-request"><div class="ai-panels"><div><nav><div><button>AI</button></div></nav></div></div></div>
+  <main id="diffs"></main>
+  <script>
+    const fileCount = ${LARGE_DIFF_FILE_COUNT};
+    const linesPerFile = ${LARGE_DIFF_LINES_PER_FILE};
+    const diffs = document.getElementById('diffs');
+    let appended = 0;
+    let expectedAt = 0;
+    let maxTimerDelay = 0;
+    function appendDiff(index) {
+      const file = document.createElement('diff-file');
+      file.dataset.testid = 'rd-diff-file';
+      file.dataset.fileData = JSON.stringify({ viewer: 'text_inline', new_path: 'streamed/' + index + '.go' });
+      const lines = Array.from({ length: linesPerFile }, (_, line) =>
+        '<tr><td class="new_line"><a href="#line_hash_' + index + '_' + line + '" aria-label="Added line ' + (line + 1) + '">' + (line + 1) + '</a></td><td class="line_content">func File' + index + 'Line' + line + '() {}</td></tr>'
+      ).join('');
+      file.innerHTML = '<article class="rd-diff-file"><header class="rd-diff-file-header" data-testid="rd-diff-file-header"><div class="rd-diff-file-info"><div class="rd-diff-file-options-menu"><div data-options-menu><script type="application/json">[{"text":"Show full file","extraAttrs":{"data-click":"showFullFile"}}]<\\/script></div></div></div></header><table><tbody>' + lines + '</tbody></table></article>';
+      diffs.append(file);
+    }
+    function streamNext() {
+      const now = performance.now();
+      if (expectedAt) maxTimerDelay = Math.max(maxTimerDelay, now - expectedAt);
+      appendDiff(appended++);
+      if (appended < fileCount) {
+        expectedAt = performance.now() + 5;
+        setTimeout(streamNext, 5);
+        return;
+      }
+      setTimeout(() => {
+        document.body.dataset.largeDiffStreamed = 'true';
+        document.body.dataset.largeDiffMaxTimerDelay = String(maxTimerDelay);
+      }, 100);
+    }
+    setTimeout(streamNext, 100);
+  </script>
+</body></html>`;
+
 const server = createServer((request, response) => {
   const url = new URL(request.url, 'http://localhost');
   if (url.pathname === '/group/project/-/merge_requests/44') {
     response.setHeader('content-type', 'text/html; charset=utf-8');
     response.end(overviewHtml);
+    return;
+  }
+  if (url.pathname === '/group/project/-/merge_requests/45/diffs') {
+    response.setHeader('content-type', 'text/html; charset=utf-8');
+    response.end(largeDiffHtml);
     return;
   }
   if (url.pathname === '/group/project/-/merge_requests/42/diffs' || url.pathname === '/group/project/-/merge_requests/43/diffs') {
@@ -711,6 +758,18 @@ try {
   }
   assert.equal(blobRequests.filter((request) => request === changedServiceBlobID).length, 1, 'changed source blob was not downloaded exactly once');
   assert.equal(rawRequests.filter((request) => request.ref === secondSha && request.path === 'go.mod').length, 1, 'second MR did not fetch its commit-specific go.mod once');
+
+  const largeDiffURL = `http://127.0.0.1:${port}/group/project/-/merge_requests/45/diffs`;
+  const largeDiff = await runBrowser(largeDiffURL, `
+    document.body?.dataset.largeDiffStreamed === 'true'
+      && document.querySelectorAll('diff-file [data-golens-full-file]').length === ${LARGE_DIFF_FILE_COUNT}
+  `, profile);
+  const maxTimerDelay = Number(/data-large-diff-max-timer-delay="([^"]+)"/.exec(largeDiff.stdout)?.[1]);
+  assert.ok(Number.isFinite(maxTimerDelay), `large-diff fixture did not record timer delay\n${largeDiff.stderr}`);
+  assert.ok(
+    maxTimerDelay < 40,
+    `GoLens stalled streamed large-diff rendering for ${maxTimerDelay.toFixed(1)}ms (expected under 40ms)\n${largeDiff.stderr}`
+  );
 
   console.log('browser injection smoke passed');
 } finally {
