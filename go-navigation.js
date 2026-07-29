@@ -251,9 +251,10 @@
       if (target) return target;
       const visibleLines = [...root.querySelectorAll('a[href*="#"], [data-line-number]')].map(lineFromAnchor);
       const direction = expansionDirectionForLine(line, visibleLines);
-      if (!direction) return null;
-      const button = [...root.querySelectorAll(`button[data-click="expandLines"][data-expand-direction="${direction}"]`)]
-        .find((candidate) => !candidate.disabled);
+      const selector = direction
+        ? `button[data-click="expandLines"][data-expand-direction="${direction}"]`
+        : '.js-unfold-all, button[data-click="showFullFile"]';
+      const button = [...root.querySelectorAll(selector)].find((candidate) => !candidate.disabled);
       if (!button) return null;
       const updated = waitForDiffUpdate(root);
       button.click();
