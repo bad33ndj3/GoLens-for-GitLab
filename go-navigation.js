@@ -8,6 +8,7 @@
   const RELATED_CACHE_MAX_CANDIDATE_PACKAGES = 10;
   const RELATED_CACHE_MAX_SEARCH_QUERIES = 8;
   const RELATED_CACHE_SEARCH_PAGES = 2;
+  const FULL_TYPE_BODY_INITIAL_LINES = 40;
   const SYMBOL_PRESENTATIONS = {
     interface: { badge: 'I', label: 'Interface', className: 'interface' },
     struct: { badge: 'S', label: 'Struct', className: 'struct' },
@@ -1525,10 +1526,29 @@
     return applySymbolBadge(badge, kind);
   }
 
-  function renderSignature(popover, definition = null) {
+  function renderSignature(popover, definition = null, { showFullTypeBody = false } = {}) {
     const block = popover.querySelector('.signature-block');
     const signature = block.querySelector('.signature');
     const toggle = block.querySelector('.signature-toggle');
+    const typeBody = showFullTypeBody ? definition?.fullTypeBody || '' : '';
+    if (typeBody) {
+      const lines = typeBody.split('\n');
+      const compact = lines.slice(0, FULL_TYPE_BODY_INITIAL_LINES).join('\n');
+      const remaining = lines.length - FULL_TYPE_BODY_INITIAL_LINES;
+      block.hidden = false;
+      signature.textContent = compact;
+      signature.title = '';
+      toggle.hidden = remaining <= 0;
+      toggle.textContent = `Show remaining ${remaining} line${remaining === 1 ? '' : 's'}`;
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.onclick = remaining > 0 ? () => {
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        signature.textContent = expanded ? compact : typeBody;
+        toggle.textContent = expanded ? `Show remaining ${remaining} line${remaining === 1 ? '' : 's'}` : 'Collapse type body';
+        toggle.setAttribute('aria-expanded', String(!expanded));
+      } : null;
+      return;
+    }
     const full = definition?.signature || '';
     const compact = definition?.compactSignature || '';
     block.hidden = !full;
@@ -1823,7 +1843,7 @@
     };
     if (result.status === 'resolved') {
       setHeader(result.definition.kind, result.definition.name, `${result.definition.path}:${result.definition.line}`);
-      renderSignature(popover, result.definition);
+      renderSignature(popover, result.definition, { showFullTypeBody: !result.isDefinition });
       docs.textContent = result.definition.documentation || '';
       if (!result.isDefinition) {
         choices.append(choiceButton({

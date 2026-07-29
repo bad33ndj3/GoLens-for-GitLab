@@ -58,3 +58,13 @@ Use a short, imperative commit subject, for example `Rename extension to GoLens`
 ## Security & Privacy
 
 Keep repository source inside the browser, extension, and signed-in GitLab origin. Do not add tokens, remote analytics, repository-content uploads, or broad new permissions without explicit justification. Preserve commit-pinned navigation and same-origin authenticated requests.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for this repository. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.

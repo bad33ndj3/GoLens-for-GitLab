@@ -487,6 +487,45 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
   assert.equal(signatureToggle.textContent, 'Collapse signature');
   assert.equal(signatureToggle.getAttribute('aria-expanded'), 'true');
 
+  const fullTypeBody = ['type Widget struct {', ...Array.from({ length: 42 }, (_, index) => `\tField${index} string \`json:"field_${index}"\``), '}'].join('\n');
+  helpers.showResult({
+    status: 'resolved',
+    isDefinition: false,
+    definition: {
+      name: 'Widget',
+      kind: 'struct',
+      signature: 'Widget struct {',
+      fullTypeBody,
+      documentation: '',
+      path: 'service/widget.go',
+      line: 20,
+      ref: 'b'.repeat(40),
+    },
+  }, currentPointer);
+  assert.match(signature.textContent, /^type Widget struct \{/);
+  assert.match(signature.textContent, /Field38/);
+  assert.doesNotMatch(signature.textContent, /Field39/);
+  assert.equal(signatureToggle.textContent, 'Show remaining 4 lines');
+  signatureToggle.click();
+  assert.equal(signature.textContent, fullTypeBody);
+  assert.equal(signatureToggle.textContent, 'Collapse type body');
+
+  helpers.showResult({
+    status: 'resolved',
+    isDefinition: true,
+    definition: {
+      name: 'Widget',
+      kind: 'struct',
+      signature: 'Widget struct {',
+      fullTypeBody,
+      documentation: '',
+      path: 'service/widget.go',
+      line: 20,
+      ref: 'b'.repeat(40),
+    },
+  }, currentPointer);
+  assert.equal(signature.textContent, 'Widget struct {', 'type declarations retain the usages-only hover view');
+
   helpers.showResult({
     status: 'references',
     definition: { name: 'NewContractService', kind: 'function', signature: fullSignature, compactSignature, path: 'service/contracts.go', line: 20 },
