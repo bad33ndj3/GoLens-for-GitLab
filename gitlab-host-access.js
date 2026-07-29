@@ -50,7 +50,7 @@ async function performContentScriptSync(chromeAPI) {
     await chromeAPI.scripting.registerContentScripts([{
       id: DYNAMIC_CONTENT_SCRIPT_ID,
       matches,
-      js: ['shortcut-settings.js', 'go-navigation.js', 'content.js'],
+      js: ['shortcut-settings.js', 'bookmark-store.js', 'go-navigation.js', 'content.js'],
       css: ['golens-theme.css', 'gitlab-lens.css'],
       runAt: 'document_idle',
       persistAcrossSessions: true,

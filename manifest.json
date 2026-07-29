@@ -32,7 +32,7 @@
   "content_scripts": [
     {
       "matches": ["https://gitlab.com/*"],
-      "js": ["shortcut-settings.js", "go-navigation.js", "content.js"],
+      "js": ["shortcut-settings.js", "bookmark-store.js", "go-navigation.js", "content.js"],
       "css": ["golens-theme.css", "gitlab-lens.css"],
       "run_at": "document_idle"
     }

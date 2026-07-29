@@ -96,7 +96,7 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   assert.equal(firstDialog.querySelector('[data-tour-progress]').textContent, '3 of 3 · Ready');
   assert.equal(nextButton.textContent, 'Save and start reviewing');
   assert.deepEqual([...firstDialog.querySelectorAll('.essential strong')].map((heading) => heading.textContent), [
-    'Use the three page controls',
+    'Use the review controls',
     'Hover for Go insight',
     'Plain-click selects occurrences',
     'Cmd/Ctrl-click follows code',
@@ -106,7 +106,7 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   const controls = window.document.getElementById('gitlab-lens-root').shadowRoot;
   const brandButton = controls.querySelector('[data-action="toggle-enabled"]');
   const focusButton = controls.querySelector('[data-action="focus"]');
-  assert.equal(controls.querySelectorAll('button').length, 3);
+  assert.equal(controls.querySelectorAll('button').length, 4);
   assert.match(brandButton.querySelector('img').src, /assets\/icons\/golens-32\.png$/);
   assert.ok(focusButton.querySelector('svg'), 'focus control uses a semantic line icon');
   assert.equal(focusButton.querySelector('img'), null);
@@ -147,17 +147,20 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   const tourTabs = [...replayDialog.querySelectorAll('[role="tab"]')];
   const tourPanels = [...replayDialog.querySelectorAll('[role="tabpanel"]')];
   assert.deepEqual(tourTabs.map((tab) => tab.lastElementChild.textContent.trim()), ['Page controls', 'Go intelligence', 'Diff helpers', 'Settings']);
+  assert.match(replayDialog.textContent, /Keep local MR bookmarks/);
+  assert.match(replayDialog.textContent, /Bookmark lines and ranges/);
+  assert.match(replayDialog.textContent, /minimal location metadata and context fingerprints/);
   assert.deepEqual([...replayDialog.querySelectorAll('.feature strong')].map((heading) => heading.textContent), [
-    'Turn GoLens on or off', 'Enter fullscreen review focus', 'Cache related MR packages', 'Mark review milestones',
+    'Turn GoLens on or off', 'Enter fullscreen review focus', 'Cache related MR packages', 'Keep local MR bookmarks', 'Mark review milestones',
     'Hover for Go insight', 'Navigate by click or shortcut', 'Select and revisit occurrences', 'Stay in the diff when possible',
     'Retrace semantic jumps', 'Use the small popover tools', 'Check the search scope', 'Search the complete project explicitly',
     'Separate test doubles', 'Use Rapid Diffs automatically', 'Show a full file', 'Reach file search from the keyboard',
-    'Move by hunk or file', 'Spot Go test files', 'Optionally hide generated files', 'Jump from overview discussions to code',
+    'Move by hunk or file', 'Bookmark lines and ranges', 'Spot Go test files', 'Optionally hide generated files', 'Jump from overview discussions to code',
     'Open the settings overlay', 'Set global review preferences', 'Choose a familiar keymap', 'Approve self-hosted GitLab origins',
-    'Cache the full project', 'Inspect or clear the source cache', 'Replay this complete tour', 'Keep repository source local',
+    'Cache the full project', 'Inspect or clear the source cache', 'Keep bookmarks private', 'Replay this complete tour', 'Keep repository source local',
   ]);
   const featureIcons = [...replayDialog.querySelectorAll('[data-feature-icon]')];
-  assert.equal(featureIcons.length, 28);
+  assert.equal(featureIcons.length, 31);
   assert.ok(featureIcons.every((icon) => icon.querySelector('svg, img')), 'every reference feature uses a visual icon');
   assert.match(replayDialog.textContent, /Contextual tips retire after successful use/);
   assert.deepEqual(

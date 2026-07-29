@@ -278,6 +278,7 @@ const html = `<!doctype html>
     let popoverTested = false;
     let sharingStarted = false;
     let fullFileTested = false;
+    let bookmarkTested = false;
     document.addEventListener('click', (event) => {
       const button = event.target.closest?.('[data-golens-full-file][data-click="showFullFile"]');
       if (!button || fullFileTested) return;
@@ -299,6 +300,10 @@ const html = `<!doctype html>
       clearInterval(fullFileWatch);
     }, 20);
     const startPreloadWhenReady = (preload) => {
+      if (!reloaded && !sessionStorage.getItem('golens-bookmark-added')) {
+        setTimeout(() => startPreloadWhenReady(preload), 50);
+        return;
+      }
       if (!preload || (preload.dataset.state !== 'idle' && preload.dataset.state !== 'error')) {
         setTimeout(() => startPreloadWhenReady(preload), 50);
         return;
@@ -306,6 +311,38 @@ const html = `<!doctype html>
       preload.click();
       document.body.dataset.preloadIndeterminate = String(preload.classList.contains('is-indeterminate'));
     };
+    const bookmarkWatch = setInterval(() => {
+      if (sharing || bookmarkTested) return;
+      const marker = document.querySelector('diff-file .golens-bookmark-marker');
+      const controls = document.getElementById('gitlab-lens-root')?.shadowRoot;
+      const bookmarkControl = controls?.querySelector('[data-action="bookmarks"]');
+      if (!marker || !bookmarkControl) return;
+      if (!reloaded) {
+        if (!sessionStorage.getItem('golens-bookmark-requested')) {
+          sessionStorage.setItem('golens-bookmark-requested', 'true');
+          marker.click();
+          return;
+        }
+        if (document.querySelector('diff-file .golens-bookmark-marker[aria-pressed="true"]')) {
+          sessionStorage.setItem('golens-bookmark-added', 'true');
+        }
+        return;
+      }
+      if (marker.getAttribute('aria-pressed') !== 'true' || bookmarkControl.querySelector('.bookmark-count')?.textContent !== '1') return;
+      bookmarkControl.click();
+      const drawer = document.getElementById('golens-bookmark-drawer-root')?.shadowRoot;
+      if (!drawer?.textContent.includes('contracts/runner.go')) return;
+      document.body.dataset.bookmarkReloaded = 'true';
+      document.body.dataset.bookmarkDrawer = String(drawer.querySelector('[role="dialog"]')?.getAttribute('aria-label') === 'MR bookmarks');
+      const tbody = document.querySelector('diff-file tbody');
+      tbody.innerHTML = '<tr><td class="new_line"><a href="#line_hash_A4" aria-label="Added line 4">4</a></td><td class="line_content">type <span id="go-target">Runner</span> interface { Run() error }</td></tr>';
+      setTimeout(() => {
+        const restored = tbody.querySelectorAll('.golens-bookmark-marker[aria-pressed="true"]');
+        document.body.dataset.bookmarkDomReconciled = String(restored.length === 1);
+        bookmarkTested = true;
+        clearInterval(bookmarkWatch);
+      }, 150);
+    }, 25);
     const preloadWatch = setInterval(() => {
       const controls = document.getElementById('gitlab-lens-root')?.shadowRoot;
       const preload = controls?.querySelector('[data-action="preload"]');
@@ -391,6 +428,7 @@ const html = `<!doctype html>
         document.body.dataset.brandIconSmall = String(toggle?.querySelector('img')?.src.endsWith('/assets/icons/golens-32.png'));
         document.body.dataset.themeSurface = getComputedStyle(document.getElementById('gitlab-lens-root')).getPropertyValue('--golens-surface-panel').trim();
         document.body.dataset.preloadLast = String(controls.querySelector('.controls')?.lastElementChild === preload);
+        document.body.dataset.bookmarkLast = String(controls.querySelector('.controls')?.lastElementChild === controls.querySelector('[data-action="bookmarks"]'));
         if (!reloaded && !sharing) {
           focus?.click();
           document.body.dataset.focusActive = String(document.documentElement.classList.contains('gitlab-lens-review-focus'));
@@ -606,10 +644,15 @@ try {
       && document.body?.dataset.goChoiceClosedPopover === 'true'
       && document.body?.dataset.goSemanticShortcut === 'true'
       && document.body?.dataset.fullFileInline === 'true'
+      && document.body?.dataset.bookmarkDomReconciled === 'true'
   `, profile);
   assert.match(stdout, /id="gitlab-lens-root"/, `extension shell was not injected\n${stderr}`);
-  assert.match(stdout, /data-control-count="3"/, `the three direct controls were not injected\n${stderr}`);
-  assert.match(stdout, /data-preload-last="true"/, `preload is not the bottom sidebar control\n${stderr}`);
+  assert.match(stdout, /data-control-count="4"/, `the four direct controls were not injected\n${stderr}`);
+  assert.match(stdout, /data-preload-last="false"/, `preload unexpectedly remained the bottom sidebar control\n${stderr}`);
+  assert.match(stdout, /data-bookmark-last="true"/, `bookmarks are not the bottom sidebar control\n${stderr}`);
+  assert.match(stdout, /data-bookmark-reloaded="true"/, `bookmark state did not survive a real extension reload\n${stderr}`);
+  assert.match(stdout, /data-bookmark-drawer="true"/, `bookmark drawer did not expose its accessible dialog\n${stderr}`);
+  assert.match(stdout, /data-bookmark-dom-reconciled="true"/, `bookmark marker did not survive diff DOM replacement\n${stderr}`);
   assert.match(stdout, /data-dock-present="false"/, `expandable dock is still present\n${stderr}`);
   assert.match(stdout, /data-focus-title="Full screen mode"/, `focus button is missing its tooltip\n${stderr}`);
   assert.match(stdout, /data-focus-icon-svg="true"/, `focus button is missing its semantic SVG icon\n${stderr}`);

@@ -131,6 +131,45 @@ html.gitlab-lens-review-focus :is(
   animation: golens-navigation-destination 1300ms ease-out;
 }
 
+:is(td.old_line,td.new_line,[data-position="old"],[data-position="new"],[data-line-number]) {
+  position: relative;
+}
+
+.golens-bookmark-marker {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 2px;
+  display: grid;
+  width: 12px;
+  height: 18px;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 3px;
+  background: color-mix(in srgb,var(--golens-surface-raised,#20242b) 88%,transparent);
+  color: var(--golens-text-muted,#8b949e);
+  cursor: pointer;
+  opacity: 0;
+}
+
+/* GitLab places its add/open-comment button on the gutter's left edge. Keep
+   the bookmark in the gap before the line number instead of stacking both. */
+:is(td.old_line,td.new_line,[data-position="old"],[data-position="new"]):has(button:not(.golens-bookmark-marker)) > .golens-bookmark-marker {
+  left: 18px;
+}
+
+.golens-bookmark-marker svg { width: 10px; height: 12px; fill: none; stroke: currentColor; stroke-linejoin: round; stroke-width: 1.35; }
+:is(td.old_line,td.new_line,[data-position="old"],[data-position="new"],[data-line-number]):hover > .golens-bookmark-marker,
+.golens-bookmark-marker:focus-visible,
+.golens-bookmark-marker[aria-pressed="true"] { opacity: 1; }
+.golens-bookmark-marker:hover { background: var(--golens-primary-soft,rgba(252,109,38,.16)); color: var(--golens-primary-hover,#ff9b67); }
+.golens-bookmark-marker[aria-pressed="true"] { color: var(--golens-primary,#fc6d26); }
+.golens-bookmark-marker[aria-pressed="true"] svg { fill: currentColor; }
+.golens-bookmark-marker:focus-visible { outline: 2px solid var(--golens-focus-ring,#3794ff); outline-offset: 1px; }
+
 @keyframes golens-navigation-destination {
   0%,20% { outline:2px solid var(--golens-primary, #fc6d26); outline-offset:2px; background-color:color-mix(in srgb,var(--golens-primary, #fc6d26) 14%,transparent); }
   100% { outline:2px solid transparent; outline-offset:2px; background-color:transparent; }
@@ -138,4 +177,5 @@ html.gitlab-lens-review-focus :is(
 
 @media (prefers-reduced-motion: reduce) {
   [data-golens-navigation-destination] { animation:none; outline:2px solid var(--golens-primary, #fc6d26); outline-offset:2px; }
+  .golens-bookmark-marker { transition:none; }
 }
