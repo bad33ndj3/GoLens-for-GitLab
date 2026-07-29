@@ -599,6 +599,33 @@ test('uses GitLab pagination headers and falls back when headers are omitted', (
   assert.equal(helpers.nextPageNumber(response(), 2, Array(12)), 0);
 });
 
+test('uses every required interface method to discover candidate implementation packages', () => {
+  assert.deepEqual(
+    helpers.implementationSearchTerms({
+      name: 'ReadCloser',
+      methodNames: ['Read', 'Close'],
+    }),
+    ['Close', 'Read'],
+  );
+});
+
+test('uses methods inherited from indexed embedded interfaces to discover implementations', () => {
+  const reader = { identity: 'contracts.Reader', methodNames: ['Read'], embedded: [] };
+  const closer = { identity: 'contracts.Closer', methodNames: ['Close'], embedded: [] };
+  const readCloser = {
+    identity: 'contracts.ReadCloser',
+    methodNames: [],
+    embedded: ['contracts.Reader', 'contracts.Closer'],
+  };
+  assert.deepEqual(
+    helpers.implementationSearchTerms(readCloser, new Map([
+      [reader.identity, reader],
+      [closer.identity, closer],
+    ])),
+    ['Close', 'Read'],
+  );
+});
+
 test('exhausts commit-pinned basic code search and supports cancellation', async () => {
   const originalFetch = globalThis.fetch;
   const requests = [];
