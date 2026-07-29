@@ -190,6 +190,13 @@ function signatureFor(source, node) {
   return textOf(source, node).split('\n')[0].trim();
 }
 
+function fullTypeBodyFor(source, node) {
+  const typeNode = node.childForFieldName?.('type');
+  if (!['struct_type', 'interface_type'].includes(typeNode?.type)) return '';
+  const body = `type ${textOf(source, node)}`;
+  return body.includes('\n') ? body : '';
+}
+
 function parameterCount(parameter) {
   const typeNode = parameter.childForFieldName?.('type');
   const names = parameter.namedChildren.filter((child) => child.id !== typeNode?.id && IDENTIFIER_TYPES.has(child.type));
@@ -246,6 +253,7 @@ function definitionFor({ source, node, nameNode, kind, receiver = '', packageNam
     receiver: receiverType(receiver),
     signature,
     ...(compactSignature ? { compactSignature } : {}),
+    ...(fullTypeBodyFor(source, node) ? { fullTypeBody: fullTypeBodyFor(source, node) } : {}),
     documentation: documentation.text,
     documentationLine: documentation.line,
     packageName,

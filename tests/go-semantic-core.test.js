@@ -89,6 +89,40 @@ test('resolves a same-package function with signature and documentation', () => 
   assert.equal(result.definition.line, 6);
 });
 
+test('preserves complete multiline struct and interface declarations for type-reference hovers', () => {
+  const source = `package preview
+
+type Record struct {
+	// ID identifies the record.
+	ID string \`json:"id"\`
+}
+
+type Reader interface {
+	Read(Record) error
+}
+
+type Alias = Record
+
+func use(record Record, reader Reader, alias Alias) {
+	_, _, _ = record, reader, alias
+}
+`;
+  const base = {
+    project: 'group/project',
+    ref: 'type-preview',
+    packagePath: 'pkg/preview',
+    path: 'pkg/preview/preview.go',
+  };
+  index.indexPackage({ ...base, modulePath: 'example.com/project', files: [{ path: base.path, source }] });
+
+  const record = index.resolve({ ...base, ...position(source, 14, 'Record') }).definition;
+  const reader = index.resolve({ ...base, ...position(source, 14, 'Reader') }).definition;
+  const alias = index.resolve({ ...base, ...position(source, 14, 'Alias') }).definition;
+  assert.equal(record.fullTypeBody, 'type Record struct {\n\t// ID identifies the record.\n\tID string `json:"id"`\n}');
+  assert.equal(reader.fullTypeBody, 'type Reader interface {\n\tRead(Record) error\n}');
+  assert.equal(alias.fullTypeBody, undefined);
+});
+
 test('requests an imported project package lazily and resolves after indexing', () => {
   const target = position(searchSource, 20, 'Helper');
   const missing = resolve(target);

@@ -15,7 +15,7 @@ GoLens for GitLab is a dependency-light Manifest V3 extension for GitLab.com and
 
 ## Highlights
 
-- Hover Go identifiers for signatures and documentation.
+- Hover Go identifiers for signatures and documentation; type references include their complete struct or interface body.
 - `Cmd/Ctrl`-click to find definitions, usages, and interface implementations.
 - Select a Go identifier and press `Cmd/Ctrl+F12` by default for the same definition or implementation navigation.
 - Plain-click a Go identifier to highlight its loaded-diff occurrences, then move between occurrences, hunks, and files with configurable shortcuts.

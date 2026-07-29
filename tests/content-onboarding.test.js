@@ -150,6 +150,7 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   assert.match(replayDialog.textContent, /Keep local MR bookmarks/);
   assert.match(replayDialog.textContent, /Bookmark lines and ranges/);
   assert.match(replayDialog.textContent, /minimal location metadata and context fingerprints/);
+  assert.match(replayDialog.textContent, /Type references show their complete struct or interface body/);
   assert.deepEqual([...replayDialog.querySelectorAll('.feature strong')].map((heading) => heading.textContent), [
     'Turn GoLens on or off', 'Enter fullscreen review focus', 'Cache related MR packages', 'Keep local MR bookmarks', 'Mark review milestones',
     'Hover for Go insight', 'Navigate by click or shortcut', 'Select and revisit occurrences', 'Stay in the diff when possible',

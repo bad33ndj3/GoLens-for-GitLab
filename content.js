@@ -1204,7 +1204,7 @@
                 <h2>Inspect and follow symbols</h2>
                 <p class="chapter-intro">Commit-pinned browser indexing provides safe navigation without speculative results.</p>
                 <ul class="feature-list">
-                  <li class="feature">${onboardingFeatureIcon('hover')}<div><strong>Hover for Go insight</strong><p>See kind, signature, documentation, location, and usages for definitions.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('hover')}<div><strong>Hover for Go insight</strong><p>See kind, signature, documentation, location, and usages for definitions. Type references show their complete struct or interface body, with a progressive reveal for long declarations.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Navigate by click or shortcut</strong><p><kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click or <kbd>Cmd/Ctrl F12</kbd> resolves definitions, usages, and implementations.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('search')}<div><strong>Select and revisit occurrences</strong><p>Plain-click highlights loaded-diff occurrences; configured shortcuts move between them.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('inDiff')}<div><strong>Stay in the diff when possible</strong><p>Loaded targets scroll into view; other sources open at their exact destination.</p></div></li>
