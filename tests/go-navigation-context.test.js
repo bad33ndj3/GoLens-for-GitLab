@@ -669,6 +669,23 @@ test('expands a collapsed diff hunk until the definition line is visible', async
   assert.equal(line?.getAttribute('aria-label'), 'Added line 12');
 });
 
+test('expands a fully collapsed diff file before locating a definition line', async () => {
+  const window = new Window({ url: globalThis.location.href });
+  window.document.body.innerHTML = `
+    <section class="diff-file">
+      <button type="button" class="js-unfold-all">Show full file</button>
+      <table><tbody></tbody></table>
+    </section>
+  `;
+  const root = window.document.querySelector('.diff-file');
+  root.querySelector('button').addEventListener('click', () => {
+    root.querySelector('tbody').insertAdjacentHTML('beforeend', '<tr><td><a href="#line_12" aria-label="Added line 12">12</a></td></tr>');
+  });
+
+  const line = await helpers.revealLine(root, 12);
+  assert.equal(line?.getAttribute('aria-label'), 'Added line 12');
+});
+
 test('extracts file and new-line context from a Rapid Diffs row', () => {
   const window = new Window({ url: globalThis.location.href });
   window.document.body.innerHTML = `
