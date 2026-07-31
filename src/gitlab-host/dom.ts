@@ -219,7 +219,9 @@ export function createGitLabPage({
         repositoryKey: review.identity.repositoryKey,
         commitSha: old ? review.refs.startSha || review.refs.baseSha : review.identity.headSha,
       });
-      return Object.freeze({ revision, token, path, side: old ? 'old' : 'new', line, source });
+      const identifier = node.textContent?.trim();
+      return Object.freeze({ revision, token, path, side: old ? 'old' : 'new', line,
+        ...(identifier && /^[A-Za-z_]\w*$/.test(identifier) ? { identifier } : {}), source });
     }
 
     function removeProjection(): void {

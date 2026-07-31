@@ -79,6 +79,7 @@ export type DiffTarget = Readonly<{
   side: 'old' | 'new';
   line: number;
   column?: number;
+  identifier?: string;
   source: SourceIdentity;
 }>;
 

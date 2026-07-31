@@ -1,6 +1,6 @@
 # Implement Review Session orchestration
 
-Status: ready-for-agent
+Status: claimed
 Blocked by: 17, 19
 
 ## Acceptance criteria
