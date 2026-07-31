@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "prototype:playwright": "node experiments/playwright-harness-prototype/run.mjs",
     "package": "node scripts/package-extension.mjs",
     "release": "node scripts/release-extension.mjs",
     "vendor:parser": "node scripts/vendor-parser.mjs",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "happy-dom": "20.11.1",
+    "playwright": "1.54.2",
     "tree-sitter-go": "0.25.0",
     "web-tree-sitter": "0.26.11",
     "ws": "8.21.1"

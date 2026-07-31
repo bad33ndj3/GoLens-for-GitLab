@@ -66,6 +66,7 @@ These are correctness contracts, not opportunities to “improve” by guessing.
 | Every required interface method, including inherited embedded-interface methods, contributes to candidate-package discovery. Implementation results include context/confidence and have stable pagination. | `go-navigation.js:implementationSearchTerms`; `go-semantic-core.js`; semantic and navigation tests |
 | External `_test` packages remain outside the production package namespace even when files share a directory. Generated test doubles may be identified but do not outrank production implementations. | `tests/go-semantic-core.test.js`; semantic regression fixtures |
 | Build constraints and dot imports remain explicit safe limitations. Affected resolution must be missing or ambiguous, never confident guesswork. | repository guidelines; semantic regression fixtures |
+| Module identity comes only from the repository-root `go.mod`. Nested modules, `go.work`, and `replace`-based local module resolution are unsupported; affected queries must remain unsupported or coverage-insufficient rather than guessing an import identity or proving absence. | `go-navigation.js:modulePathFor`; `go-semantic-core.js:projectTypeIdentity`; rewrite scope decision |
 | Reference and implementation pagination is stable, duplicate-free, supports more than 50 results, and does not rescan unrelated identifiers. Reindexing drops stale candidates. | `tests/go-semantic-core.test.js` |
 | Callable signatures truncate only at complete parameter boundaries; attached declaration documentation and complete type bodies retain their structural meaning. | `go-semantic-core.js`; `tests/go-semantic-core.test.js` |
 
@@ -145,4 +146,3 @@ The rewrite plan must turn this catalogue into executable parity evidence:
    “Set performance budgets” establishes the replacement budgets.
 5. Preserve safe missing/ambiguous/limited outcomes even if an additive
    semantic improvement changes which inputs can be resolved confidently.
-

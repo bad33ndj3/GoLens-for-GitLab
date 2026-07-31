@@ -1,7 +1,7 @@
 # Prove the Playwright extension harness
 
 Type: `prototype`
-Status: open
+Status: claimed
 Blocked by: 02
 
 ## Question

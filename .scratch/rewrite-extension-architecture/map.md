@@ -20,6 +20,7 @@ An approved, implementation-ready migration specification and single-merge-reque
 - Keep GitLab source fetching in the content context; keep parsing, indexing, mutation serialization, and IndexedDB in the worker.
 - Replace the custom browser harness with Playwright and retain `node:test` for fast module and contract tests.
 - Functional parity is the minimum. Additive semantic improvements may be included only when separately documented, regression-tested, and non-speculative.
+- Automatically accept the agent's recommended technical, architectural, and evidence-policy choices; ask the user only when a decision steers product scope or user experience.
 - All existing GoLens storage may be reset with an explicit upgrade notice.
 - Do not broaden extension permissions, introduce remote services or analytics, generalize to other forges, or target non-Chromium browsers.
 - Generated `dist/` output remains uncommitted.
@@ -29,13 +30,16 @@ An approved, implementation-ready migration specification and single-merge-reque
 
 - [Inventory the observable behaviour contract](issues/01-inventory-observable-behaviour.md) — Established the evidence-backed parity floor and the rule for turning it into rewrite acceptance coverage.
 - [Design the TypeScript build and package topology](issues/02-design-build-and-package-topology.md) — Fixed the explicit four-entry build, validated single-artifact flow, deterministic packaging, development workflow, and CI-owned release contract.
+- [Design the three deep module interfaces](issues/03-design-the-deep-module-interfaces.md) — Fixed the orchestration, seams, ownership, dependency direction, result invariants, and hierarchical cancellation contract for Review Session, GitLab Host, and Go Intelligence.
+- [Prototype the Review Session lifecycle](issues/04-prototype-the-review-session-lifecycle.md) — Validated replace-not-retarget orchestration, session-local workflow state, scoped effects, stale-result guards, revision reconciliation, fullscreen confirmation, and terminal teardown.
+- [Design the GitLab Host contracts](issues/05-design-the-gitlab-host-contracts.md) — Fixed immutable review binding, normalized revisioned targets and events, complete projections, explicit actions, commit-pinned reads, and closed failure outcomes that hide GitLab implementation details.
+- [Design Go Intelligence and the worker protocol](issues/06-design-go-intelligence-and-worker-protocol.md) — Fixed the compact query/coverage/cache interface, proof-carrying semantic outcomes, immutable snapshots, commit-point cancellation, durable cache rules, and restart-safe validated worker transport.
+- [Bound the semantic improvements allowed in the rewrite](issues/07-bound-semantic-improvements.md) — Fixed semantic scope at parity, with no new query or product capability and an explicit single-root-module limitation.
+- [Prototype Lit surfaces and the feature catalog](issues/08-prototype-lit-surfaces-and-feature-catalog.md) — Proved the Lit-owned Shadow DOM seam, accessibility and lifecycle contracts, and one typed catalog driving setup plus the complete guide.
 
 ## Not yet specified
 
-- Exact semantic improvements cannot be selected until the new Go Intelligence contract exposes the safe opportunities against the recorded parity floor.
-- Detailed package ownership and dependency rules depend on the deep-module interfaces and lifecycle prototype.
-- The final merge-request work breakdown, rollback point, and switch-over commit depend on the build, runtime, UI, test, and performance decisions.
-- Additional GitLab DOM variants or worker failure modes may emerge while cataloguing the current compatibility contract.
+None currently. New fog should be recorded here only when a frontier decision exposes it.
 
 ## Out of scope
 
@@ -44,3 +48,4 @@ An approved, implementation-ready migration specification and single-merge-reque
 - A remote language service, repository-content uploads, analytics, or new broad permissions.
 - New product features or intentional UX redesigns unrelated to an explicitly approved semantic improvement.
 - Preserving existing settings, shortcuts, onboarding state, bookmarks, or semantic caches across the rewrite.
+- Multi-module resolution through nested `go.mod`, `go.work`, or `replace`; the rewrite retains the single repository-root `go.mod` model.
