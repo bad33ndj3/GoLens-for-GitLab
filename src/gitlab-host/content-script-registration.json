@@ -1,0 +1,4 @@
+{
+  "js": ["content.js"],
+  "css": ["golens-theme.css", "gitlab-lens.css"]
+}

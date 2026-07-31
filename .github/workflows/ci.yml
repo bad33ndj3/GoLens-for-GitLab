@@ -34,6 +34,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Install Chrome for Testing
         run: |
           mkdir -p .chrome
@@ -48,11 +51,13 @@ jobs:
           npm run vendor:parser
           git diff --exit-code -- vendor/
 
-      - name: Run syntax and unit checks
-        run: npm run check:syntax && npm test
+      - name: Run syntax, type, architecture, unit, and build checks
+        run: npm run check:syntax && npm run typecheck && npm run check:imports && npm test && npm run build
 
       - name: Run browser smoke
-        run: npm run test:browser || npm run test:browser
+        run: |
+          npm run test:rewrite-browser
+          npm run test:browser || npm run test:browser
 
       - name: Verify package versions match
         run: |
