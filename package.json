@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "prototype:playwright": "node experiments/playwright-harness-prototype/run.mjs",
+    "measure:legacy": "node experiments/legacy-performance-baseline.mjs",
     "package": "node scripts/package-extension.mjs",
     "release": "node scripts/release-extension.mjs",
     "vendor:parser": "node scripts/vendor-parser.mjs",

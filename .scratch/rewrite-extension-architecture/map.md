@@ -37,6 +37,7 @@ An approved, implementation-ready migration specification and single-merge-reque
 - [Bound the semantic improvements allowed in the rewrite](issues/07-bound-semantic-improvements.md) — Fixed semantic scope at parity, with no new query or product capability and an explicit single-root-module limitation.
 - [Prototype Lit surfaces and the feature catalog](issues/08-prototype-lit-surfaces-and-feature-catalog.md) — Proved the Lit-owned Shadow DOM seam, accessibility and lifecycle contracts, and one typed catalog driving setup plus the complete guide.
 - [Prove the Playwright extension harness](issues/09-prove-the-playwright-extension-harness.md) — Proved a persistent-context MV3 harness for built-extension loading, local fixtures, content-worker messaging, and Playwright-owned browser observability in local and CI runs.
+- [Measure the legacy performance baseline](issues/10-measure-the-legacy-performance-baseline.md) — Established reproducible DOM, semantic, cache-processing, and retained-heap workloads, with explicit boundaries for environment-dependent browser and storage measurements.
 
 ## Not yet specified
 
