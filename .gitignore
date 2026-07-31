@@ -1,5 +1,7 @@
 node_modules/
 dist/
-.scratch/
+.scratch/*
+!.scratch/rewrite-extension-architecture/
+!.scratch/rewrite-extension-architecture/**
 *.tgz
 .DS_Store

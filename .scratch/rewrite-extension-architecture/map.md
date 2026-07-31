@@ -46,6 +46,23 @@ An approved, implementation-ready migration specification and single-merge-reque
 
 None currently. New fog should be recorded here only when a frontier decision exposes it.
 
+## Implementation sequence
+
+- [Add rewrite build and architecture guardrails](issues/14-add-rewrite-build-and-architecture-guardrails.md) — resolved in `cac1795`.
+- [Add shared values and user-data adapters](issues/15-add-shared-values-and-user-data-adapters.md).
+- [Implement Go Intelligence semantic outcomes](issues/16-implement-go-intelligence-semantic-outcomes.md).
+- [Implement Go Intelligence cache and worker runtime](issues/17-implement-go-intelligence-cache-and-worker-runtime.md).
+- [Implement GitLab Host repository contracts](issues/18-implement-gitlab-host-repository-contracts.md).
+- [Implement GitLab Host page projection](issues/19-implement-gitlab-host-page-projection.md).
+- [Implement Review Session orchestration](issues/20-implement-review-session-orchestration.md).
+- [Compose rewrite extension entries](issues/21-compose-rewrite-extension-entries.md).
+- [Add Playwright rewrite parity coverage](issues/22-add-playwright-rewrite-parity-coverage.md).
+- [Enforce rewrite performance budgets](issues/23-enforce-rewrite-performance-budgets.md).
+- [Prepare architecture storage reset](issues/24-prepare-architecture-storage-reset.md).
+- [Switch all extension entries to rewrite](issues/25-switch-all-extension-entries-to-rewrite.md).
+- [Remove legacy runtime and harness](issues/26-remove-legacy-runtime-and-harness.md).
+- [Remove rewrite planning artifacts](issues/27-remove-rewrite-planning-artifacts.md) — final cleanup after all durable context has moved out of `.scratch/`.
+
 ## Out of scope
 
 - GitHub, Bitbucket, or generic multi-forge support.
