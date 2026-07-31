@@ -1,6 +1,6 @@
 # Implement GitLab Host repository contracts
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 15
 
 ## Acceptance criteria
@@ -12,3 +12,13 @@ Blocked by: 15
 - Distinguish complete, limited, and unavailable project search.
 - Validate self-hosted origins exactly.
 - Cover public contracts and private payload, pagination, and failure handling.
+
+## Answer
+
+Added immutable review binding and a typed GitLab Host read contract backed by
+validated, signed-in same-origin requests. Repository source, package/project
+file discovery, changed-review files, project search, approvals, merge state,
+and discussions now hide GitLab payloads and pagination behind stable outcomes.
+Full commit identities, exact origins, content identities, short-page fallback,
+explicit package/repository/discussion/search bounds, cancellation, malformed
+payloads, and routine HTTP failures are covered by contract and private tests.
