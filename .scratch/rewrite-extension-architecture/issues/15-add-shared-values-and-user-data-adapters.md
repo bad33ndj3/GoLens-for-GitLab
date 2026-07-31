@@ -1,6 +1,6 @@
 # Add shared values and user-data adapters
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 14
 
 ## Acceptance criteria
@@ -12,3 +12,7 @@ Blocked by: 14
 - Add one typed feature catalog with unique entries, setup subset, and guide chapters.
 - Test malformed stored data through public interfaces and fall back safely.
 - Do not activate the storage reset or migration yet.
+
+## Answer
+
+Added dependency-free validated source identity values, typed feature and shortcut catalogs, and validated sync/local user-storage adapters. Direct contract tests cover malformed data, preference synchronization, shortcut behavior, privacy-safe bookmarks, and write-before-delete recovery. The new adapters remain inert until later composition tickets wire them into the extension; no reset or migration is active.

@@ -49,7 +49,7 @@ None currently. New fog should be recorded here only when a frontier decision ex
 ## Implementation sequence
 
 - [Add rewrite build and architecture guardrails](issues/14-add-rewrite-build-and-architecture-guardrails.md) — resolved in `cac1795`.
-- [Add shared values and user-data adapters](issues/15-add-shared-values-and-user-data-adapters.md).
+- [Add shared values and user-data adapters](issues/15-add-shared-values-and-user-data-adapters.md) — resolved.
 - [Implement Go Intelligence semantic outcomes](issues/16-implement-go-intelligence-semantic-outcomes.md).
 - [Implement Go Intelligence cache and worker runtime](issues/17-implement-go-intelligence-cache-and-worker-runtime.md).
 - [Implement GitLab Host repository contracts](issues/18-implement-gitlab-host-repository-contracts.md).
