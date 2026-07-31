@@ -1,7 +1,7 @@
 # Rebuild the GoLens extension architecture
 
 Label: `wayfinder:map`
-Status: open
+Status: resolved
 
 ## Destination
 
@@ -38,6 +38,9 @@ An approved, implementation-ready migration specification and single-merge-reque
 - [Prototype Lit surfaces and the feature catalog](issues/08-prototype-lit-surfaces-and-feature-catalog.md) — Proved the Lit-owned Shadow DOM seam, accessibility and lifecycle contracts, and one typed catalog driving setup plus the complete guide.
 - [Prove the Playwright extension harness](issues/09-prove-the-playwright-extension-harness.md) — Proved a persistent-context MV3 harness for built-extension loading, local fixtures, content-worker messaging, and Playwright-owned browser observability in local and CI runs.
 - [Measure the legacy performance baseline](issues/10-measure-the-legacy-performance-baseline.md) — Established reproducible DOM, semantic, cache-processing, and retained-heap workloads, with explicit boundaries for environment-dependent browser and storage measurements.
+- [Set the rewrite performance budgets](issues/11-set-performance-budgets.md) — Fixed paired median regression limits, absolute semantic and responsiveness ceilings, validity rules, and treatment of environment-dependent browser paths.
+- [Define package ownership and dependency rules](issues/12-define-package-ownership-and-dependencies.md) — Fixed the lean `src/` layout, ownership and import matrix, public package surfaces, and seam-oriented test structure.
+- [Plan the atomic switch-over and merge-request sequence](issues/13-plan-the-atomic-switch-over.md) — Fixed the green side-by-side build sequence, atomic four-entry switch, required reset notice, rollback checkpoint, legacy deletion, and final acceptance gate.
 
 ## Not yet specified
 
