@@ -1,1 +1,33 @@
-:host { color-scheme: dark; }
+[data-golens-generated-hidden] { display:none !important; }
+[data-golens-generated-file-row],[data-golens-generated-folder] { opacity:.5; filter:grayscale(.7); }
+[data-golens-test-file] { box-shadow:inset 3px 0 #75e4d7; }
+[data-golens-interactive] { cursor:pointer; }
+[data-golens-occurrence] { background:rgb(117 228 215 / 16%); }
+[data-golens-bookmark] { box-shadow:inset 3px 0 #ff9d45; }
+[data-golens-destination] { animation:golens-destination 1.3s ease-out; }
+[data-golens-full-file-control] { margin-inline-start:8px; }
+html[data-golens-review-focus] .super-sidebar,
+html[data-golens-review-focus] [data-testid="super-sidebar"],
+html[data-golens-review-focus] #js-top-bar { display:none !important; }
+html[data-golens-review-focus] .layout-page { padding-left:0 !important; }
+html[data-golens-review-focus] .content-wrapper,
+html[data-golens-review-focus] .merge-request-details,
+html[data-golens-review-focus] .diffs { width:100% !important; max-width:none !important; }
+html[data-golens-review-focus] .line_content,
+html[data-golens-review-focus] [data-testid="diff-line-content"] { font-size:14px !important; }
+@keyframes golens-destination { from { background:rgb(255 157 69 / 40%); } to { background:transparent; } }
+@media (prefers-reduced-motion:reduce) { [data-golens-destination] { animation:none; outline:2px solid #ff9d45; } }
+[data-golens-host-surface],
+golens-host-surface {
+  --golens-font-ui: system-ui, sans-serif;
+  --golens-text-primary: #edf3f9;
+  --golens-surface-panel: #18202b;
+  --golens-border-default: #3b4b62;
+  --golens-primary: #ff9d45;
+  --golens-primary-hover: #ffb56f;
+  --golens-focus-ring: #75e4d7;
+  --golens-danger: #ff8a8a;
+  --golens-radius-sm: 7px;
+  --golens-radius-overlay: 12px;
+  --golens-shadow-overlay: 0 22px 70px rgb(0 0 0 / 48%);
+}

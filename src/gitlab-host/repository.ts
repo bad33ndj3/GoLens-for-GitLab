@@ -3,7 +3,6 @@ import * as v from 'valibot';
 import { commitSha, repositoryKey, repositoryPath, sourceIdentity } from '../domain.ts';
 import { normalizeGitLabOrigin } from './access.ts';
 import type {
-  BoundGitLabHost,
   GoFile,
   HostRead,
   HostReadValue,
@@ -181,7 +180,7 @@ export function createGitLabRepository({
     }
   }
 
-  function bind(value: ReviewDescriptor): BoundGitLabHost {
+  function bind(value: ReviewDescriptor) {
     const review = reviewDescriptor(value);
     if (review.identity.origin !== exactOrigin) throw new HostContractError('Review origin does not match GitLab Host origin.');
     if (review.identity.repositoryKey !== `${exactOrigin}/${review.identity.projectPath}`) {
