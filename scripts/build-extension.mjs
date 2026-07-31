@@ -27,6 +27,15 @@ const staticFiles = [
   'vendor/tree-sitter-go.wasm', 'vendor/web-tree-sitter.wasm',
 ];
 const staticTargets = new Map(staticFiles.map((source) => [source, source.startsWith('src/') ? source.slice(4) : source]));
+const browserNodeStubs = {
+  name: 'browser-node-stubs',
+  setup(build) {
+    build.onResolve({ filter: /^(?:fs\/promises|module)$/ }, ({ path }) => ({ path, namespace: 'browser-node-stub' }));
+    build.onLoad({ filter: /.*/, namespace: 'browser-node-stub' }, () => ({
+      contents: 'export const readFile = async () => { throw new Error("Node filesystem unavailable"); }; export const createRequire = () => { throw new Error("Node modules unavailable"); };',
+    }));
+  },
+};
 
 async function files(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -114,6 +123,7 @@ async function buildExtension() {
       bundle: true,
       target: 'es2020',
       platform: 'browser',
+      plugins: [browserNodeStubs],
       sourcemap: watchMode ? 'external' : false,
       minify: false,
       treeShaking: true,

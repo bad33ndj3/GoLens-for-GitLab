@@ -1,16 +1,16 @@
 import { repositoryPath, type RepositoryPath, type SourceIdentity } from '../domain.ts';
-import {
-  IntelligenceContractError,
-  type Coverage,
-  type ImplementationCandidate,
-  type SemanticOutcome,
-  type SemanticQuery,
-  type SemanticSnapshotRevision,
-  type SourceLocation,
-  type SymbolDefinition,
-  type SymbolIdentity,
-  type SymbolKind,
+import type {
+  Coverage,
+  ImplementationCandidate,
+  SemanticOutcome,
+  SemanticQuery,
+  SemanticSnapshotRevision,
+  SourceLocation,
+  SymbolDefinition,
+  SymbolIdentity,
+  SymbolKind,
 } from './index.ts';
+import { IntelligenceContractError } from './protocol.ts';
 import { GoSemanticIndex } from './semantic-parser.ts';
 
 type SourceFile = Readonly<{ path: RepositoryPath; source: string }>;

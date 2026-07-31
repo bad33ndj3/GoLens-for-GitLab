@@ -1,5 +1,16 @@
 import type { RepositoryPath, SourceIdentity } from '../domain.ts';
 
+export type SourceContent = Readonly<{ path: RepositoryPath; contentId: string }>;
+
+export interface SourceReader {
+  discover(request: CoverageRequest, signal: AbortSignal): Promise<Readonly<{
+    modulePath: string;
+    coverage: Coverage;
+    files: readonly SourceContent[];
+  }>>;
+  read(source: SourceContent, signal: AbortSignal): Promise<string>;
+}
+
 export type SemanticSnapshotRevision = string;
 
 export type CoverageScope =
@@ -161,6 +172,21 @@ export interface GoIntelligence {
   clearCache(request: ClearCacheRequest, signal: AbortSignal): Promise<ClearOutcome>;
 }
 
-export class IntelligenceContractError extends Error {
-  override readonly name = 'IntelligenceContractError';
+type Runtime = Parameters<typeof createGoIntelligence>[0]['runtime'];
+
+export function openGoIntelligence({
+  source,
+  reader,
+  runtime = chrome.runtime as unknown as Runtime,
+}: {
+  source: SourceIdentity;
+  reader: SourceReader;
+  runtime?: Runtime;
+}): GoIntelligence {
+  return createGoIntelligence({ source, reader, runtime });
 }
+
+export { startGoIntelligenceWorker } from './worker-runtime.ts';
+export { IntelligenceContractError } from './protocol.ts';
+
+import { createGoIntelligence } from './client.ts';
