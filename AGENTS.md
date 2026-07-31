@@ -63,7 +63,11 @@ Keep repository source inside the browser, extension, and signed-in GitLab origi
 
 ### Issue tracker
 
-Issues and PRDs are tracked in GitHub Issues for this repository. See `docs/agents/issue-tracker.md`.
+Issues and PRDs are tracked as local Markdown under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the default canonical labels. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
