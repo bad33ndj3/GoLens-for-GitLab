@@ -269,7 +269,7 @@ export function createGitLabPage({
     }
 
     function removeProjection(): void {
-      document.querySelectorAll('golens-host-surface').forEach((node) => node.remove());
+      document.querySelectorAll('golens-host-surface:not(#golens-onboarding-root):not(#golens-feature-guide-root)').forEach((node) => node.remove());
       document.querySelectorAll('[data-golens-generated-hidden],[data-golens-generated-file-row],[data-golens-generated-folder],[data-golens-test-file],[data-golens-full-file],[data-golens-interactive],[data-golens-occurrence],[data-golens-bookmark],[data-golens-destination]').forEach((node) => {
         for (const name of [...node.getAttributeNames()].filter((name) => name.startsWith('data-golens-'))) node.removeAttribute(name);
       });
@@ -491,7 +491,7 @@ export function createGitLabPage({
         && (node as Element).matches('input,textarea,select,[contenteditable],dialog,[role="dialog"],[aria-modal="true"]'));
       if (blocked) return;
       const shortcut = shortcuts.find((candidate) =>
-        candidate.key.toLowerCase() === event.key.toLowerCase()
+        (candidate.key === event.code || candidate.key.toLowerCase() === event.key.toLowerCase())
         && (!candidate.code || candidate.code === event.code)
         && Boolean(candidate.altKey) === event.altKey && Boolean(candidate.ctrlKey) === event.ctrlKey
         && Boolean(candidate.metaKey) === event.metaKey && Boolean(candidate.shiftKey) === event.shiftKey);

@@ -121,7 +121,10 @@ export async function startSettingsEntry({
     }));
   };
   const form = page.querySelector<HTMLFormElement>('[data-host-form]');
-  form?.addEventListener('submit', (event) => { event.preventDefault(); const input = form.elements.namedItem('origin') as HTMLInputElement; void access.add(input.value).then(() => { input.value = ''; return renderHosts(); }); });
+  const hostStatus = page.querySelector<HTMLElement>('[data-host-status]');
+  form?.addEventListener('submit', (event) => { event.preventDefault(); const input = form.elements.namedItem('origin') as HTMLInputElement; void access.add(input.value).then(() => {
+    input.value = ''; if (hostStatus) hostStatus.textContent = 'GitLab origin allowed.'; return renderHosts();
+  }, (error: unknown) => { if (hostStatus) hostStatus.textContent = error instanceof Error ? error.message : 'GitLab origin could not be allowed.'; }); });
   await renderHosts();
 
   const cacheButton = page.querySelector<HTMLButtonElement>('[data-action="cache-full-project"]');

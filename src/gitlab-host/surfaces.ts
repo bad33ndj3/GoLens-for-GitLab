@@ -1,4 +1,4 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, render } from 'lit';
 
 import type { ActiveSurfaceProjection, ControlProjection, FullFileControlProjection } from './index.ts';
 
@@ -7,6 +7,69 @@ export type SurfaceIntent =
   | Readonly<{ command: 'dismiss-surface' }>
   | Readonly<{ command: 'surface-action'; actionId: string }>
   | Readonly<{ command: 'toggle-full-file'; path: FullFileControlProjection['path'] }>;
+
+type SurfaceView = Readonly<{
+  mode: 'controls' | 'surface' | 'full-file' | 'setup' | 'guide';
+  controls: readonly ControlProjection[];
+  surfaceProjection: ActiveSurfaceProjection | null;
+  fullFile: FullFileControlProjection | null;
+  setupFeatures: readonly Readonly<{ title: string; summary: string; chapter?: string }>[];
+  setupHideGenerated: boolean;
+  setupPreset: string;
+}>;
+
+function surfaceTemplate(state: SurfaceView, emit: (detail: SurfaceIntent) => void, dispatch: (event: Event) => void, update: (key: 'setupPreset' | 'setupHideGenerated', value: string | boolean) => void) {
+  if (state.mode === 'controls') return html`<nav class="controls" aria-label="GoLens review controls">${state.controls.map((control) => html`
+    <button type="button" data-command=${control.command} aria-label=${control.label} title=${control.label}
+      aria-pressed=${control.pressed === undefined ? undefined : String(control.pressed)} ?disabled=${control.disabled || control.busy}
+      @click=${() => emit({ command: control.command })}>${control.busy ? '…' : control.label}</button>`)}</nav>`;
+  if (state.mode === 'full-file') {
+    const control = state.fullFile!; const label = control.full ? 'Show changes only' : 'Show full file';
+    return html`<span class="file-control"><button type="button" ?disabled=${control.busy} aria-busy=${control.busy ? 'true' : undefined}
+      aria-label="${label} ${control.path}" @click=${() => emit({ command: 'toggle-full-file', path: control.path })}>${control.busy ? 'Loading…' : label}</button>
+      ${control.error ? html`<span class="error" role="status">${control.error}</span>` : ''}</span>`;
+  }
+  if (state.mode === 'setup') return html`<div class="backdrop"><section class="surface" role="dialog" aria-modal="true" aria-labelledby="golens-setup-title">
+    <header><h2 id="golens-setup-title">Set up GoLens</h2><button type="button" @click=${() => dispatch(new CustomEvent('golens-setup-dismiss'))}>Not now</button></header>
+    <p>Choose the two review preferences that matter before you start. These save together when setup finishes.</p>
+    <div class="setup-fields"><label>Keymap preset<select .value=${state.setupPreset} @change=${(event: Event) => update('setupPreset', (event.target as HTMLSelectElement).value)}>
+      ${state.setupPreset === 'custom' ? html`<option value="custom">Keep current shortcuts</option>` : ''}<option value="golens">GoLens</option><option value="vscode">VS Code</option><option value="intellij">IntelliJ IDEA</option><option value="vim">Vim-style</option>
+    </select></label><label><span><input type="checkbox" .checked=${state.setupHideGenerated} @change=${(event: Event) => update('setupHideGenerated', (event.target as HTMLInputElement).checked)}> Hide GitLab-marked generated files</span></label></div>
+    <strong>Essential interactions</strong><ul>${state.setupFeatures.map((feature) => html`<li><strong>${feature.title}</strong> — ${feature.summary}</li>`)}</ul>
+    <div class="actions"><button type="button" class="primary" @click=${() => dispatch(new CustomEvent('golens-setup-complete', { detail: { preset: state.setupPreset, hideGeneratedFiles: state.setupHideGenerated } }))}>Finish setup</button></div>
+  </section></div>`;
+  if (state.mode === 'guide') {
+    const chapters = new Map<string, typeof state.setupFeatures>();
+    for (const feature of state.setupFeatures) chapters.set(feature.chapter || 'Features', [...(chapters.get(feature.chapter || 'Features') || []), feature]);
+    return html`<div class="backdrop"><section class="surface" role="dialog" aria-modal="true" aria-labelledby="golens-guide-title">
+      <header><h2 id="golens-guide-title">GoLens feature guide</h2><button type="button" @click=${() => dispatch(new CustomEvent('golens-guide-dismiss'))}>Close</button></header>
+      <p>The complete reference for the features available during GitLab review.</p>${[...chapters].map(([chapter, features]) => html`<section><h3>${chapter}</h3><ul>${features.map((feature) => html`<li><strong>${feature.title}</strong> — ${feature.summary}</li>`)}</ul></section>`)}
+    </section></div>`;
+  }
+  const projection = state.surfaceProjection!;
+  if (projection.kind === 'status') return html`<div class="status" role="status" aria-live="polite">${projection.body || projection.title}</div>`;
+  const modal = projection.modal !== false && projection.kind === 'dialog';
+  return html`<div class=${modal ? 'backdrop' : ''}><section class="surface" role=${modal ? 'dialog' : 'region'} aria-modal=${modal ? 'true' : undefined} aria-labelledby="golens-surface-title">
+    <header><h2 id="golens-surface-title">${projection.title}</h2><button type="button" data-close aria-label="Close ${projection.title}" @click=${() => emit({ command: 'dismiss-surface' })}>Close</button></header>
+    ${projection.body ? html`<p>${projection.body}</p>` : ''}<div class="actions">${(projection.actions || []).map((action) => html`<button type="button" class=${action.primary ? 'primary' : ''} @click=${() => emit({ command: 'surface-action', actionId: action.id })}>${action.label}</button>`)}</div>
+  </section></div>`;
+}
+
+function handleSurfaceKeyDown(event: KeyboardEvent, state: SurfaceView, root: ParentNode, activeElement: Element | null, emit: (detail: SurfaceIntent) => void, dispatch: (event: Event) => void): void {
+  if (state.mode !== 'surface' && state.mode !== 'setup' && state.mode !== 'guide') return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (state.mode === 'setup') dispatch(new CustomEvent('golens-setup-dismiss'));
+    else if (state.mode === 'guide') dispatch(new CustomEvent('golens-guide-dismiss'));
+    else emit({ command: 'dismiss-surface' });
+    return;
+  }
+  if (event.key !== 'Tab' || state.mode === 'surface' && (state.surfaceProjection?.modal === false || state.surfaceProjection?.kind !== 'dialog')) return;
+  const focusable = [...root.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled])')];
+  const first = focusable[0]; const last = focusable[focusable.length - 1];
+  if (event.shiftKey && activeElement === first) { event.preventDefault(); last?.focus(); }
+  else if (!event.shiftKey && activeElement === last) { event.preventDefault(); first?.focus(); }
+}
 
 class GoLensHostSurface extends LitElement {
   static properties = {
@@ -72,77 +135,48 @@ class GoLensHostSurface extends LitElement {
   }
 
   #onKeyDown = (event: KeyboardEvent): void => {
-    if (this.mode !== 'surface' && this.mode !== 'setup' && this.mode !== 'guide') return;
-    if (event.key === 'Escape') { event.preventDefault(); if (this.mode === 'setup') this.dispatchEvent(new CustomEvent('golens-setup-dismiss')); else if (this.mode === 'guide') this.dispatchEvent(new CustomEvent('golens-guide-dismiss')); else this.#emit({ command: 'dismiss-surface' }); return; }
-    if (event.key !== 'Tab' || (this.mode === 'surface' && (this.surfaceProjection?.modal === false || this.surfaceProjection?.kind !== 'dialog'))) return;
-    const focusable = [...this.renderRoot.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled])')];
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (!first || !last) return;
-    if (event.shiftKey && this.shadowRoot?.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && this.shadowRoot?.activeElement === last) { event.preventDefault(); first.focus(); }
+    handleSurfaceKeyDown(event, this, this.renderRoot, this.shadowRoot?.activeElement || null, (detail) => this.#emit(detail), (value) => { this.dispatchEvent(value); });
   };
 
-  #renderControls() {
-    return html`<nav class="controls" aria-label="GoLens review controls">${this.controls.map((control) => html`
-      <button type="button" data-command=${control.command} aria-label=${control.label} title=${control.label}
-        aria-pressed=${control.pressed === undefined ? undefined : String(control.pressed)} ?disabled=${control.disabled || control.busy}
-        @click=${() => this.#emit({ command: control.command })}>${control.busy ? '…' : control.label}</button>
-    `)}</nav>`;
-  }
-
-  #renderFullFile() {
-    const control = this.fullFile!;
-    const label = control.full ? 'Show changes only' : 'Show full file';
-    return html`<span class="file-control"><button type="button" ?disabled=${control.busy} aria-busy=${control.busy ? 'true' : undefined}
-      aria-label="${label} ${control.path}" @click=${() => this.#emit({ command: 'toggle-full-file', path: control.path })}>${control.busy ? 'Loading…' : label}</button>
-      ${control.error ? html`<span class="error" role="status">${control.error}</span>` : ''}</span>`;
-  }
-
-  #renderSurface() {
-    const projection = this.surfaceProjection!;
-    const modal = projection.modal !== false && projection.kind === 'dialog';
-    if (projection.kind === 'status') return html`<div class="status" role="status" aria-live="polite">${projection.body || projection.title}</div>`;
-    return html`<div class=${modal ? 'backdrop' : ''}><section class="surface" role=${modal ? 'dialog' : 'region'} aria-modal=${modal ? 'true' : undefined} aria-labelledby="golens-surface-title">
-      <header><h2 id="golens-surface-title">${projection.title}</h2><button type="button" data-close aria-label="Close ${projection.title}" @click=${() => this.#emit({ command: 'dismiss-surface' })}>Close</button></header>
-      ${projection.body ? html`<p>${projection.body}</p>` : ''}
-      <div class="actions">${(projection.actions || []).map((action) => html`<button type="button" class=${action.primary ? 'primary' : ''} @click=${() => this.#emit({ command: 'surface-action', actionId: action.id })}>${action.label}</button>`)}</div>
-    </section></div>`;
-  }
-
-  #renderSetup() {
-    return html`<div class="backdrop"><section class="surface" role="dialog" aria-modal="true" aria-labelledby="golens-setup-title">
-      <header><h2 id="golens-setup-title">Set up GoLens</h2><button type="button" @click=${() => this.dispatchEvent(new CustomEvent('golens-setup-dismiss'))}>Not now</button></header>
-      <p>Choose the two review preferences that matter before you start. These save together when setup finishes.</p>
-      <div class="setup-fields"><label>Keymap preset<select .value=${this.setupPreset} @change=${(event: Event) => { this.setupPreset = (event.target as HTMLSelectElement).value; }}>
-        ${this.setupPreset === 'custom' ? html`<option value="custom">Keep current shortcuts</option>` : ''}<option value="golens">GoLens</option><option value="vscode">VS Code</option><option value="intellij">IntelliJ IDEA</option><option value="vim">Vim-style</option>
-      </select></label><label><span><input type="checkbox" .checked=${this.setupHideGenerated} @change=${(event: Event) => { this.setupHideGenerated = (event.target as HTMLInputElement).checked; }}> Hide GitLab-marked generated files</span></label></div>
-      <strong>Essential interactions</strong><ul>${this.setupFeatures.map((feature) => html`<li><strong>${feature.title}</strong> — ${feature.summary}</li>`)}</ul>
-      <div class="actions"><button type="button" class="primary" @click=${() => this.dispatchEvent(new CustomEvent('golens-setup-complete', { detail: { preset: this.setupPreset, hideGeneratedFiles: this.setupHideGenerated } }))}>Finish setup</button></div>
-    </section></div>`;
-  }
-
-  #renderGuide() {
-    const chapters = new Map<string, typeof this.setupFeatures>();
-    for (const feature of this.setupFeatures) chapters.set(feature.chapter || 'Features', [...(chapters.get(feature.chapter || 'Features') || []), feature]);
-    return html`<div class="backdrop"><section class="surface" role="dialog" aria-modal="true" aria-labelledby="golens-guide-title">
-      <header><h2 id="golens-guide-title">GoLens feature guide</h2><button type="button" @click=${() => this.dispatchEvent(new CustomEvent('golens-guide-dismiss'))}>Close</button></header>
-      <p>The complete reference for the features available during GitLab review.</p>${[...chapters].map(([chapter, features]) => html`<section><h3>${chapter}</h3><ul>${features.map((feature) => html`<li><strong>${feature.title}</strong> — ${feature.summary}</li>`)}</ul></section>`)}
-    </section></div>`;
-  }
-
   override render() {
-    if (this.mode === 'surface' && this.surfaceProjection) return this.#renderSurface();
-    if (this.mode === 'setup') return this.#renderSetup();
-    if (this.mode === 'guide') return this.#renderGuide();
-    if (this.mode === 'full-file' && this.fullFile) return this.#renderFullFile();
-    return this.#renderControls();
+    return surfaceTemplate(this, (detail) => this.#emit(detail), (event) => { this.dispatchEvent(event); }, (key, value) => { if (key === 'setupPreset') this.setupPreset = value as string; else this.setupHideGenerated = value as boolean; });
   }
 }
 
 function create(hostDocument: Document): GoLensHostSurface {
-  if (!hostDocument.defaultView?.customElements.get('golens-host-surface')) hostDocument.defaultView?.customElements.define('golens-host-surface', GoLensHostSurface);
+  const registry = hostDocument.defaultView?.customElements;
+  if (!registry) return createUnregistered(hostDocument) as GoLensHostSurface;
+  if (!registry.get('golens-host-surface')) registry.define('golens-host-surface', GoLensHostSurface);
   return hostDocument.createElement('golens-host-surface') as GoLensHostSurface;
+}
+
+function createUnregistered(hostDocument: Document): HTMLElement {
+  const host = hostDocument.createElement('golens-host-surface') as HTMLElement & Record<string, unknown>;
+  const shadow = host.attachShadow({ mode: 'open' });
+  const style = hostDocument.createElement('style');
+  style.textContent = (GoLensHostSurface.styles as typeof GoLensHostSurface.styles & { cssText: string }).cssText;
+  const root = hostDocument.createElement('div');
+  shadow.append(style, root);
+  const state: Record<string, unknown> = {
+    mode: 'controls', controls: [], surfaceProjection: null, fullFile: null,
+    setupFeatures: [], setupHideGenerated: false, setupPreset: 'golens',
+  };
+  let updateComplete = Promise.resolve();
+  let resolveUpdate = () => {};
+  let scheduled = false;
+  const emit = (detail: SurfaceIntent) => host.dispatchEvent(new CustomEvent<SurfaceIntent>('golens-intent', { bubbles: true, composed: true, detail }));
+  const template = () => surfaceTemplate(state as unknown as SurfaceView, emit, (event) => { host.dispatchEvent(event); }, (key, value) => { state[key] = value; });
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    updateComplete = new Promise<void>((resolve) => { resolveUpdate = resolve; });
+    queueMicrotask(() => { scheduled = false; render(template(), root); resolveUpdate(); if (state.mode === 'surface' || state.mode === 'setup' || state.mode === 'guide') root.querySelector<HTMLElement>('[data-close],button,select')?.focus(); });
+  };
+  for (const key of Object.keys(state)) Object.defineProperty(host, key, { get: () => state[key], set: (value) => { state[key] = value; schedule(); } });
+  Object.defineProperty(host, 'updateComplete', { get: () => updateComplete });
+  host.addEventListener('keydown', (event) => handleSurfaceKeyDown(event, state as unknown as SurfaceView, root, shadow.activeElement, emit, (value) => { host.dispatchEvent(value); }));
+  schedule();
+  return host;
 }
 
 export function controlsSurface(hostDocument: Document, controls: readonly ControlProjection[]): HTMLElement {

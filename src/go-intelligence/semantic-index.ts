@@ -183,6 +183,7 @@ export class SemanticSnapshotIndex {
     }
     if (result.status !== 'implementations') return this.#absence(context, 'symbol', request);
     const candidates = Object.freeze((result.candidates as Array<Record<string, unknown>>).map((candidate) => this.#implementation(candidate, Number(result.methodCount))));
+    if (!candidates.length) return this.#absence(context, 'symbol', request);
     return Object.freeze({
       ...context,
       status: 'implementations',

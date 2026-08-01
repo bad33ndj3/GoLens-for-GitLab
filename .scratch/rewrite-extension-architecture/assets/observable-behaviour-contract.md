@@ -146,3 +146,84 @@ The rewrite plan must turn this catalogue into executable parity evidence:
    “Set performance budgets” establishes the replacement budgets.
 5. Preserve safe missing/ambiguous/limited outcomes even if an additive
    semantic improvement changes which inputs can be resolved confidently.
+
+### Rewrite evidence matrix
+
+Row IDs follow the section and table order above. Legacy tests remain explicit
+evidence until the atomic switch where a rewrite test does not yet own that
+policy or edge case.
+
+| Row | Rewrite acceptance evidence |
+| --- | --- |
+| 1.1 | `tests/build-extension.test.js`; `tests/gitlab-host-access.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 1.2 | `tests/private/gitlab-host-dom.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 1.3 | `tests/private/gitlab-host-dom.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 1.4 | `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 1.5 | `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 1.6 | `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 1.7 | `tests/private/gitlab-host-dom.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 2.1 | `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 2.2 | `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 2.3 | `tests/content-celebrations.test.js`; `tests/content-friday.test.js` |
+| 2.4 | `tests/private/gitlab-host-dom.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 2.5 | `tests/private/gitlab-host-dom.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 2.6 | `tests/contracts/review-session.test.js`; `tests/shortcut-settings.test.js` |
+| 2.7 | `tests/private/gitlab-host-dom.test.js`; `tests/content-onboarding.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 2.8 | `tests/content-discussion-links.test.js` |
+| 3.1 | `tests/private/gitlab-host-dom.test.js`; `tests/private/go-intelligence-semantic.test.js` |
+| 3.2 | `tests/private/go-intelligence-outcomes.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 3.3 | `tests/private/go-intelligence-outcomes.test.js`; `tests/go-semantic-core.test.js` |
+| 3.4 | `tests/private/go-intelligence-semantic.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 3.5 | `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 3.6 | `tests/private/gitlab-host-dom.test.js`; `tests/private/gitlab-host-repository.test.js` |
+| 3.7 | `tests/contracts/review-session.test.js` |
+| 3.8 | `tests/contracts/review-session.test.js`; `tests/go-navigation-context.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 3.9 | `tests/contracts/review-session.test.js`; `tests/private/go-intelligence-outcomes.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 3.10 | `tests/private/go-intelligence-semantic.test.js`; `tests/fixtures/semantic-regressions/` |
+| 4.1 | `tests/private/go-intelligence-outcomes.test.js`; `tests/contracts/review-session.test.js` |
+| 4.2 | `tests/private/go-intelligence-semantic.test.js`; `tests/go-semantic-core.test.js` |
+| 4.3 | `tests/private/go-intelligence-semantic.test.js`; `tests/go-semantic-core.test.js` |
+| 4.4 | `tests/private/go-intelligence-semantic.test.js`; `tests/fixtures/semantic-regressions/` |
+| 4.5 | `tests/private/go-intelligence-outcomes.test.js`; `tests/go-semantic-core.test.js` |
+| 4.6 | `tests/private/go-intelligence-semantic.test.js`; `tests/fixtures/semantic-regressions/generated-external-tests/` |
+| 4.7 | `tests/private/go-intelligence-semantic.test.js`; `tests/fixtures/semantic-regressions/build-constraints/` |
+| 4.8 | `tests/contracts/go-intelligence.test.js`; `tests/private/go-intelligence-outcomes.test.js` |
+| 4.9 | `tests/private/go-intelligence-outcomes.test.js`; `tests/go-semantic-core.test.js` |
+| 4.10 | `tests/private/go-intelligence-outcomes.test.js`; `tests/go-semantic-core.test.js` |
+| 5.1 | `tests/private/gitlab-host-repository.test.js`; `PRIVACY.md`; `SECURITY.md` |
+| 5.2 | `tests/private/gitlab-host-dom.test.js`; `tests/private/gitlab-host-repository.test.js` |
+| 5.3 | `tests/private/gitlab-host-repository.test.js` |
+| 5.4 | `tests/private/gitlab-host-repository.test.js`; `tests/contracts/go-intelligence.test.js` |
+| 5.5 | `tests/private/gitlab-host-repository.test.js` |
+| 5.6 | `tests/go-navigation-context.test.js` |
+| 5.7 | `tests/private/go-intelligence-protocol.test.js`; `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 5.8 | `tests/private/go-intelligence-protocol.test.js`; `tests/private/go-intelligence-cache.test.js` |
+| 6.1 | `tests/shared-values.test.js`; `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 6.2 | `tests/content-bookmarks.test.js`; `tests/contracts/review-session.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 6.3 | `tests/shared-values.test.js`; `tests/bookmark-store.test.js`; `PRIVACY.md` |
+| 6.4 | `tests/shared-values.test.js`; `tests/bookmark-store.test.js` |
+| 7.1 | `tests/entrypoints/popup.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 7.2 | `tests/entrypoints/settings.test.js`; `tests/settings.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 7.3 | `tests/settings.test.js`; `tests/shortcut-settings.test.js` |
+| 7.4 | `tests/shortcut-settings.test.js`; `tests/private/gitlab-host-dom.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 7.5 | `tests/contracts/review-session.test.js`; `tests/shortcut-coach-ui.test.js` |
+| 7.6 | `tests/contracts/gitlab-host.test.js`; `tests/content-onboarding.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 7.7 | `tests/contracts/gitlab-host.test.js`; `tests/settings.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 7.8 | `tests/settings.test.js`; `tests/popup.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 7.9 | `tests/contracts/gitlab-host.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 7.10 | `tests/contracts/gitlab-host.test.js`; `tests/content-celebrations.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 8.1 | `tests/shared-values.test.js`; `tests/contracts/review-session.test.js` |
+| 8.2 | `tests/shared-values.test.js`; `tests/shortcut-settings.test.js`; `tests/bookmark-store.test.js` |
+| 8.3 | `tests/private/go-intelligence-cache.test.js`; `tests/go-semantic-cache.test.js` |
+| 8.4 | `tests/private/go-intelligence-cache.test.js`; `tests/contracts/go-intelligence.test.js` |
+| 8.5 | `tests/build-extension.test.js`; `tests/gitlab-host-access.test.js`; `tests/rewrite-browser-smoke.mjs` |
+| 8.6 | `tests/private/gitlab-host-repository.test.js`; `PRIVACY.md`; `SECURITY.md` |
+| 8.7 | `tests/build-extension.test.js`; `manifest.json` |
+| 9.1 | `package.json`; `.github/workflows/ci.yml`; `tests/rewrite-browser-smoke.mjs` |
+| 9.2 | `tests/architecture/import-rules.test.js`; `tests/contracts/`; `tests/private/`; `tests/entrypoints/` |
+| 9.3 | `tests/rewrite-browser-smoke.mjs`; `tests/browser-smoke.mjs` |
+| 9.4 | `.github/workflows/ci.yml`; `.github/workflows/dependency-review.yml` |
+| 9.5 | `scripts/package-extension.mjs`; `tests/release-extension.test.js` |
+| 9.6 | `scripts/release-extension.mjs`; `tests/release-extension.test.js` |
+| 9.7 | `.github/workflows/release.yml`; `tests/release-extension.test.js` |
+| 9.8 | `package.json`; `vendor/`; `THIRD_PARTY_NOTICES.md` |
