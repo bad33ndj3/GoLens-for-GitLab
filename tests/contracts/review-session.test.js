@@ -47,6 +47,7 @@ function hostFor(stream, { projections = [], actions = [], reads = [] } = {}) {
 test('Review Session rejects a late semantic result after its Host revision changes', async () => {
   const stream = events();
   const projections = [];
+  const actions = [];
   let resolveQuery;
   const session = startReviewSession({
     host: {
@@ -290,10 +291,11 @@ test('the composition root replaces immutable Review Sessions instead of retarge
 test('Review Session reconciles synchronized preferences and saves enablement through one port', async () => {
   const stream = events();
   const projections = [];
+  const actions = [];
   const saved = [];
   let notify;
   const session = startReviewSession({
-    host: hostFor(stream, { projections }),
+    host: hostFor(stream, { projections, actions }),
     intelligence: { query: async () => assert.fail('no semantic query expected') },
     preferences: { enabled: true, hideGeneratedFiles: false },
     preferencePort: {
@@ -310,6 +312,16 @@ test('Review Session reconciles synchronized preferences and saves enablement th
   stream.emit({ type: 'intent', revision: 1, command: 'toggle-enabled' });
   await tick();
   assert.deepEqual(saved, [{ enabled: false }]);
+  notify({ enabled: true, hideGeneratedFiles: true });
+  stream.emit({ type: 'intent', revision: 1, command: 'toggle-focus' });
+  await tick();
+  stream.emit({ type: 'fullscreen-changed', revision: 1, active: true });
+  await tick();
+  notify({ enabled: false, hideGeneratedFiles: true });
+  await tick();
+  assert.equal(actions.at(-1).action, 'set-fullscreen');
+  assert.equal(actions.at(-1).active, false);
+  assert.equal(projections.at(-1).focusMode, true);
   await session.stop();
   assert.equal(notify, undefined);
 });
@@ -362,8 +374,8 @@ test('Review Session executes full-file and relative navigation helpers', async 
   await tick();
   stream.emit({ type: 'intent', revision: 1, command: 'previous-file' });
   await tick();
-  assert.equal(actions.at(-1).action, 'reveal-target');
-  assert.equal(actions.at(-1).target.token, first.token);
+  assert.equal(actions.at(-1).action, 'navigate-relative');
+  assert.deepEqual({ kind: actions.at(-1).kind, direction: actions.at(-1).direction }, { kind: 'file', direction: 'previous' });
 
   stream.emit({ type: 'intent', revision: 1, command: 'toggle-full-file', path: second.path });
   await tick();
@@ -412,5 +424,57 @@ test('Review Session keeps semantic choices and confirmed review milestones insi
   stream.emit({ type: 'intent', revision: 1, command: 'native-approve' });
   await tick();
   assert.equal(projections.at(-1).announcement, 'Approval confirmed.');
+
+  stream.emit({ type: 'intent', revision: 1, command: 'select-target', target: definition });
+  await tick();
+  await tick();
+  assert.deepEqual(projections.at(-1).occurrenceLocations.map(({ path, line }) => ({ path, line })), [
+    { path: first.path, line: first.line }, { path: second.path, line: second.line },
+  ]);
+  await session.stop();
+});
+
+test('Review Session reveals an untouched loaded semantic destination by Source location', async () => {
+  const stream = events();
+  const actions = [];
+  const definitionPath = repositoryPath('pkg/definition.go');
+  const usage = { revision: 1, token: 'usage', path: repositoryPath('pkg/use.go'), side: 'new', line: 9, identifier: 'Target', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { actions }),
+    intelligence: { query: async () => ({
+      status: 'resolved', isDefinition: false, source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] },
+      symbol: { signature: 'func Target()', identity: { source, path: definitionPath, line: 3, column: 1, kind: 'function', name: 'Target' }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' },
+    }) },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'activate-target', target: usage });
+  await tick();
+  assert.deepEqual({ action: actions.at(-1).action, path: actions.at(-1).path, line: actions.at(-1).line }, {
+    action: 'reveal-source', path: definitionPath, line: 3,
+  });
+  await session.stop();
+});
+
+test('Review Session terminates on a broken Host contract and leaves one bounded failure state', async () => {
+  const projections = [];
+  let unsubscribed = false;
+  const session = startReviewSession({
+    host: {
+      review,
+      async *events() { yield { type: 'host-revised', revision: 1, surface: 'changes' }; throw new Error('broken host invariant'); },
+      apply: (projection) => { projections.push(projection); return { kind: 'applied' }; },
+      perform: async () => ({ kind: 'completed' }),
+      read: async () => ({ kind: 'unavailable', reason: 'not-rendered' }),
+    },
+    intelligence: { query: async () => assert.fail('no semantic query expected') },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+    preferencePort: { subscribe: () => () => { unsubscribed = true; }, set: async () => {} },
+  });
+
+  await tick();
+  assert.equal(projections.at(-1).status, 'GoLens stopped after an internal error.');
+  assert.equal(unsubscribed, true);
   await session.stop();
 });

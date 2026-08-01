@@ -289,6 +289,9 @@ export function createGitLabPage({
       for (const [tokens, name] of [[next.occurrences, 'data-golens-occurrence'], [next.bookmarks, 'data-golens-bookmark']] as const) {
         for (const token of tokens || []) elements.get(token)?.setAttribute(name, '');
       }
+      for (const [locations, name] of [[next.occurrenceLocations, 'data-golens-occurrence'], [next.bookmarkLocations, 'data-golens-bookmark']] as const) {
+        for (const location of locations || []) sourceElement(location.source, location.path, location.line)?.setAttribute(name, '');
+      }
       if (next.destination) elements.get(next.destination)?.setAttribute('data-golens-destination', '');
       if (next.status || next.announcement) {
         const status = document.createElement('div');
@@ -310,6 +313,27 @@ export function createGitLabPage({
     function actionTarget(target: DiffTarget): Element | null {
       if (target.revision !== revision) return null;
       return elements.get(target.token) || null;
+    }
+
+    function sourceElement(source: DiffTarget['source'], path: DiffTarget['path'], line: number): Element | null {
+      const root = rootForPath(document, path);
+      if (!root) return null;
+      const old = source.commitSha !== review.identity.headSha;
+      for (const row of root.querySelectorAll('tr,[role="row"]')) {
+        const anchors = [...row.querySelectorAll('[data-line-number],a[href*="#"]')];
+        const matching = anchors.find((candidate) => {
+          const label = `${candidate.getAttribute('aria-label') || ''} ${candidate.closest('td,[role="cell"]')?.className || ''}`;
+          return lineNumber(candidate) === line && (old ? /old|deleted/i.test(label) : !/old|deleted/i.test(label));
+        });
+        if (matching || (!anchors.length && lineNumber(row) === line)) return row;
+      }
+      return null;
+    }
+
+    function relativeElements(kind: 'occurrence' | 'hunk' | 'file' | 'bookmark'): Element[] {
+      if (kind === 'file') return fileRoots(document);
+      if (kind === 'hunk') return [...document.querySelectorAll('[data-hunk],.diff-content,.diff-expanded')];
+      return [...document.querySelectorAll(kind === 'occurrence' ? '[data-golens-occurrence]' : '[data-golens-bookmark]')];
     }
 
     async function perform(action: HostAction, actionSignal: AbortSignal): Promise<ActionOutcome> {
@@ -348,6 +372,22 @@ export function createGitLabPage({
         }
         if (!element) outcome = controls >= 500 ? { kind: 'limit-exceeded', limit: { name: 'full-file-controls', maximum: 500 } } : Date.now() >= deadline ? { kind: 'limit-exceeded', limit: { name: 'full-file-time', maximum: 15_000 } } : { kind: 'unavailable', reason: 'not-rendered' };
         else element.scrollIntoView?.({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+      } else if (action.action === 'reveal-source') {
+        const element = sourceElement(action.source, action.path, action.line);
+        if (!element) outcome = { kind: 'unavailable', reason: 'not-rendered' };
+        else element.scrollIntoView?.({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+      } else if (action.action === 'navigate-relative') {
+        const candidates = relativeElements(action.kind);
+        if (!candidates.length) outcome = { kind: 'unavailable', reason: 'not-rendered' };
+        else {
+          const selected = document.querySelector('[data-golens-destination]');
+          const current = selected ? candidates.findIndex((candidate) => candidate === selected || candidate.contains(selected)) : -1;
+          const index = current < 0 ? (action.direction === 'previous' ? candidates.length - 1 : 0)
+            : (current + (action.direction === 'previous' ? candidates.length - 1 : 1)) % candidates.length;
+          const destination = candidates[index]!;
+          destination.scrollIntoView?.({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+          destination.setAttribute('data-golens-destination', '');
+        }
       } else if (action.action === 'set-full-file') {
         const root = rootForPath(document, action.path);
         const button = root?.querySelector<HTMLButtonElement>(action.full ? 'button[data-click="showFullFile"],.js-unfold-all' : 'button[data-click="showChanges"]');
@@ -377,6 +417,9 @@ export function createGitLabPage({
       if (mouse.metaKey || mouse.ctrlKey) {
         const target = diffTarget(event.target);
         if (target) { event.preventDefault(); emitIntent({ command: 'activate-target', target }); }
+      } else {
+        const target = diffTarget(event.target);
+        if (target) emitIntent({ command: 'select-target', target });
       }
     };
     const onSurfaceIntent = (event: Event) => {

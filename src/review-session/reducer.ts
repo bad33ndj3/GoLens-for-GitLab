@@ -1,4 +1,4 @@
-import type { CoverageProgress, SemanticOutcome, SemanticQuery, SemanticSnapshotRevision } from '../go-intelligence/index.ts';
+import type { CoverageProgress, SemanticOutcome, SemanticQuery, SemanticSnapshotRevision, SourceLocation } from '../go-intelligence/index.ts';
 import type { ActiveSurfaceProjection, ControlProjection, DiffTarget, FullFileControlProjection, HostEvent, HostProjection, HostRevision, ShortcutProjection } from '../gitlab-host/index.ts';
 
 export type SessionBookmark = Readonly<{
@@ -16,7 +16,7 @@ export type SessionPreferences = Readonly<{
 type SemanticWork = Readonly<{
   operationId: number;
   target: DiffTarget;
-  purpose: 'hover' | 'activate' | 'continuation';
+  purpose: 'hover' | 'select' | 'activate' | 'selection' | 'continuation';
   request: SemanticQuery;
   expectedSnapshot?: SemanticSnapshotRevision;
 }>;
@@ -38,7 +38,7 @@ export type SessionState = Readonly<{
   reviewOperationId: number | undefined;
   selected: DiffTarget | undefined;
   targets: readonly DiffTarget[];
-  occurrences: readonly DiffTarget[];
+  occurrences: readonly SourceLocation[];
   fullFileControls: readonly FullFileControlProjection[];
   choices: readonly DiffTarget[];
   bookmarks: readonly SessionBookmark[];
@@ -54,6 +54,8 @@ type PerformEffect =
   | Readonly<{ action: 'set-fullscreen'; active: boolean }>
   | Readonly<{ action: 'focus-file-search' | 'clear-file-search' }>
   | Readonly<{ action: 'reveal-target'; target: DiffTarget }>
+  | Readonly<{ action: 'reveal-source'; source: DiffTarget['source']; path: DiffTarget['path']; line: number }>
+  | Readonly<{ action: 'navigate-relative'; kind: 'occurrence' | 'hunk' | 'file' | 'bookmark'; direction: 'previous' | 'next' }>
   | Readonly<{ action: 'set-full-file'; path: DiffTarget['path']; full: boolean }>;
 
 export type SessionEffect =
@@ -122,8 +124,11 @@ function projection(state: SessionState): HostProjection | null {
     ] satisfies readonly ControlProjection[]),
     shortcuts: state.shortcuts,
     interactiveTargets: state.targets,
-    occurrences: state.occurrences.map(({ token }) => token),
+    occurrenceLocations: state.occurrences.map((location) => ({ ...location, source: state.source })),
     bookmarks: bookmarkTokens(state),
+    bookmarkLocations: state.bookmarks.filter(({ scope }) => scope.headSha === state.source.commitSha).map(({ location }) => ({
+      source: state.source, path: location.path as DiffTarget['path'], line: location.startLine,
+    })),
     fullFileControls: state.fullFileControls,
     ...(state.destination ? { destination: state.destination } : {}),
     ...(state.status ? { status: state.status } : {}),
@@ -168,25 +173,31 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
   if (!work || event.sessionId !== state.sessionId || event.operationId !== work.operationId || event.revision !== state.revision
     || !sameSource(event.outcome.source, state.source) || !sameSource(work.target.source, state.source)
     || ((work.expectedSnapshot || state.snapshot) && event.outcome.snapshot !== (work.expectedSnapshot || state.snapshot))) return { state, effects: [] };
-  let occurrences = state.occurrences;
-  if (event.outcome.status === 'resolved') {
-    const name = event.outcome.symbol.identity.name;
-    occurrences = state.targets.filter((target) => target.identifier === name && sameSource(target.source, event.outcome.source));
+  const cleared = Object.freeze({ ...state, semantic: undefined, snapshot: event.outcome.snapshot });
+  if (event.outcome.status === 'resolved' && work.purpose === 'select') {
+    return startQuery(cleared, work.target, 'selection', { operation: 'find-references', symbol: event.outcome.symbol.identity }, event.outcome.snapshot);
   }
-  const cleared = Object.freeze({ ...state, semantic: undefined, snapshot: event.outcome.snapshot, occurrences });
   if (event.outcome.status === 'resolved' && work.purpose === 'activate') {
     const destination = targetFor(cleared, event.outcome.symbol.identity, event.outcome.source);
     if (!event.outcome.isDefinition && destination) return navigate(cleared, work.target, destination);
+    if (!event.outcome.isDefinition) {
+      const operationId = cleared.nextOperationId;
+      return result(Object.freeze({ ...cleared, nextOperationId: operationId + 1, status: undefined }), [{
+        type: 'perform', action: 'reveal-source', source: event.outcome.source, path: event.outcome.symbol.identity.path,
+        line: event.outcome.symbol.identity.line, operationId,
+      }]);
+    }
     const operation = event.outcome.symbol.identity.kind === 'interface' ? 'find-implementations' : 'find-references';
     const request: SemanticQuery = operation === 'find-implementations'
       ? { operation, symbol: event.outcome.symbol.identity }
       : { operation, symbol: event.outcome.symbol.identity };
     return startQuery(cleared, work.target, 'continuation', request, event.outcome.snapshot);
   }
-  if ((event.outcome.status === 'references' || event.outcome.status === 'implementations') && work.purpose === 'continuation') {
+  if ((event.outcome.status === 'references' || event.outcome.status === 'implementations') && (work.purpose === 'continuation' || work.purpose === 'selection')) {
     const locations = event.outcome.status === 'references'
       ? event.outcome.locations
       : event.outcome.candidates.map(({ definition }) => definition.identity);
+    if (work.purpose === 'selection') return result(Object.freeze({ ...cleared, occurrences: locations, announcement: `${locations.length} occurrence${locations.length === 1 ? '' : 's'} selected.` }));
     const destinations = locations.map((location) => targetFor(cleared, location, event.outcome.source)).filter((target): target is DiffTarget => Boolean(target));
     if (destinations.length === 1) return navigate(cleared, work.target, destinations[0]!);
     const surface = Object.freeze({ kind: 'popover' as const, title: 'Go destinations', body: destinations.length ? `${destinations.length} destinations in this diff.` : 'No loaded destination in this diff.',
@@ -202,8 +213,11 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
 
 export function reduceSession(state: SessionState, event: SessionRuntimeEvent): Readonly<{ state: SessionState; effects: readonly SessionEffect[] }> {
   if (event.type === 'preferences-changed') {
+    const leaveFocus = state.enabled && !event.preferences.enabled && state.focusMode && state.revision !== null;
+    const operationId = state.nextOperationId;
     return result(Object.freeze({ ...state, enabled: event.preferences.enabled, hideGeneratedFiles: event.preferences.hideGeneratedFiles,
-      shortcuts: event.preferences.shortcuts || state.shortcuts }));
+      shortcuts: event.preferences.shortcuts || state.shortcuts, nextOperationId: leaveFocus ? operationId + 1 : operationId }), leaveFocus
+      ? [{ type: 'perform', action: 'set-fullscreen', active: false, operationId }] : []);
   }
   if (event.type === 'host-revised') {
     if (state.revision !== null && Number(event.revision) <= Number(state.revision)) return { state, effects: [] };
@@ -260,10 +274,10 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const operationId = state.nextOperationId;
     return { state: Object.freeze({ ...state, nextOperationId: operationId + 1 }), effects: [{ type: 'perform', action: event.command, operationId }] };
   }
-  if ((event.command === 'hover-target' || event.command === 'activate-target') && event.target.identifier && state.enabled) {
+  if ((event.command === 'hover-target' || event.command === 'select-target' || event.command === 'activate-target') && event.target.identifier && state.enabled) {
     if (!sameSource(event.target.source, state.source)) return { state, effects: [] };
     const next = remember(state, event.target);
-    return startQuery(next, event.target, event.command === 'hover-target' ? 'hover' : 'activate', {
+    return startQuery(next, event.target, event.command === 'hover-target' ? 'hover' : event.command === 'select-target' ? 'select' : 'activate', {
       operation: 'resolve-symbol', path: event.target.path, line: event.target.line, column: event.target.column || 1, identifier: event.target.identifier,
     });
   }
@@ -305,19 +319,10 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     || event.command === 'previous-hunk' || event.command === 'next-hunk'
     || event.command === 'previous-file' || event.command === 'next-file'
     || event.command === 'previous-bookmark' || event.command === 'next-bookmark') {
-    const backwards = event.command.startsWith('previous-');
-    const kind = event.command.slice(event.command.indexOf('-') + 1);
-    let targets = kind === 'occurrence' ? state.occurrences
-      : kind === 'bookmark' ? state.targets.filter(({ token }) => bookmarkTokens(state).includes(token))
-        : [...state.targets].sort((left, right) => String(left.path).localeCompare(String(right.path)) || left.line - right.line);
-    if (kind === 'file') targets = targets.filter((target, index) => !index || target.path !== targets[index - 1]?.path);
-    if (!targets.length) return result(Object.freeze({ ...state, announcement: `No ${kind} destination.` }));
-    const current = Math.max(0, targets.findIndex(({ token }) => token === state.selected?.token));
-    const target = targets[(current + (backwards ? targets.length - 1 : 1)) % targets.length]!;
+    const direction = event.command.startsWith('previous-') ? 'previous' : 'next';
+    const kind = event.command.slice(event.command.indexOf('-') + 1) as 'occurrence' | 'hunk' | 'file' | 'bookmark';
     const operationId = state.nextOperationId;
-    return result(Object.freeze({ ...state, selected: target, destination: target.token, nextOperationId: operationId + 1 }), [
-      { type: 'perform', action: 'reveal-target', target, operationId },
-    ]);
+    return { state: Object.freeze({ ...state, nextOperationId: operationId + 1 }), effects: [{ type: 'perform', action: 'navigate-relative', kind, direction, operationId }] };
   }
   if ((event.command === 'history-back' || event.command === 'history-forward') && state.history.length) {
     const index = Math.max(0, Math.min(state.history.length - 1, state.historyIndex + (event.command === 'history-back' ? -1 : 1)));

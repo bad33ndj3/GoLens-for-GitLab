@@ -76,7 +76,12 @@ export function runReviewSession({
   const perform = async (effect: Extract<SessionEffect, { type: 'perform' }>) => {
     if (state.revision === null || controller.signal.aborted) return;
     const { type: _type, operationId, ...action } = effect;
-    await host.perform({ ...action, revision: state.revision, operationId: `${sessionId}:${operationId}` } as HostAction, scoped(`action:${action.action}`));
+    const signal = scoped(`action:${action.action}`);
+    const outcome = await host.perform({ ...action, revision: state.revision, operationId: `${sessionId}:${operationId}` } as HostAction, signal);
+    if (action.action === 'reveal-source' && outcome.kind !== 'completed' && outcome.kind !== 'unchanged') {
+      await host.perform({ action: 'open-destination', destination: { kind: 'source', source: action.source, path: action.path, line: action.line },
+        revision: state.revision, operationId: `${sessionId}:${operationId}:fallback` }, signal);
+    }
   };
 
   const query = async (effect: Extract<SessionEffect, { type: 'query' }>) => {
@@ -149,21 +154,26 @@ export function runReviewSession({
     }
   };
 
+  let unsubscribePreferences: (() => void) | undefined;
+  const terminate = (failure = false) => {
+    if (failure && state.revision !== null) host.apply({ revision: state.revision, enabled: true, status: 'GoLens stopped after an internal error.' });
+    unsubscribePreferences?.();
+    controller.abort();
+    for (const scope of scopes.values()) scope.abort();
+  };
   const running = (async () => {
     try {
       for await (const event of host.events(controller.signal)) await dispatch(event);
     } catch (error) {
-      if (!controller.signal.aborted) throw error;
+      if (!controller.signal.aborted && !aborted(error)) terminate(true);
     }
   })();
-  const unsubscribePreferences = preferencePort?.subscribe((next) => { void dispatch({ type: 'preferences-changed', preferences: next }); });
+  unsubscribePreferences = preferencePort?.subscribe((next) => { void dispatch({ type: 'preferences-changed', preferences: next }); });
   const stop = async () => {
     if (stopped) return;
     stopped = true;
-    unsubscribePreferences?.();
-    controller.abort();
-    for (const scope of scopes.values()) scope.abort();
-    await running.catch((error) => { if (!aborted(error)) throw error; });
+    terminate();
+    await running;
     await Promise.allSettled([...pending]);
   };
   if (signal) {

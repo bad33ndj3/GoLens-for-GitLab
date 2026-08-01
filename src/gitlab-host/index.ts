@@ -91,7 +91,7 @@ export type HostIntentCommand =
   | 'previous-occurrence' | 'next-occurrence' | 'previous-hunk' | 'next-hunk'
   | 'previous-file' | 'next-file' | 'previous-bookmark' | 'next-bookmark'
   | 'history-back' | 'history-forward';
-type TargetIntentCommand = 'hover-target' | 'activate-target';
+type TargetIntentCommand = 'hover-target' | 'select-target' | 'activate-target';
 type SimpleIntentCommand = Exclude<HostIntentCommand, TargetIntentCommand | 'surface-action' | 'toggle-full-file'>;
 export type HostIntent =
   | Readonly<{ command: SimpleIntentCommand }>
@@ -143,7 +143,9 @@ export type HostProjection = Readonly<{
   shortcuts?: readonly ShortcutProjection[];
   interactiveTargets?: readonly DiffTarget[];
   occurrences?: readonly HostTargetToken[];
+  occurrenceLocations?: readonly Readonly<{ source: SourceIdentity; path: RepositoryPath; line: number }>[];
   bookmarks?: readonly HostTargetToken[];
+  bookmarkLocations?: readonly Readonly<{ source: SourceIdentity; path: RepositoryPath; line: number }>[];
   destination?: HostTargetToken;
   status?: string;
   announcement?: string;
@@ -158,6 +160,8 @@ export type HostAction = HostActionBase & (
   | Readonly<{ action: 'set-fullscreen'; active: boolean }>
   | Readonly<{ action: 'focus-file-search' | 'clear-file-search' }>
   | Readonly<{ action: 'reveal-target'; target: DiffTarget }>
+  | Readonly<{ action: 'reveal-source'; source: SourceIdentity; path: RepositoryPath; line: number }>
+  | Readonly<{ action: 'navigate-relative'; kind: 'occurrence' | 'hunk' | 'file' | 'bookmark'; direction: 'previous' | 'next' }>
   | Readonly<{ action: 'set-full-file'; path: RepositoryPath; full: boolean }>
   | Readonly<{ action: 'open-destination'; destination: Readonly<{ kind: 'source'; source: SourceIdentity; path: RepositoryPath; line?: number }> | Readonly<{ kind: 'documentation'; url: string }> }>
   | Readonly<{ action: 'copy-source-location'; text: string }>

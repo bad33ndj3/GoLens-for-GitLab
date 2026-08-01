@@ -71,6 +71,8 @@ test('Rapid and legacy diffs produce normalized revision-bound targets and compl
   assert.deepEqual({ type: rapid.type, command: rapid.command, path: rapid.target.path, side: rapid.target.side, line: rapid.target.line, sha: rapid.target.source.commitSha }, {
     type: 'intent', command: 'hover-target', path: 'pkg/a.go', side: 'new', line: 12, sha: 'a'.repeat(40),
   });
+  window.document.querySelector('#rapid-code').dispatchEvent(new window.MouseEvent('click', { bubbles: true, composed: true }));
+  assert.equal((await events.next()).value.command, 'select-target');
   window.document.querySelector('#legacy-code').dispatchEvent(new window.MouseEvent('click', { bubbles: true, composed: true, ctrlKey: true }));
   const { value: legacy } = await events.next();
   assert.deepEqual({ command: legacy.command, path: legacy.target.path, side: legacy.target.side, line: legacy.target.line, sha: legacy.target.source.commitSha }, {
@@ -113,6 +115,10 @@ test('actions are idempotent and surfaces preserve modal focus, Escape, and tear
   window.document.querySelector('#rapid-code').dispatchEvent(new window.PointerEvent('pointerover', { bubbles: true, composed: true }));
   const target = (await events.next()).value.target;
   assert.deepEqual(await bound.perform({ action: 'reveal-target', revision: initial.revision, operationId: 'reveal', target }, controller.signal), { kind: 'completed' });
+  assert.deepEqual(await bound.perform({ action: 'reveal-source', revision: initial.revision, operationId: 'source', source: target.source, path: target.path, line: 12 }, controller.signal), { kind: 'completed' });
+  bound.apply({ revision: initial.revision, enabled: true, occurrenceLocations: [{ source: target.source, path: target.path, line: 12 }] });
+  assert.equal(window.document.querySelector('#rapid tr').hasAttribute('data-golens-occurrence'), true);
+  assert.deepEqual(await bound.perform({ action: 'navigate-relative', revision: initial.revision, operationId: 'occurrence', kind: 'occurrence', direction: 'next' }, controller.signal), { kind: 'completed' });
   assert.deepEqual(await bound.perform({ action: 'reveal-target', revision: initial.revision, operationId: 'forged', target: { ...target, token: 'forged' } }, controller.signal), { kind: 'unavailable', reason: 'not-rendered' });
   assert.deepEqual(await bound.perform({ action: 'set-fullscreen', revision: initial.revision, operationId: 'fullscreen', active: true }, controller.signal), { kind: 'unavailable', reason: 'unsupported' });
 
