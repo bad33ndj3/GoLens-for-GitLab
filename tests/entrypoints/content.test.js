@@ -37,6 +37,7 @@ test('content entry composes replacement sessions and serves Chrome entry messag
   let savedSetup;
   let savedOnboarding;
   const modalOrder = [];
+  let noticePending = true;
   const runtime = {
     sendMessage: async () => 'golens:rewrite:pong',
     getURL: (path) => `chrome-extension://id/${path}`,
@@ -78,16 +79,21 @@ test('content entry composes replacement sessions and serves Chrome entry messag
   const entry = await startContentEntry({
     window: { navigator: { platform: 'Linux' }, location: { origin: 'https://gitlab.com' } },
     runtime, storage, host,
+    ensureStorage: async () => ({ status: 'ready', upgradeNoticePending: noticePending }),
+    acknowledgeUpgradeNotice: async () => { noticePending = false; },
+    showUpdate: () => () => {},
     openIntelligence: () => intelligence(++opened),
     startSession: (input) => { sessions.push(input.preferences); coachStoragePassed = input.coachStorage; return { stop: async () => {} }; },
     openSettings: () => () => { modalOrder.push('settings-closed'); },
     showGuide: () => { modalOrder.push('guide-shown'); },
+    showUpgrade: async () => { modalOrder.push('upgrade-shown'); return true; },
     showSetup: async (_signal, _hideGeneratedFiles, preset) => { assert.equal(preset, 'custom'); return { preset: 'custom', hideGeneratedFiles: true }; },
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(savedSetup.hideGeneratedFiles, true);
   assert.equal(savedSetup.shortcutBindings, undefined);
-  assert.equal(savedOnboarding, 12);
+  assert.equal(savedOnboarding, 13);
+  assert.equal(noticePending, false);
   preferenceListener({ ...preferences, enabled: false });
   nextReview();
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -99,6 +105,6 @@ test('content entry composes replacement sessions and serves Chrome entry messag
   assert.equal(response.result.cache.bytes, 2);
   await new Promise((resolve) => runtimeListener({ type: 'golens:rewrite:open-settings' }, {}, resolve));
   await new Promise((resolve) => runtimeListener({ type: 'golens:rewrite:show-guide' }, {}, resolve));
-  assert.deepEqual(modalOrder, ['settings-closed', 'guide-shown']);
+  assert.deepEqual(modalOrder, ['upgrade-shown', 'settings-closed', 'guide-shown']);
   await entry.stop();
 });

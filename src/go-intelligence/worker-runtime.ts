@@ -95,13 +95,7 @@ export function createGoIntelligenceWorkerRuntime({
 
   async function execute(request: WorkerRequest, signal: AbortSignal): Promise<unknown> {
     const { command, source } = request;
-    if (command.name === 'clear-cache') {
-      return scheduler.clear(async () => {
-        const previous = await cache.clear();
-        snapshots.clear();
-        return Object.freeze({ status: 'cleared', ...previous });
-      });
-    }
+    if (command.name === 'clear-cache') return clearCache();
     if (command.name === 'inspect-cache') {
       return cache.inspect(command.inspection.scope === 'source' ? source : undefined);
     }
@@ -166,7 +160,15 @@ export function createGoIntelligenceWorkerRuntime({
     return build(restored, signal);
   }
 
-  return { execute };
+  function clearCache() {
+    return scheduler.clear(async () => {
+      const previous = await cache.clear();
+      snapshots.clear();
+      return Object.freeze({ status: 'cleared' as const, ...previous });
+    });
+  }
+
+  return { execute, clearCache };
 }
 
 function dirname(path: string): string {
@@ -214,7 +216,7 @@ export function startGoIntelligenceWorker({
   runtime?: WorkerRuntime;
   cache?: GoIntelligenceCache;
   createParser?: () => Promise<ParserLike>;
-} = {}): void {
+} = {}) {
   const worker = createGoIntelligenceWorkerRuntime({ cache, createParser });
   runtime.onConnect.addListener((port) => {
     const operations = new Map<string, AbortController>();
@@ -253,4 +255,5 @@ export function startGoIntelligenceWorker({
       }).finally(() => operations.delete(request.operationId));
     });
   });
+  return Object.freeze({ clearCache: worker.clearCache });
 }

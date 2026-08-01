@@ -1,5 +1,6 @@
 import { mergeBindings } from './shortcuts.ts';
 import { createUserStorage } from './user-storage.ts';
+import { ensureStorageReady } from './storage-reset.ts';
 
 type PreferencePort = Readonly<{
   get(): Promise<{ enabled: boolean }>;
@@ -27,8 +28,13 @@ export async function startPopupEntry({
   document: page = globalThis.document,
   preferences = createUserStorage({ normalizeShortcutBindings: mergeBindings }).preferences as PreferencePort,
   request = defaultRequest,
+  ensureStorage = ensureStorageReady,
   close = () => globalThis.close(),
-}: { document?: Document; preferences?: PreferencePort; request?: (type: string) => Promise<any>; close?: () => void } = {}): Promise<() => void> {
+}: { document?: Document; preferences?: PreferencePort; request?: (type: string) => Promise<any>; ensureStorage?: () => Promise<unknown>; close?: () => void } = {}): Promise<() => void> {
+  const updateStatus = page.querySelector<HTMLElement>('[data-settings-status]');
+  if (updateStatus) updateStatus.textContent = 'Finishing the GoLens update…';
+  await ensureStorage();
+  if (updateStatus) updateStatus.textContent = '';
   const enabled = page.querySelector<HTMLInputElement>('[data-setting="enabled"]');
   const cacheButton = page.querySelector<HTMLButtonElement>('[data-action="cache-full-project"]');
   const settingsButton = page.querySelector<HTMLButtonElement>('[data-action="show-settings"]');
@@ -36,7 +42,7 @@ export async function startPopupEntry({
   const cacheStatus = page.querySelector<HTMLElement>('[data-full-cache-status]');
   const progress = page.querySelector<HTMLProgressElement>('[data-full-cache-progress]');
   const context = page.querySelector<HTMLElement>('[data-page-context]');
-  const status = page.querySelector<HTMLElement>('[data-settings-status]');
+  const status = updateStatus;
   if (enabled) {
     enabled.checked = (await preferences.get()).enabled;
     enabled.addEventListener('change', () => { void preferences.set({ enabled: enabled.checked }); });

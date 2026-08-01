@@ -9,7 +9,7 @@ globalThis.HTMLElement = browserWindow.HTMLElement;
 globalThis.customElements = browserWindow.customElements;
 globalThis.CustomEvent = browserWindow.CustomEvent;
 const { commitSha, repositoryKey, repositoryPath, sourceIdentity } = await import('../../src/domain.ts');
-const { createGitLabHost, reviewDescriptor, showFeatureGuide, showFirstRunSetup } = await import('../../src/gitlab-host/index.ts');
+const { createGitLabHost, reviewDescriptor, showFeatureGuide, showFirstRunSetup, showUpgradeNotice } = await import('../../src/gitlab-host/index.ts');
 
 const headSha = commitSha('a'.repeat(40));
 const review = reviewDescriptor({
@@ -137,4 +137,20 @@ test('first-run setup stages choices in an accessible Lit projection and dismiss
   await guide.updateComplete;
   assert.deepEqual([...guide.shadowRoot.querySelectorAll('h3')].map(({ textContent }) => textContent), ['Page controls', 'Settings']);
   closeGuide();
+});
+
+test('upgrade notice uses the approved copy and only Continue acknowledges it', async () => {
+  const dismissed = showUpgradeNotice(document, new AbortController().signal);
+  let host = document.querySelector('#golens-onboarding-root');
+  await host.updateComplete;
+  assert.equal(host.shadowRoot.querySelector('h2').textContent, 'GoLens was rebuilt');
+  assert.equal(host.shadowRoot.querySelector('p').textContent, 'This update reset your GoLens settings, shortcuts, bookmarks, and cached Go source. Your GitLab repositories and GitLab data were not changed.');
+  host.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(await dismissed, false);
+
+  const continued = showUpgradeNotice(document, new AbortController().signal);
+  host = document.querySelector('#golens-onboarding-root');
+  await host.updateComplete;
+  host.shadowRoot.querySelector('.primary').click();
+  assert.equal(await continued, true);
 });

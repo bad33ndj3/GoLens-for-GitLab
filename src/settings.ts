@@ -2,6 +2,7 @@ import { guideChapters } from './feature-catalog.ts';
 import { createSelfHostedAccess } from './gitlab-host/index.ts';
 import { ACTIONS, PRESETS, assignBinding, bindingForEvent, defaultBindings, mergeBindings, presetBindings, presetForBindings, type ShortcutPlatform } from './shortcuts.ts';
 import { createUserStorage } from './user-storage.ts';
+import { ensureStorageReady } from './storage-reset.ts';
 
 type Preferences = Readonly<{ enabled: boolean; hideGeneratedFiles: boolean; shortcutCoachEnabled: boolean; shortcutBindings: Readonly<Record<string, string>> }>;
 type PreferencePort = Readonly<{ get(): Promise<Preferences>; set(value: Partial<Preferences>): Promise<void>; subscribe(listener: (value: Preferences) => void): () => void }>;
@@ -47,10 +48,15 @@ export async function startSettingsEntry({
   document: page = globalThis.document,
   preferences = createUserStorage({ normalizeShortcutBindings: mergeBindings }).preferences as PreferencePort,
   request = activeRequest,
+  ensureStorage = ensureStorageReady,
   access = createSelfHostedAccess() as AccessPort,
   confirmClear = () => true,
   close = () => page.defaultView?.parent.postMessage({ type: 'golens:settings:close' }, '*'),
-}: { document?: Document; preferences?: PreferencePort; request?: (type: string) => Promise<any>; access?: AccessPort; confirmClear?: () => boolean; close?: () => void } = {}): Promise<() => void> {
+}: { document?: Document; preferences?: PreferencePort; request?: (type: string) => Promise<any>; ensureStorage?: () => Promise<unknown>; access?: AccessPort; confirmClear?: () => boolean; close?: () => void } = {}): Promise<() => void> {
+  const updateStatus = page.querySelector<HTMLElement>('[data-settings-status]');
+  if (updateStatus) updateStatus.textContent = 'Finishing the GoLens update…';
+  await ensureStorage();
+  if (updateStatus) updateStatus.textContent = '';
   let current = await preferences.get();
   let bindings = mergeBindings(current.shortcutBindings);
   const platform: ShortcutPlatform = /Mac/.test(page.defaultView?.navigator.platform || '') ? 'mac' : 'other';

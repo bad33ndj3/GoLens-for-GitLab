@@ -1,6 +1,6 @@
 # Prepare architecture storage reset
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 17, 21
 
 ## Acceptance criteria
@@ -12,3 +12,15 @@ Blocked by: 17, 21
 - Preserve accessibility, focus, reduced motion, and staged setup behavior.
 - Cover fresh, completed, interrupted, repeated, dismissed, acknowledged, and updated installations.
 - Keep the reset inactive until the atomic switch.
+
+## Answer
+
+The worker now owns one serialized architecture-epoch reset across synchronized
+preferences, Go Intelligence storage, and local user data. Every rewrite entry
+waits for it before reading storage, and the reset remains inactive until the
+switch ticket selects the prepared epoch.
+
+The first supported review shows the approved accessible upgrade notice before
+normal setup. Dismissal leaves it pending; Continue acknowledges it. Contract
+coverage exercises fresh, completed, interrupted, repeated, dismissed,
+acknowledged, and updated states.

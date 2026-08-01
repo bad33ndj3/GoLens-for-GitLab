@@ -13,6 +13,7 @@ test('settings entry saves preferences and renders the complete feature catalog'
     document: window.document,
     preferences: { get: async () => ({ enabled: true, hideGeneratedFiles: false, shortcutCoachEnabled: true, shortcutBindings: {} }), set: async (value) => updates.push(value), subscribe: () => () => {} },
     request: async (type) => { requests.push(type); return type === 'golens:rewrite:state' ? { cache: { bytes: 0 } } : { cache: { bytes: 0 } }; },
+    ensureStorage: async () => {},
     access: { list: async () => [], add: async () => {}, remove: async () => {} },
   });
 

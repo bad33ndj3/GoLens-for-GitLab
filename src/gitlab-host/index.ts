@@ -215,5 +215,5 @@ export function createGitLabHost(options: GitLabHostOptions): GitLabHost {
 }
 
 export { createSelfHostedAccess, registerRewriteContentScript } from './access.ts';
-export { showExtensionSettings, showFeatureGuide, showFirstRunSetup } from './surfaces.ts';
+export { showExtensionSettings, showFeatureGuide, showFirstRunSetup, showStorageResetProgress, showUpgradeNotice } from './surfaces.ts';
 export { HostContractError, reviewDescriptor };

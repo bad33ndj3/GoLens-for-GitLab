@@ -16,6 +16,7 @@ test('popup entry exposes enablement, cache state, and settings intentions', asy
       intentions.push(type);
       return type === 'golens:rewrite:state' ? { active: true, cache: { bytes: 1536 }, fullProject: false } : {};
     },
+    ensureStorage: async () => {},
     close: () => {},
   });
 

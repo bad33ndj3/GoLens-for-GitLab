@@ -9,7 +9,7 @@ export type SurfaceIntent =
   | Readonly<{ command: 'toggle-full-file'; path: FullFileControlProjection['path'] }>;
 
 type SurfaceView = Readonly<{
-  mode: 'controls' | 'surface' | 'full-file' | 'setup' | 'guide';
+  mode: 'controls' | 'surface' | 'full-file' | 'upgrade' | 'setup' | 'guide';
   controls: readonly ControlProjection[];
   surfaceProjection: ActiveSurfaceProjection | null;
   fullFile: FullFileControlProjection | null;
@@ -29,6 +29,11 @@ function surfaceTemplate(state: SurfaceView, emit: (detail: SurfaceIntent) => vo
       aria-label="${label} ${control.path}" @click=${() => emit({ command: 'toggle-full-file', path: control.path })}>${control.busy ? 'Loading…' : label}</button>
       ${control.error ? html`<span class="error" role="status">${control.error}</span>` : ''}</span>`;
   }
+  if (state.mode === 'upgrade') return html`<div class="backdrop"><section class="surface" role="dialog" aria-modal="true" aria-labelledby="golens-upgrade-title">
+    <header><h2 id="golens-upgrade-title">GoLens was rebuilt</h2><button type="button" data-close @click=${() => dispatch(new CustomEvent('golens-upgrade-dismiss'))}>Close</button></header>
+    <p>This update reset your GoLens settings, shortcuts, bookmarks, and cached Go source. Your GitLab repositories and GitLab data were not changed.</p>
+    <div class="actions"><button type="button" class="primary" @click=${() => dispatch(new CustomEvent('golens-upgrade-continue'))}>Continue setup</button></div>
+  </section></div>`;
   if (state.mode === 'setup') return html`<div class="backdrop"><section class="surface" role="dialog" aria-modal="true" aria-labelledby="golens-setup-title">
     <header><h2 id="golens-setup-title">Set up GoLens</h2><button type="button" @click=${() => dispatch(new CustomEvent('golens-setup-dismiss'))}>Not now</button></header>
     <p>Choose the two review preferences that matter before you start. These save together when setup finishes.</p>
@@ -56,10 +61,11 @@ function surfaceTemplate(state: SurfaceView, emit: (detail: SurfaceIntent) => vo
 }
 
 function handleSurfaceKeyDown(event: KeyboardEvent, state: SurfaceView, root: ParentNode, activeElement: Element | null, emit: (detail: SurfaceIntent) => void, dispatch: (event: Event) => void): void {
-  if (state.mode !== 'surface' && state.mode !== 'setup' && state.mode !== 'guide') return;
+  if (state.mode !== 'surface' && state.mode !== 'upgrade' && state.mode !== 'setup' && state.mode !== 'guide') return;
   if (event.key === 'Escape') {
     event.preventDefault();
-    if (state.mode === 'setup') dispatch(new CustomEvent('golens-setup-dismiss'));
+    if (state.mode === 'upgrade') dispatch(new CustomEvent('golens-upgrade-dismiss'));
+    else if (state.mode === 'setup') dispatch(new CustomEvent('golens-setup-dismiss'));
     else if (state.mode === 'guide') dispatch(new CustomEvent('golens-guide-dismiss'));
     else emit({ command: 'dismiss-surface' });
     return;
@@ -99,7 +105,7 @@ class GoLensHostSurface extends LitElement {
     @media (prefers-reduced-motion:reduce) { .surface { transition:none; } }
   `;
 
-  mode: 'controls' | 'surface' | 'full-file' | 'setup' | 'guide' = 'controls';
+  mode: 'controls' | 'surface' | 'full-file' | 'upgrade' | 'setup' | 'guide' = 'controls';
   controls: readonly ControlProjection[] = [];
   surfaceProjection: ActiveSurfaceProjection | null = null;
   fullFile: FullFileControlProjection | null = null;
@@ -119,12 +125,12 @@ class GoLensHostSurface extends LitElement {
   }
 
   protected override updated(): void {
-    if ((this.mode === 'surface' || this.mode === 'setup' || this.mode === 'guide') && !this.shadowRoot?.activeElement) this.renderRoot.querySelector<HTMLElement>('[data-close],button,select')?.focus();
+    if ((this.mode === 'surface' || this.mode === 'upgrade' || this.mode === 'setup' || this.mode === 'guide') && !this.shadowRoot?.activeElement) this.renderRoot.querySelector<HTMLElement>('[data-close],button,select')?.focus();
   }
 
   override disconnectedCallback(): void {
     this.#lifecycle.abort();
-    if ((this.mode === 'surface' || this.mode === 'setup' || this.mode === 'guide') && this.#returnFocus?.isConnected) this.#returnFocus.focus();
+    if ((this.mode === 'surface' || this.mode === 'upgrade' || this.mode === 'setup' || this.mode === 'guide') && this.#returnFocus?.isConnected) this.#returnFocus.focus();
     this.#returnFocus = null;
     super.disconnectedCallback();
   }
@@ -170,7 +176,7 @@ function createUnregistered(hostDocument: Document): HTMLElement {
     if (scheduled) return;
     scheduled = true;
     updateComplete = new Promise<void>((resolve) => { resolveUpdate = resolve; });
-    queueMicrotask(() => { scheduled = false; render(template(), root); resolveUpdate(); if (state.mode === 'surface' || state.mode === 'setup' || state.mode === 'guide') root.querySelector<HTMLElement>('[data-close],button,select')?.focus(); });
+    queueMicrotask(() => { scheduled = false; render(template(), root); resolveUpdate(); if (state.mode === 'surface' || state.mode === 'upgrade' || state.mode === 'setup' || state.mode === 'guide') root.querySelector<HTMLElement>('[data-close],button,select')?.focus(); });
   };
   for (const key of Object.keys(state)) Object.defineProperty(host, key, { get: () => state[key], set: (value) => { state[key] = value; schedule(); } });
   Object.defineProperty(host, 'updateComplete', { get: () => updateComplete });
@@ -191,6 +197,13 @@ export function activeSurface(hostDocument: Document, projection: ActiveSurfaceP
   host.mode = 'surface';
   host.surfaceProjection = projection;
   return host;
+}
+
+export function showStorageResetProgress(hostDocument: Document): () => void {
+  const host = activeSurface(hostDocument, { kind: 'status', title: 'Finishing the GoLens update…' });
+  host.id = 'golens-storage-reset-root';
+  hostDocument.documentElement.append(host);
+  return () => host.remove();
 }
 
 export function fullFileSurface(hostDocument: Document, projection: FullFileControlProjection): HTMLElement {
@@ -245,6 +258,25 @@ export function showFirstRunSetup(hostDocument: Document, features: readonly Rea
     host.addEventListener('golens-setup-complete', (event) => finish((event as CustomEvent).detail), { once: true });
     host.addEventListener('golens-setup-dismiss', () => finish(null), { once: true });
     if (signal.aborted) finish(null); else signal.addEventListener('abort', () => finish(null), { once: true });
+  });
+}
+
+export function showUpgradeNotice(hostDocument: Document, signal: AbortSignal): Promise<boolean> {
+  const host = create(hostDocument);
+  host.id = 'golens-onboarding-root';
+  host.mode = 'upgrade';
+  hostDocument.documentElement.append(host);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (continued: boolean) => {
+      if (settled) return;
+      settled = true;
+      host.remove();
+      resolve(continued);
+    };
+    host.addEventListener('golens-upgrade-continue', () => finish(true), { once: true });
+    host.addEventListener('golens-upgrade-dismiss', () => finish(false), { once: true });
+    if (signal.aborted) finish(false); else signal.addEventListener('abort', () => finish(false), { once: true });
   });
 }
 

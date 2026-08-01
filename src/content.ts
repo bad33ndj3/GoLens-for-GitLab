@@ -1,10 +1,11 @@
 import { repositoryPath, type SourceIdentity } from './domain.ts';
 import { featuresFor } from './feature-catalog.ts';
-import { createGitLabHost, showExtensionSettings, showFeatureGuide, showFirstRunSetup, type BoundGitLabHost, type GitLabHost, type HostReadValue, type ReviewDescriptor, type ShortcutProjection } from './gitlab-host/index.ts';
+import { createGitLabHost, showExtensionSettings, showFeatureGuide, showFirstRunSetup, showStorageResetProgress, showUpgradeNotice, type BoundGitLabHost, type GitLabHost, type HostReadValue, type ReviewDescriptor, type ShortcutProjection } from './gitlab-host/index.ts';
 import { openGoIntelligence, type Coverage, type CoverageRequest, type GoIntelligence, type SourceContent, type SourceReader } from './go-intelligence/index.ts';
 import { startReviewSession, type ReviewSessionHandle, type ReviewSessionPreferences } from './review-session/index.ts';
 import { ACTIONS, mergeBindings, presetBindings, presetForBindings, type ShortcutPlatform } from './shortcuts.ts';
 import { createUserStorage } from './user-storage.ts';
+import { acknowledgeUpgradeNotice as acknowledgeStoredUpgrade, ensureStorageReady, type StorageResetState } from './storage-reset.ts';
 
 const COMMANDS = {
   focusFileSearch: 'focus-file-search', clearFileSearch: 'clear-file-search', semanticJump: 'semantic-jump',
@@ -12,7 +13,7 @@ const COMMANDS = {
   previousFile: 'previous-file', nextFile: 'next-file', historyBack: 'history-back', historyForward: 'history-forward',
   toggleBookmark: 'toggle-bookmark', previousBookmark: 'previous-bookmark', nextBookmark: 'next-bookmark',
 } as const;
-const REWRITE_ONBOARDING_VERSION = 12;
+const REWRITE_ONBOARDING_VERSION = 13;
 
 type StoredPreferences = Readonly<{ enabled: boolean; hideGeneratedFiles: boolean; shortcutBindings: Readonly<Record<string, string>> }>;
 
@@ -125,6 +126,10 @@ export async function startContentEntry({
   openSettings = () => showExtensionSettings(pageWindow, runtime.getURL('settings.html')),
   showGuide = () => showFeatureGuide(pageWindow.document, featuresFor('guide')),
   showSetup = (signal: AbortSignal, hideGeneratedFiles: boolean, preset: string) => showFirstRunSetup(pageWindow.document, featuresFor('setup'), hideGeneratedFiles, preset, signal),
+  showUpgrade = (signal: AbortSignal) => showUpgradeNotice(pageWindow.document, signal),
+  ensureStorage = () => ensureStorageReady(runtime),
+  acknowledgeUpgradeNotice = () => acknowledgeStoredUpgrade(runtime),
+  showUpdate = () => showStorageResetProgress(pageWindow.document),
 }: {
   window?: Window;
   runtime?: typeof chrome.runtime;
@@ -135,8 +140,13 @@ export async function startContentEntry({
   openSettings?: () => unknown;
   showGuide?: () => unknown;
   showSetup?: (signal: AbortSignal, hideGeneratedFiles: boolean, preset: string) => Promise<Readonly<{ preset: string; hideGeneratedFiles: boolean }> | null>;
+  showUpgrade?: (signal: AbortSignal) => Promise<boolean>;
+  ensureStorage?: () => Promise<StorageResetState>;
+  acknowledgeUpgradeNotice?: () => Promise<void>;
+  showUpdate?: () => () => void;
 } = {}): Promise<ReviewSessionHandle> {
-  void runtime.sendMessage({ type: 'golens:rewrite:ping' }).catch(() => {});
+  const closeUpdate = showUpdate();
+  const resetState = await ensureStorage().finally(closeUpdate);
   const controller = new AbortController();
   const platform: ShortcutPlatform = /Mac/.test(pageWindow.navigator.platform) ? 'mac' : 'other';
   let active: { intelligence: GoIntelligence; signal: AbortSignal; progress?: unknown; fullProject: boolean } | null = null;
@@ -144,6 +154,8 @@ export async function startContentEntry({
   let preferences = await storage.preferences.get();
   let onboardingVersion = await storage.onboarding.get();
   let setupRunning = false;
+  let upgradeNoticePending = resetState.upgradeNoticePending;
+  let upgradeDismissed = false;
   const preferenceListeners = new Set<(value: ReviewSessionPreferences) => void>();
   const unsubscribePreferences = storage.preferences.subscribe((next) => {
     preferences = next;
@@ -151,10 +163,18 @@ export async function startContentEntry({
     for (const listener of preferenceListeners) listener(projected);
   });
   const startSetup = (signal: AbortSignal) => {
-    if (onboardingVersion >= REWRITE_ONBOARDING_VERSION || setupRunning) return;
+    if (setupRunning || upgradeDismissed || (!upgradeNoticePending && onboardingVersion >= REWRITE_ONBOARDING_VERSION)) return;
     setupRunning = true;
     void (async () => {
       try {
+        if (upgradeNoticePending) {
+          const continued = await showUpgrade(signal);
+          if (signal.aborted) return;
+          if (!continued) { upgradeDismissed = true; return; }
+          try { await acknowledgeUpgradeNotice(); } catch (error) { upgradeDismissed = true; throw error; }
+          upgradeNoticePending = false;
+        }
+        if (onboardingVersion >= REWRITE_ONBOARDING_VERSION) return;
         const choice = await showSetup(signal, preferences.hideGeneratedFiles, presetForBindings(preferences.shortcutBindings) || 'custom');
         if (signal.aborted) return;
         if (choice) {
@@ -167,7 +187,7 @@ export async function startContentEntry({
         onboardingVersion = REWRITE_ONBOARDING_VERSION;
       } finally {
         setupRunning = false;
-        if (onboardingVersion < REWRITE_ONBOARDING_VERSION && active && !active.signal.aborted) startSetup(active.signal);
+        if ((upgradeNoticePending || onboardingVersion < REWRITE_ONBOARDING_VERSION) && active && !active.signal.aborted) startSetup(active.signal);
       }
     })().catch(() => {});
   };
