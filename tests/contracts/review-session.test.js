@@ -498,3 +498,53 @@ test('Review Session terminates when an asynchronous dependency breaks its contr
   assert.equal(projections.at(-1).status, 'GoLens stopped after an internal error.');
   await session.stop();
 });
+
+test('Review Session keeps expected Coverage unavailability bounded', async () => {
+  const stream = events();
+  const projections = [];
+  const session = startReviewSession({
+    host: hostFor(stream, { projections, reads: [() => ({ kind: 'unavailable', reason: 'offline' })] }),
+    intelligence: { query: async () => assert.fail('no semantic query expected'), ensureCoverage: async () => assert.fail('no Coverage mutation expected') },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'cache-related' });
+  await tick();
+  assert.equal(projections.at(-1).status, 'Related package cache is unavailable.');
+  stream.emit({ type: 'host-revised', revision: 2, surface: 'changes' });
+  await tick();
+  assert.equal(projections.at(-1).revision, 2, 'routine unavailability must not terminate the session');
+  await session.stop();
+});
+
+test('Review Session exposes ambiguous choices and external documentation safely', async () => {
+  const stream = events();
+  const projections = [];
+  const actions = [];
+  let external = false;
+  const target = { revision: 1, token: 'target', path: repositoryPath('pkg/use.go'), side: 'new', line: 2, column: 5, occurrence: 1, identifier: 'Target', source };
+  const identity = (path, line) => ({ source, path: repositoryPath(path), line, column: 1, kind: 'function', name: 'Target' });
+  const session = startReviewSession({
+    host: hostFor(stream, { projections, actions }),
+    intelligence: { query: async (request) => external
+      ? { status: 'external', packageKind: 'standard-library', importPath: 'net/http', symbol: 'Client', source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] } }
+      : { status: 'ambiguous', reason: 'multiple-definitions', candidates: [
+        { signature: 'func Target()', identity: identity('pkg/a.go', 3), documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' },
+        { signature: 'func Target()', identity: identity('pkg/b.go', 4), documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' },
+      ], source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [String(request.path)] } } },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
+  await tick();
+  assert.equal(projections.at(-1).surface.actions.length, 2);
+
+  external = true;
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
+  await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: 'external-documentation' });
+  await tick();
+  assert.equal(actions.at(-1).action, 'open-destination');
+  assert.equal(actions.at(-1).destination.url, 'https://pkg.go.dev/net/http#Client');
+  await session.stop();
+});

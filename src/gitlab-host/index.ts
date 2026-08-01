@@ -80,6 +80,7 @@ export type DiffTarget = Readonly<{
   line: number;
   column?: number;
   identifier?: string;
+  occurrence?: number;
   source: SourceIdentity;
 }>;
 

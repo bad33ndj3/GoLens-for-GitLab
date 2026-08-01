@@ -117,7 +117,12 @@ export function runReviewSession({
     const files = await host.read({ operation: 'go-files', source: {
       repositoryKey: host.review.identity.repositoryKey, commitSha: host.review.identity.headSha,
     }, scope: { kind: 'changed-review' } }, signal);
-    if (files.kind !== 'ok' || !('files' in files.value)) throw new Error('Changed Go files are unavailable.');
+    if (files.kind !== 'ok') {
+      await dispatch({ type: 'coverage-completed', sessionId, revision: effect.revision, operationId: effect.operationId,
+        outcome: { status: 'unavailable', source: { repositoryKey: host.review.identity.repositoryKey, commitSha: host.review.identity.headSha }, snapshot: '' } });
+      return;
+    }
+    if (!('files' in files.value)) throw new TypeError('Go files read returned the wrong value.');
     const outcome: CoverageOutcome = await intelligence.ensureCoverage({ goal: 'related-review', changedPaths: files.value.files.map(({ path }) => path) }, (progress) => {
       if (current(effect.revision)) void dispatch({ type: 'coverage-progress', sessionId, revision: effect.revision, operationId: effect.operationId, progress });
     }, signal);

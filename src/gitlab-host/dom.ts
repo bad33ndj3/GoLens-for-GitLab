@@ -220,8 +220,18 @@ export function createGitLabPage({
         commitSha: old ? review.refs.startSha || review.refs.baseSha : review.identity.headSha,
       });
       const identifier = node.textContent?.trim();
+      const codeCell = node.closest('.line_content,[data-testid="diff-line-content"],[role="gridcell"]') || cell;
+      let column = 1;
+      let occurrence = 0;
+      if (identifier && codeCell && codeCell !== node) {
+        const walker = document.createTreeWalker(codeCell, (window as unknown as { NodeFilter: typeof NodeFilter }).NodeFilter.SHOW_TEXT);
+        let text = walker.nextNode();
+        while (text && !node.contains(text)) { column += text.textContent?.length || 0; text = walker.nextNode(); }
+        const rendered = [...codeCell.querySelectorAll('*')].filter((candidate) => candidate.textContent?.trim() === identifier);
+        occurrence = Math.max(0, rendered.findIndex((candidate) => candidate === node || candidate.contains(node)));
+      }
       return Object.freeze({ revision, token, path, side: old ? 'old' : 'new', line,
-        ...(identifier && /^[A-Za-z_]\w*$/.test(identifier) ? { identifier } : {}), source });
+        ...(identifier && /^[A-Za-z_]\w*$/.test(identifier) ? { identifier, column, occurrence } : {}), source });
     }
 
     function removeProjection(): void {
