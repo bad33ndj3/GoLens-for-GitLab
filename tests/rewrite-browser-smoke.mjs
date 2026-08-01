@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
@@ -254,6 +254,17 @@ try {
     clearInterval(timer);
     return maximum;
   });
+  const performanceOutput = join(root, 'dist', 'performance');
+  await mkdir(performanceOutput, { recursive: true });
+  await writeFile(join(performanceOutput, 'streamed-diff.json'), `${JSON.stringify({
+    schema: 1,
+    path: 'streamedDiffDelay',
+    metric: 'streamedDiffMaximumDelayMs',
+    statistic: 'maximum',
+    rewrite: maximumDelay,
+    budget: 40,
+    passed: maximumDelay < 40,
+  }, null, 2)}\n`);
   assert.ok(maximumDelay < 40, `rewrite stalled streamed diff rendering for ${maximumDelay.toFixed(1)}ms`);
 
   console.log('Rewrite Playwright parity passed.');

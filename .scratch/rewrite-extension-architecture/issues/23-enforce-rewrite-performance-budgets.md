@@ -1,6 +1,6 @@
 # Enforce rewrite performance budgets
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 22
 
 ## Acceptance criteria
@@ -12,3 +12,10 @@ Blocked by: 22
 - Validate correctness and completeness before sampling.
 - Emit per-path machine-readable reports without a combined score.
 - Rerun the complete paired comparison, never only one side.
+
+## Answer
+
+CI now runs ten fresh-process legacy/rewrite pairs against the same validated
+fixtures, gates each path independently using the accepted relative and
+absolute budgets, and uploads the resulting JSON reports. The Playwright smoke
+also records and enforces the streamed-diff delay budget.

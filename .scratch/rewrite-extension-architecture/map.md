@@ -57,7 +57,7 @@ None currently. New fog should be recorded here only when a frontier decision ex
 - [Implement Review Session orchestration](issues/20-implement-review-session-orchestration.md) — resolved.
 - [Compose rewrite extension entries](issues/21-compose-rewrite-extension-entries.md) — resolved.
 - [Add Playwright rewrite parity coverage](issues/22-add-playwright-rewrite-parity-coverage.md) — resolved.
-- [Enforce rewrite performance budgets](issues/23-enforce-rewrite-performance-budgets.md).
+- [Enforce rewrite performance budgets](issues/23-enforce-rewrite-performance-budgets.md) — resolved.
 - [Prepare architecture storage reset](issues/24-prepare-architecture-storage-reset.md).
 - [Switch all extension entries to rewrite](issues/25-switch-all-extension-entries-to-rewrite.md).
 - [Remove legacy runtime and harness](issues/26-remove-legacy-runtime-and-harness.md).

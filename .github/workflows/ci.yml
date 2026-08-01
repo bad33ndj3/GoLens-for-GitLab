@@ -54,10 +54,21 @@ jobs:
       - name: Run syntax, type, architecture, unit, and build checks
         run: npm run check:syntax && npm run typecheck && npm run check:imports && npm test && npm run build
 
+      - name: Enforce paired performance budgets
+        run: npm run check:performance
+
       - name: Run browser smoke
         run: |
           npm run test:rewrite-browser
           npm run test:browser || npm run test:browser
+
+      - name: Retain performance reports
+        if: ${{ always() && hashFiles('dist/performance/*.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-reports
+          path: dist/performance/*.json
+          if-no-files-found: error
 
       - name: Verify package versions match
         run: |

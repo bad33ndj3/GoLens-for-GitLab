@@ -8,7 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SAMPLE_FLAG = '--sample';
 const DEFAULT_SAMPLES = 5;
 
-function percentile(values, fraction) {
+export function percentile(values, fraction) {
   const sorted = [...values].sort((left, right) => left - right);
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
 }
@@ -22,7 +22,7 @@ function summary(values) {
   };
 }
 
-function goProject() {
+export function goProject() {
   const files = [{
     path: 'contracts/runner.go',
     source: `package contracts
@@ -59,14 +59,14 @@ ${Array.from({ length: 195 }, (_value, functionIndex) => (
   return files;
 }
 
-function blobID(source) {
+export function blobID(source) {
   return createHash('sha1')
     .update(`blob ${Buffer.byteLength(source)}\0`)
     .update(source)
     .digest('hex');
 }
 
-async function parserInstance() {
+export async function parserInstance() {
   const { Parser, Language } = await import('web-tree-sitter');
   await Parser.init();
   const parser = new Parser();
@@ -74,7 +74,7 @@ async function parserInstance() {
   return parser;
 }
 
-function queryPosition(file, needle, identifier = needle) {
+export function queryPosition(file, needle, identifier = needle) {
   const lines = file.source.split('\n');
   const lineIndex = lines.findIndex((line) => line.includes(needle));
   assert.notEqual(lineIndex, -1, `missing benchmark query ${needle}`);
@@ -85,7 +85,7 @@ function queryPosition(file, needle, identifier = needle) {
   };
 }
 
-function timedQueries(iterations, query) {
+export function timedQueries(iterations, query) {
   const samples = [];
   for (let iteration = 0; iteration < iterations; iteration++) {
     const startedAt = performance.now();
@@ -196,7 +196,7 @@ async function semanticSample() {
   };
 }
 
-function rapidDiff(fileIndex, linesPerFile) {
+export function rapidDiff(fileIndex, linesPerFile) {
   const lines = Array.from({ length: linesPerFile }, (_value, lineIndex) => `
     <tr>
       <td class="new_line"><a aria-label="Added line ${lineIndex + 1}">${lineIndex + 1}</a></td>
@@ -215,7 +215,7 @@ function rapidDiff(fileIndex, linesPerFile) {
     </diff-file>`;
 }
 
-async function waitFor(check, message, timeoutMs = 10000) {
+export async function waitFor(check, message, timeoutMs = 10000) {
   const deadline = performance.now() + timeoutMs;
   while (performance.now() < deadline) {
     if (check()) return;
@@ -301,33 +301,7 @@ async function domSample() {
 async function runSample() {
   const semantic = await semanticSample();
   const dom = await domSample();
-  return { ...semantic, ...dom };
-}
-
-if (process.argv.includes(SAMPLE_FLAG)) {
-  try {
-    console.log(JSON.stringify(await runSample()));
-    process.exit(0);
-  } catch (error) {
-    console.error(error?.stack || error);
-    process.exit(1);
-  }
-}
-
-const requestedSamples = Number(process.env.GOLENS_PERF_SAMPLES || DEFAULT_SAMPLES);
-const sampleCount = Number.isInteger(requestedSamples) && requestedSamples > 0 ? requestedSamples : DEFAULT_SAMPLES;
-const samples = [];
-for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
-  const child = spawnSync(process.execPath, ['--expose-gc', fileURLToPath(import.meta.url), SAMPLE_FLAG], {
-    cwd: root,
-    encoding: 'utf8',
-    timeout: 120000,
-  });
-  if (child.status !== 0) {
-    process.stderr.write(child.stderr || child.stdout);
-    process.exit(child.status || 1);
-  }
-  samples.push(JSON.parse(child.stdout.trim()));
+  return { complete: true, ...semantic, ...dom };
 }
 
 const metricNames = [
@@ -342,27 +316,52 @@ const metricNames = [
   'fullProjectCacheProcessingMs',
   'semanticHeapDeltaBytes',
 ];
-const report = {
-  schema: 1,
-  runtime: {
-    node: process.version,
-    platform: `${process.platform}-${process.arch}`,
-    samples: sampleCount,
-  },
-  workload: {
-    diffFiles: samples[0].diffFiles,
-    diffLines: samples[0].diffLines,
-    projectFiles: samples[0].projectFiles,
-    projectLines: samples[0].projectLines,
-    projectSourceBytes: samples[0].projectSourceBytes,
-    relatedFiles: samples[0].relatedFiles,
-  },
-  metrics: Object.fromEntries(metricNames.map((name) => [name, summary(samples.map((sample) => sample[name]))])),
-  boundaries: {
-    dom: 'Happy DOM runs the real legacy content script; GitLab rendering time is excluded.',
-    semantic: 'Tree-sitter parsing, indexing, hover resolution, and implementation lookup use the real semantic core.',
-    cache: 'Measures source hashing, snapshot processing, restore, and indexing; network and IndexedDB latency are excluded.',
-    memory: 'Heap delta after forced GC measures retained semantic index data, not total Chromium or extension-process memory.',
-  },
-};
-console.log(JSON.stringify(report, null, 2));
+async function main() {
+  if (process.argv.includes(SAMPLE_FLAG)) {
+    console.log(JSON.stringify(await runSample()));
+    return;
+  }
+  const requestedSamples = Number(process.env.GOLENS_PERF_SAMPLES || DEFAULT_SAMPLES);
+  const sampleCount = Number.isInteger(requestedSamples) && requestedSamples > 0 ? requestedSamples : DEFAULT_SAMPLES;
+  const samples = [];
+  for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+    const child = spawnSync(process.execPath, ['--expose-gc', fileURLToPath(import.meta.url), SAMPLE_FLAG], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 120000,
+    });
+    if (child.status !== 0) throw new Error(child.stderr || child.stdout || 'legacy performance sample failed');
+    samples.push(JSON.parse(child.stdout.trim()));
+  }
+  const report = {
+    schema: 1,
+    runtime: {
+      node: process.version,
+      platform: `${process.platform}-${process.arch}`,
+      samples: sampleCount,
+    },
+    workload: {
+      diffFiles: samples[0].diffFiles,
+      diffLines: samples[0].diffLines,
+      projectFiles: samples[0].projectFiles,
+      projectLines: samples[0].projectLines,
+      projectSourceBytes: samples[0].projectSourceBytes,
+      relatedFiles: samples[0].relatedFiles,
+    },
+    metrics: Object.fromEntries(metricNames.map((name) => [name, summary(samples.map((sample) => sample[name]))])),
+    boundaries: {
+      dom: 'Happy DOM runs the real legacy content script; GitLab rendering time is excluded.',
+      semantic: 'Tree-sitter parsing, indexing, hover resolution, and implementation lookup use the real semantic core.',
+      cache: 'Measures source hashing, snapshot processing, restore, and indexing; network and IndexedDB latency are excluded.',
+      memory: 'Heap delta after forced GC measures retained semantic index data, not total Chromium or extension-process memory.',
+    },
+  };
+  console.log(JSON.stringify(report, null, 2));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main().catch((error) => {
+    console.error(error?.stack || error);
+    process.exit(1);
+  });
+}
