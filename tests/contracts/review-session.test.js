@@ -80,7 +80,7 @@ test('Review Session waits for fullscreen confirmation and reconciles the comple
   const actions = [];
   const session = startReviewSession({
     host: hostFor(stream, { projections, actions }),
-    intelligence: { query: async () => assert.fail('no semantic query expected') },
+    intelligence: { query: async () => ({ status: 'missing', reason: 'identifier', source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] } }) },
     preferences: { enabled: true, hideGeneratedFiles: true },
   });
 
@@ -152,7 +152,7 @@ test('Review Session loads and toggles private MR-local bookmarks through its po
   };
   const session = startReviewSession({
     host: hostFor(stream, { projections }),
-    intelligence: { query: async () => assert.fail('no semantic query expected') },
+    intelligence: { query: async () => ({ status: 'missing', reason: 'identifier', source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] } }) },
     bookmarks: {
       list: async () => [record],
       toggle: async (input) => { toggles.push(input); return { action: 'added', record }; },
@@ -398,9 +398,9 @@ test('Review Session keeps semantic choices and confirmed review milestones insi
     intelligence: {
       async query(request) {
         const context = { source, snapshot: 'stable', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] } };
-        if (request.operation === 'find-references') return { ...context, status: 'references', symbol: request.symbol, locations: [
-          { path: first.path, line: first.line, column: 1 }, { path: second.path, line: second.line, column: 1 },
-        ] };
+        if (request.operation === 'find-references') return request.pageToken
+          ? { ...context, status: 'references', symbol: request.symbol, locations: [{ path: second.path, line: second.line, column: 1 }] }
+          : { ...context, status: 'references', symbol: request.symbol, locations: [{ path: first.path, line: first.line, column: 1 }], nextPageToken: 'next' };
         if (request.path === definition.path) return { ...context, status: 'resolved', isDefinition: true, symbol: { signature: 'func Target()', identity: symbol, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } };
         return { ...context, status: 'missing', reason: 'identifier' };
       },
@@ -417,7 +417,7 @@ test('Review Session keeps semantic choices and confirmed review milestones insi
   await tick();
   await tick();
   assert.equal(projections.at(-1).surface.actions.length, 2);
-  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: `destination:${second.token}` });
+  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: 'destination:1' });
   await tick();
   assert.equal(actions.at(-1).target.token, second.token);
 
@@ -454,6 +454,9 @@ test('Review Session reveals an untouched loaded semantic destination by Source 
   assert.deepEqual({ action: actions.at(-1).action, path: actions.at(-1).path, line: actions.at(-1).line }, {
     action: 'reveal-source', path: definitionPath, line: 3,
   });
+  stream.emit({ type: 'intent', revision: 1, command: 'history-back' });
+  await tick();
+  assert.equal(actions.at(-1).target.token, usage.token);
   await session.stop();
 });
 
@@ -476,5 +479,22 @@ test('Review Session terminates on a broken Host contract and leaves one bounded
   await tick();
   assert.equal(projections.at(-1).status, 'GoLens stopped after an internal error.');
   assert.equal(unsubscribed, true);
+  await session.stop();
+});
+
+test('Review Session terminates when an asynchronous dependency breaks its contract', async () => {
+  const stream = events();
+  const projections = [];
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: { query: async () => { throw new Error('broken Intelligence invariant'); } },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: {
+    revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source,
+  } });
+  await tick();
+  assert.equal(projections.at(-1).status, 'GoLens stopped after an internal error.');
   await session.stop();
 });

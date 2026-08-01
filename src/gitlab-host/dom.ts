@@ -332,7 +332,21 @@ export function createGitLabPage({
 
     function relativeElements(kind: 'occurrence' | 'hunk' | 'file' | 'bookmark'): Element[] {
       if (kind === 'file') return fileRoots(document);
-      if (kind === 'hunk') return [...document.querySelectorAll('[data-hunk],.diff-content,.diff-expanded')];
+      if (kind === 'hunk') {
+        const explicit = [...document.querySelectorAll('[data-hunk-lines],.diff-hunk,[data-testid="diff-hunk"],[data-testid="rd-diff-hunk"]')];
+        if (explicit.length) return explicit;
+        const hunks: Element[] = [];
+        for (const file of fileRoots(document)) {
+          let previousChanged = false;
+          for (const row of file.querySelectorAll('tr,[role="row"]')) {
+            const changed = row.matches('.new,.old,.added,.deleted,[data-hunk-lines]')
+              || Boolean(row.querySelector('.new,.old,.added,.deleted,[data-hunk-lines]'));
+            if (changed && !previousChanged) hunks.push(row);
+            previousChanged = changed;
+          }
+        }
+        return hunks;
+      }
       return [...document.querySelectorAll(kind === 'occurrence' ? '[data-golens-occurrence]' : '[data-golens-bookmark]')];
     }
 
@@ -385,6 +399,7 @@ export function createGitLabPage({
           const index = current < 0 ? (action.direction === 'previous' ? candidates.length - 1 : 0)
             : (current + (action.direction === 'previous' ? candidates.length - 1 : 1)) % candidates.length;
           const destination = candidates[index]!;
+          document.querySelectorAll('[data-golens-destination]').forEach((element) => element.removeAttribute('data-golens-destination'));
           destination.scrollIntoView?.({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
           destination.setAttribute('data-golens-destination', '');
         }

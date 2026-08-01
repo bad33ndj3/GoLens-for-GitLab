@@ -19,7 +19,11 @@ type SemanticWork = Readonly<{
   purpose: 'hover' | 'select' | 'activate' | 'selection' | 'continuation';
   request: SemanticQuery;
   expectedSnapshot?: SemanticSnapshotRevision;
+  locations?: readonly SourceLocation[];
 }>;
+
+type NavigationLocation = Readonly<{ source: DiffTarget['source']; path: DiffTarget['path']; line: number }>;
+type HistoryPoint = DiffTarget | NavigationLocation;
 
 export type SessionState = Readonly<{
   sessionId: string;
@@ -36,13 +40,14 @@ export type SessionState = Readonly<{
   cacheOperationId: number | undefined;
   bookmarkOperationId: number | undefined;
   reviewOperationId: number | undefined;
+  navigationOperationId: number | undefined;
   selected: DiffTarget | undefined;
   targets: readonly DiffTarget[];
   occurrences: readonly SourceLocation[];
   fullFileControls: readonly FullFileControlProjection[];
-  choices: readonly DiffTarget[];
+  choices: readonly NavigationLocation[];
   bookmarks: readonly SessionBookmark[];
-  history: readonly DiffTarget[];
+  history: readonly HistoryPoint[];
   historyIndex: number;
   status: string | undefined;
   announcement: string | undefined;
@@ -66,6 +71,7 @@ export type SessionEffect =
   | Readonly<{ type: 'load-bookmarks'; operationId: number; revision: HostRevision; open: boolean }>
   | Readonly<{ type: 'toggle-bookmark'; operationId: number; revision: HostRevision; target: DiffTarget }>
   | Readonly<{ type: 'read-review-status'; operationId: number; revision: HostRevision; milestone: 'approval' | 'merge' }>
+  | Readonly<{ type: 'navigate-source'; operationId: number; revision: HostRevision; from: DiffTarget; destination: NavigationLocation }>
   | Readonly<{ type: 'save-enabled'; enabled: boolean }>;
 
 export type SessionRuntimeEvent =
@@ -77,10 +83,11 @@ export type SessionRuntimeEvent =
   | Readonly<{ type: 'coverage-completed'; sessionId: string; revision: HostRevision; operationId: number; outcome: { status: string; source: DiffTarget['source']; snapshot: string } }>
   | Readonly<{ type: 'bookmarks-loaded'; sessionId: string; revision: HostRevision; operationId: number; bookmarks: readonly SessionBookmark[]; open: boolean }>
   | Readonly<{ type: 'bookmark-toggled'; sessionId: string; revision: HostRevision; operationId: number; bookmarks: readonly SessionBookmark[]; action: 'added' | 'removed' }>
-  | Readonly<{ type: 'review-status-read'; sessionId: string; revision: HostRevision; operationId: number; milestone: 'approval' | 'merge'; confirmed: boolean }>;
+  | Readonly<{ type: 'review-status-read'; sessionId: string; revision: HostRevision; operationId: number; milestone: 'approval' | 'merge'; confirmed: boolean }>
+  | Readonly<{ type: 'source-navigation-completed'; sessionId: string; revision: HostRevision; operationId: number; from: DiffTarget; destination: NavigationLocation }>;
 
 function withoutTransient(state: SessionState): SessionState {
-  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, selected: undefined,
+  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, selected: undefined,
     targets: [], occurrences: [], fullFileControls: [], choices: [], bookmarks: [], history: [], historyIndex: -1, status: undefined, announcement: undefined, surface: undefined, destination: undefined });
 }
 
@@ -88,7 +95,7 @@ export function initialSessionState(sessionId: string, source: DiffTarget['sourc
   return Object.freeze({
     sessionId, source, revision: null, enabled: preferences.enabled, hideGeneratedFiles: preferences.hideGeneratedFiles,
     shortcuts: preferences.shortcuts || [], focusMode: false, cacheBusy: false, nextOperationId: 1,
-    semantic: undefined, snapshot: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, selected: undefined,
+    semantic: undefined, snapshot: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, selected: undefined,
     targets: [], occurrences: [], fullFileControls: [], choices: [], bookmarks: [], history: [], historyIndex: -1,
     status: undefined, announcement: undefined, surface: undefined, destination: undefined,
   });
@@ -147,9 +154,10 @@ function remember(state: SessionState, target: DiffTarget): SessionState {
   return Object.freeze({ ...state, targets, selected: target });
 }
 
-function startQuery(state: SessionState, target: DiffTarget, purpose: SemanticWork['purpose'], request: SemanticQuery, expectedSnapshot?: string) {
+function startQuery(state: SessionState, target: DiffTarget, purpose: SemanticWork['purpose'], request: SemanticQuery, expectedSnapshot?: string, locations?: readonly SourceLocation[]) {
   const snapshot = expectedSnapshot || state.snapshot;
-  const work: SemanticWork = Object.freeze({ operationId: state.nextOperationId, target, purpose, request, ...(snapshot ? { expectedSnapshot: snapshot } : {}) });
+  const work: SemanticWork = Object.freeze({ operationId: state.nextOperationId, target, purpose, request,
+    ...(snapshot ? { expectedSnapshot: snapshot } : {}), ...(locations ? { locations } : {}) });
   return result(Object.freeze({ ...state, semantic: work, nextOperationId: state.nextOperationId + 1, status: purpose === 'hover' ? undefined : 'Resolving Go symbol…' }), [{ type: 'query', ...work }]);
 }
 
@@ -158,6 +166,13 @@ function navigate(state: SessionState, from: DiffTarget, destination: DiffTarget
   const operationId = state.nextOperationId;
   return result(Object.freeze({ ...state, selected: destination, destination: destination.token, history, historyIndex: history.length - 1,
     nextOperationId: operationId + 1, status: undefined }), [{ type: 'perform', action: 'reveal-target', target: destination, operationId }]);
+}
+
+function navigateSource(state: SessionState, from: DiffTarget, destination: NavigationLocation) {
+  const operationId = state.nextOperationId;
+  return result(Object.freeze({ ...state, navigationOperationId: operationId, nextOperationId: operationId + 1, status: undefined }), [{
+    type: 'navigate-source', operationId, revision: from.revision, from, destination,
+  }]);
 }
 
 function semanticStatus(outcome: SemanticOutcome): string | undefined {
@@ -172,8 +187,13 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
   const work = state.semantic;
   if (!work || event.sessionId !== state.sessionId || event.operationId !== work.operationId || event.revision !== state.revision
     || !sameSource(event.outcome.source, state.source) || !sameSource(work.target.source, state.source)
-    || ((work.expectedSnapshot || state.snapshot) && event.outcome.snapshot !== (work.expectedSnapshot || state.snapshot))) return { state, effects: [] };
+    || (event.outcome.status !== 'stale-page' && (work.expectedSnapshot || state.snapshot)
+      && event.outcome.snapshot !== (work.expectedSnapshot || state.snapshot))) return { state, effects: [] };
   const cleared = Object.freeze({ ...state, semantic: undefined, snapshot: event.outcome.snapshot });
+  if (event.outcome.status === 'stale-page' && (work.request.operation === 'find-references' || work.request.operation === 'find-implementations')) {
+    const { pageToken: _pageToken, ...request } = work.request;
+    return startQuery(cleared, work.target, work.purpose, request, event.outcome.snapshot);
+  }
   if (event.outcome.status === 'resolved' && work.purpose === 'select') {
     return startQuery(cleared, work.target, 'selection', { operation: 'find-references', symbol: event.outcome.symbol.identity }, event.outcome.snapshot);
   }
@@ -181,11 +201,7 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
     const destination = targetFor(cleared, event.outcome.symbol.identity, event.outcome.source);
     if (!event.outcome.isDefinition && destination) return navigate(cleared, work.target, destination);
     if (!event.outcome.isDefinition) {
-      const operationId = cleared.nextOperationId;
-      return result(Object.freeze({ ...cleared, nextOperationId: operationId + 1, status: undefined }), [{
-        type: 'perform', action: 'reveal-source', source: event.outcome.source, path: event.outcome.symbol.identity.path,
-        line: event.outcome.symbol.identity.line, operationId,
-      }]);
+      return navigateSource(cleared, work.target, { source: event.outcome.source, path: event.outcome.symbol.identity.path, line: event.outcome.symbol.identity.line });
     }
     const operation = event.outcome.symbol.identity.kind === 'interface' ? 'find-implementations' : 'find-references';
     const request: SemanticQuery = operation === 'find-implementations'
@@ -197,11 +213,21 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
     const locations = event.outcome.status === 'references'
       ? event.outcome.locations
       : event.outcome.candidates.map(({ definition }) => definition.identity);
-    if (work.purpose === 'selection') return result(Object.freeze({ ...cleared, occurrences: locations, announcement: `${locations.length} occurrence${locations.length === 1 ? '' : 's'} selected.` }));
-    const destinations = locations.map((location) => targetFor(cleared, location, event.outcome.source)).filter((target): target is DiffTarget => Boolean(target));
-    if (destinations.length === 1) return navigate(cleared, work.target, destinations[0]!);
-    const surface = Object.freeze({ kind: 'popover' as const, title: 'Go destinations', body: destinations.length ? `${destinations.length} destinations in this diff.` : 'No loaded destination in this diff.',
-      actions: destinations.map(({ token, path, line }) => ({ id: `destination:${token}`, label: `${path}:${line}` })) });
+    const allLocations = [...new Map([...(work.locations || []), ...locations].map((location) => [`${location.path}:${location.line}:${location.column}`, location])).values()];
+    if (event.outcome.nextPageToken) {
+      const request: SemanticQuery = event.outcome.status === 'references'
+        ? { operation: 'find-references', symbol: event.outcome.symbol, pageToken: event.outcome.nextPageToken }
+        : { operation: 'find-implementations', symbol: event.outcome.symbol, pageToken: event.outcome.nextPageToken };
+      return startQuery(cleared, work.target, work.purpose, request, event.outcome.snapshot, allLocations);
+    }
+    if (work.purpose === 'selection') return result(Object.freeze({ ...cleared, occurrences: allLocations, announcement: `${allLocations.length} occurrence${allLocations.length === 1 ? '' : 's'} selected.` }));
+    const destinations = allLocations.map(({ path, line }) => ({ source: event.outcome.source, path, line }));
+    if (destinations.length === 1) {
+      const target = targetFor(cleared, destinations[0]!, event.outcome.source);
+      return target ? navigate(cleared, work.target, target) : navigateSource(cleared, work.target, destinations[0]!);
+    }
+    const surface = Object.freeze({ kind: 'popover' as const, title: 'Go destinations', body: destinations.length ? `${destinations.length} destinations.` : 'No destination found.',
+      actions: destinations.map(({ path, line }, index) => ({ id: `destination:${index}`, label: `${path}:${line}` })) });
     return result(Object.freeze({ ...cleared, choices: destinations, surface, status: semanticStatus(event.outcome) }));
   }
   const status = semanticStatus(event.outcome);
@@ -255,6 +281,11 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.reviewOperationId) return { state, effects: [] };
     return event.confirmed ? result(Object.freeze({ ...state, announcement: `${event.milestone === 'approval' ? 'Approval' : 'Merge'} confirmed.` })) : { state, effects: [] };
   }
+  if (event.type === 'source-navigation-completed') {
+    if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.navigationOperationId) return { state, effects: [] };
+    const history = state.historyIndex >= 0 ? [...state.history.slice(0, state.historyIndex + 1), event.destination] : [event.from, event.destination];
+    return result(Object.freeze({ ...state, history, historyIndex: history.length - 1 }));
+  }
   if (state.revision === null || event.revision !== state.revision) return { state, effects: [] };
   if (event.type === 'fullscreen-changed') return result(Object.freeze({ ...state, focusMode: event.active, status: undefined }));
 
@@ -306,8 +337,11 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     ]);
   }
   if (event.command === 'surface-action') {
-    const target = state.choices.find(({ token }) => event.actionId === `destination:${token}`);
-    return target && state.selected ? navigate(state, state.selected, target) : { state, effects: [] };
+    const index = Number(event.actionId.match(/^destination:(\d+)$/)?.[1]);
+    const destination = Number.isInteger(index) ? state.choices[index] : undefined;
+    if (!destination || !state.selected) return { state, effects: [] };
+    const target = targetFor(state, destination, destination.source);
+    return target ? navigate(state, state.selected, target) : navigateSource(state, state.selected, destination);
   }
   if (event.command === 'native-approve' || event.command === 'native-merge') {
     const operationId = state.nextOperationId;
@@ -328,7 +362,10 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const index = Math.max(0, Math.min(state.history.length - 1, state.historyIndex + (event.command === 'history-back' ? -1 : 1)));
     const target = state.history[index]!;
     const operationId = state.nextOperationId;
-    return result(Object.freeze({ ...state, historyIndex: index, selected: target, destination: target.token, nextOperationId: operationId + 1 }), [{ type: 'perform', action: 'reveal-target', target, operationId }]);
+    if ('token' in target) return result(Object.freeze({ ...state, historyIndex: index, selected: target, destination: target.token, nextOperationId: operationId + 1 }), [{ type: 'perform', action: 'reveal-target', target, operationId }]);
+    return result(Object.freeze({ ...state, historyIndex: index, destination: undefined, nextOperationId: operationId + 1 }), [{
+      type: 'perform', action: 'reveal-source', source: target.source, path: target.path, line: target.line, operationId,
+    }]);
   }
   if (event.command === 'dismiss-surface') {
     return result(Object.freeze({ ...state, choices: [], surface: undefined, status: undefined, announcement: undefined }));

@@ -129,12 +129,24 @@ export function runReviewSession({
       && (effect.milestone === 'merge' ? /merged/i.test(outcome.value.state) : outcome.value.approvers.length > 0);
     await dispatch({ type: 'review-status-read', sessionId, revision: effect.revision, operationId: effect.operationId, milestone: effect.milestone, confirmed });
   };
+  const navigateSource = async (effect: Extract<SessionEffect, { type: 'navigate-source' }>) => {
+    const signal = scoped('action:reveal-source');
+    const outcome = await host.perform({ action: 'reveal-source', ...effect.destination, revision: effect.revision,
+      operationId: `${sessionId}:${effect.operationId}` }, signal);
+    if (outcome.kind === 'completed' || outcome.kind === 'unchanged') {
+      await dispatch({ type: 'source-navigation-completed', sessionId, revision: effect.revision, operationId: effect.operationId,
+        from: effect.from, destination: effect.destination });
+    } else {
+      await host.perform({ action: 'open-destination', destination: { kind: 'source', ...effect.destination }, revision: effect.revision,
+        operationId: `${sessionId}:${effect.operationId}:fallback` }, signal);
+    }
+  };
+
+  let terminate = (_failure = false) => {};
 
   const failed = (effect: SessionEffect) => (error: unknown) => {
     if (aborted(error) || controller.signal.aborted) return;
-    if (effect.type === 'query') void dispatch({ type: 'semantic-failed', sessionId, revision: effect.target.revision, operationId: effect.operationId });
-    if (effect.type === 'cache-related') void dispatch({ type: 'coverage-completed', sessionId, revision: effect.revision, operationId: effect.operationId,
-      outcome: { status: 'unavailable', source: { repositoryKey: host.review.identity.repositoryKey, commitSha: host.review.identity.headSha }, snapshot: '' } });
+    terminate(true);
   };
 
   const run = (effect: SessionEffect) => {
@@ -147,7 +159,8 @@ export function runReviewSession({
             : effect.type === 'load-bookmarks' ? loadBookmarks(effect)
               : effect.type === 'toggle-bookmark' ? toggleBookmark(effect)
                 : effect.type === 'read-review-status' ? readReviewStatus(effect)
-                  : preferencePort ? abortable(preferencePort.set({ enabled: effect.enabled }), scoped('preferences')) : Promise.resolve();
+                  : effect.type === 'navigate-source' ? navigateSource(effect)
+                    : preferencePort ? abortable(preferencePort.set({ enabled: effect.enabled }), scoped('preferences')) : Promise.resolve();
       let tracked: Promise<void>;
       tracked = operation.catch(failed(effect)).finally(() => pending.delete(tracked));
       pending.add(tracked);
@@ -155,7 +168,7 @@ export function runReviewSession({
   };
 
   let unsubscribePreferences: (() => void) | undefined;
-  const terminate = (failure = false) => {
+  terminate = (failure = false) => {
     if (failure && state.revision !== null) host.apply({ revision: state.revision, enabled: true, status: 'GoLens stopped after an internal error.' });
     unsubscribePreferences?.();
     controller.abort();
