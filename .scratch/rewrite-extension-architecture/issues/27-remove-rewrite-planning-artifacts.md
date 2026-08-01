@@ -1,7 +1,7 @@
 # Remove rewrite planning artifacts
 
 Status: ready-for-agent
-Blocked by: 26
+Blocked by: 28
 
 ## Acceptance criteria
 

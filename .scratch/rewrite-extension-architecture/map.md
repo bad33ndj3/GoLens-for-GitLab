@@ -61,7 +61,8 @@ None currently. New fog should be recorded here only when a frontier decision ex
 - [Prepare architecture storage reset](issues/24-prepare-architecture-storage-reset.md) — resolved.
 - [Switch all extension entries to rewrite](issues/25-switch-all-extension-entries-to-rewrite.md).
 - [Remove legacy runtime and harness](issues/26-remove-legacy-runtime-and-harness.md).
-- [Remove rewrite planning artifacts](issues/27-remove-rewrite-planning-artifacts.md) — final cleanup after all durable context has moved out of `.scratch/`.
+- [Review and redesign the rewritten extension experience](issues/28-review-and-redesign-rewrite-experience.md) — final product-work ticket; review the live rewrite with the user, preserve its speed gains, and repair design regressions that impair use.
+- [Remove rewrite planning artifacts](issues/27-remove-rewrite-planning-artifacts.md) — final cleanup after ticket 28 is accepted and all durable context has moved out of `.scratch/`.
 
 ## Out of scope
 
