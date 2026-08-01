@@ -1,5 +1,5 @@
-import type { CoverageProgress, SemanticOutcome, SemanticQuery, SemanticSnapshotRevision, SourceLocation } from '../go-intelligence/index.ts';
-import type { ActiveSurfaceProjection, ControlProjection, DiffTarget, FullFileControlProjection, HostEvent, HostProjection, HostRevision, ShortcutProjection } from '../gitlab-host/index.ts';
+import type { CoverageOutcome, CoverageProgress, SemanticOutcome, SemanticQuery, SemanticSnapshotRevision, SourceLocation } from '../go-intelligence/index.ts';
+import type { ActionOutcome, ActiveSurfaceProjection, BookmarkSelection, ControlProjection, DiffTarget, FullFileControlProjection, HostEvent, HostProjection, HostRevision, ShortcutProjection } from '../gitlab-host/index.ts';
 
 export type SessionBookmark = Readonly<{
   id: string;
@@ -22,12 +22,15 @@ type SemanticWork = Readonly<{
   locations?: readonly SourceLocation[];
 }>;
 
+type SemanticRetry = Readonly<Pick<SemanticWork, 'target' | 'purpose' | 'request'>>;
+
 type NavigationLocation = Readonly<{ source: DiffTarget['source']; path: DiffTarget['path']; line: number }>;
 type HistoryPoint = DiffTarget | NavigationLocation;
 
 export type SessionState = Readonly<{
   sessionId: string;
   source: DiffTarget['source'];
+  oldSource: DiffTarget['source'] | undefined;
   revision: HostRevision | null;
   enabled: boolean;
   hideGeneratedFiles: boolean;
@@ -38,9 +41,12 @@ export type SessionState = Readonly<{
   semantic: SemanticWork | undefined;
   snapshot: SemanticSnapshotRevision | undefined;
   cacheOperationId: number | undefined;
+  queryCoverageOperationId: number | undefined;
+  coverageRetry: SemanticRetry | undefined;
   bookmarkOperationId: number | undefined;
   reviewOperationId: number | undefined;
   navigationOperationId: number | undefined;
+  fullFileOperationId: number | undefined;
   selected: DiffTarget | undefined;
   targets: readonly DiffTarget[];
   occurrences: readonly SourceLocation[];
@@ -70,8 +76,11 @@ export type SessionEffect =
   | (Readonly<{ type: 'perform'; operationId: number }> & PerformEffect)
   | (Readonly<{ type: 'query' }> & SemanticWork)
   | Readonly<{ type: 'cache-related'; operationId: number; revision: HostRevision }>
+  | Readonly<{ type: 'ensure-query-coverage'; operationId: number; revision: HostRevision; retry: SemanticRetry }>
+  | Readonly<{ type: 'cancel-query-coverage' }>
+  | Readonly<{ type: 'cancel-workflows' }>
   | Readonly<{ type: 'load-bookmarks'; operationId: number; revision: HostRevision; open: boolean }>
-  | Readonly<{ type: 'toggle-bookmark'; operationId: number; revision: HostRevision; target: DiffTarget }>
+  | Readonly<{ type: 'toggle-bookmark'; operationId: number; revision: HostRevision; bookmark: BookmarkSelection }>
   | Readonly<{ type: 'read-review-status'; operationId: number; revision: HostRevision; milestone: 'approval' | 'merge' }>
   | Readonly<{ type: 'navigate-source'; operationId: number; revision: HostRevision; from: DiffTarget; destination: NavigationLocation }>
   | Readonly<{ type: 'save-enabled'; enabled: boolean }>;
@@ -83,21 +92,24 @@ export type SessionRuntimeEvent =
   | Readonly<{ type: 'semantic-failed'; sessionId: string; revision: HostRevision; operationId: number }>
   | Readonly<{ type: 'coverage-progress'; sessionId: string; revision: HostRevision; operationId: number; progress: CoverageProgress }>
   | Readonly<{ type: 'coverage-completed'; sessionId: string; revision: HostRevision; operationId: number; outcome: { status: string; source: DiffTarget['source']; snapshot: string } }>
+  | Readonly<{ type: 'query-coverage-progress'; sessionId: string; revision: HostRevision; operationId: number; progress: CoverageProgress }>
+  | Readonly<{ type: 'query-coverage-completed'; sessionId: string; revision: HostRevision; operationId: number; outcome: CoverageOutcome }>
   | Readonly<{ type: 'bookmarks-loaded'; sessionId: string; revision: HostRevision; operationId: number; bookmarks: readonly SessionBookmark[]; open: boolean }>
   | Readonly<{ type: 'bookmark-toggled'; sessionId: string; revision: HostRevision; operationId: number; bookmarks: readonly SessionBookmark[]; action: 'added' | 'removed' }>
   | Readonly<{ type: 'review-status-read'; sessionId: string; revision: HostRevision; operationId: number; milestone: 'approval' | 'merge'; confirmed: boolean }>
-  | Readonly<{ type: 'source-navigation-completed'; sessionId: string; revision: HostRevision; operationId: number; from: DiffTarget; destination: NavigationLocation }>;
+  | Readonly<{ type: 'source-navigation-completed'; sessionId: string; revision: HostRevision; operationId: number; from: DiffTarget; destination: NavigationLocation }>
+  | Readonly<{ type: 'full-file-completed'; sessionId: string; revision: HostRevision; operationId: number; path: DiffTarget['path']; full: boolean; outcome: ActionOutcome }>;
 
 function withoutTransient(state: SessionState): SessionState {
-  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, selected: undefined,
-    targets: [], occurrences: [], fullFileControls: [], choices: [], externalUrl: undefined, bookmarks: [], history: [], historyIndex: -1, status: undefined, announcement: undefined, surface: undefined, destination: undefined });
+  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, selected: undefined,
+    targets: [], occurrences: [], choices: [], externalUrl: undefined, bookmarks: [], history: [], historyIndex: -1, status: undefined, announcement: undefined, surface: undefined, destination: undefined });
 }
 
-export function initialSessionState(sessionId: string, source: DiffTarget['source'], preferences: SessionPreferences): SessionState {
+export function initialSessionState(sessionId: string, source: DiffTarget['source'], preferences: SessionPreferences, oldSource?: DiffTarget['source']): SessionState {
   return Object.freeze({
-    sessionId, source, revision: null, enabled: preferences.enabled, hideGeneratedFiles: preferences.hideGeneratedFiles,
+    sessionId, source, oldSource, revision: null, enabled: preferences.enabled, hideGeneratedFiles: preferences.hideGeneratedFiles,
     shortcuts: preferences.shortcuts || [], focusMode: false, cacheBusy: false, nextOperationId: 1,
-    semantic: undefined, snapshot: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, selected: undefined,
+    semantic: undefined, snapshot: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, selected: undefined,
     targets: [], occurrences: [], fullFileControls: [], choices: [], externalUrl: undefined, bookmarks: [], history: [], historyIndex: -1,
     status: undefined, announcement: undefined, surface: undefined, destination: undefined,
   });
@@ -113,9 +125,13 @@ function targetFor(state: SessionState, location: { path: string; line: number }
 }
 
 function bookmarkTokens(state: SessionState): readonly DiffTarget['token'][] {
-  return state.targets.filter((target) => state.bookmarks.some((bookmark) => bookmark.scope.headSha === target.source.commitSha
+  return state.targets.filter((target) => state.bookmarks.some((bookmark) => bookmark.scope.headSha === state.source.commitSha
     && bookmark.location.path === target.path && bookmark.location.side === target.side
     && target.line >= bookmark.location.startLine && target.line <= bookmark.location.endLine)).map(({ token }) => token);
+}
+
+function idleFullFileControls(controls: readonly FullFileControlProjection[]) {
+  return controls.map(({ busy: _busy, ...control }) => control);
 }
 
 function projection(state: SessionState): HostProjection | null {
@@ -136,8 +152,8 @@ function projection(state: SessionState): HostProjection | null {
     interactiveTargets: state.targets,
     occurrenceLocations: state.occurrences.map((location) => ({ ...location, source: state.source })),
     bookmarks: bookmarkTokens(state),
-    bookmarkLocations: state.bookmarks.filter(({ scope }) => scope.headSha === state.source.commitSha).map(({ location }) => ({
-      source: state.source, path: location.path as DiffTarget['path'], line: location.startLine,
+    bookmarkLocations: state.bookmarks.filter(({ scope, location }) => scope.headSha === state.source.commitSha && (location.side === 'new' || state.oldSource)).map(({ location }) => ({
+      source: location.side === 'old' ? state.oldSource! : state.source, path: location.path as DiffTarget['path'], line: location.startLine,
     })),
     fullFileControls: state.fullFileControls,
     ...(state.destination ? { destination: state.destination } : {}),
@@ -192,7 +208,7 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
     || !sameSource(event.outcome.source, state.source) || !sameSource(work.target.source, state.source)
     || (event.outcome.status !== 'stale-page' && (work.expectedSnapshot || state.snapshot)
       && event.outcome.snapshot !== (work.expectedSnapshot || state.snapshot))) return { state, effects: [] };
-  const cleared = Object.freeze({ ...state, semantic: undefined, snapshot: event.outcome.snapshot });
+  const cleared = Object.freeze({ ...state, semantic: undefined, coverageRetry: undefined, snapshot: event.outcome.snapshot });
   if (event.outcome.status === 'stale-page' && (work.request.operation === 'find-references' || work.request.operation === 'find-implementations')) {
     const { pageToken: _pageToken, ...request } = work.request;
     return startQuery(cleared, work.target, work.purpose, request, event.outcome.snapshot);
@@ -212,6 +228,17 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
       : { operation, symbol: event.outcome.symbol.identity };
     return startQuery(cleared, work.target, 'continuation', request, event.outcome.snapshot);
   }
+  if (event.outcome.status === 'coverage-insufficient') {
+    let request: SemanticQuery = work.request;
+    if (work.request.operation !== 'resolve-symbol') {
+      const { pageToken: _pageToken, ...firstPage } = work.request;
+      request = firstPage;
+    }
+    const coverageRetry = Object.freeze({ target: work.target, purpose: work.purpose, request });
+    const surface = Object.freeze({ kind: 'popover' as const, title: 'More coverage needed', body: event.outcome.reason,
+      actions: [{ id: 'complete-coverage', label: 'Search full project' }] });
+    return result(Object.freeze({ ...cleared, coverageRetry, surface, status: `Coverage insufficient: ${event.outcome.reason}` }));
+  }
   if ((event.outcome.status === 'references' || event.outcome.status === 'implementations') && (work.purpose === 'continuation' || work.purpose === 'selection')) {
     const locations = event.outcome.status === 'references'
       ? event.outcome.locations
@@ -223,7 +250,11 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
         : { operation: 'find-implementations', symbol: event.outcome.symbol, pageToken: event.outcome.nextPageToken };
       return startQuery(cleared, work.target, work.purpose, request, event.outcome.snapshot, allLocations);
     }
-    if (work.purpose === 'selection') return result(Object.freeze({ ...cleared, occurrences: allLocations, announcement: `${allLocations.length} occurrence${allLocations.length === 1 ? '' : 's'} selected.` }));
+    if (work.purpose === 'selection') {
+      const selected = { path: work.target.path, line: work.target.line, column: work.target.column || 1 };
+      const occurrences = [...new Map([selected, ...allLocations].map((location) => [`${location.path}:${location.line}:${location.column}`, location])).values()];
+      return result(Object.freeze({ ...cleared, occurrences, announcement: `${occurrences.length} occurrence${occurrences.length === 1 ? '' : 's'} selected.` }));
+    }
     const destinations = allLocations.map(({ path, line }) => ({ source: event.outcome.source, path, line }));
     if (destinations.length === 1) {
       const target = targetFor(cleared, destinations[0]!, event.outcome.source);
@@ -256,15 +287,22 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
 export function reduceSession(state: SessionState, event: SessionRuntimeEvent): Readonly<{ state: SessionState; effects: readonly SessionEffect[] }> {
   if (event.type === 'preferences-changed') {
     const leaveFocus = state.enabled && !event.preferences.enabled && state.focusMode && state.revision !== null;
+    const disabling = state.enabled && !event.preferences.enabled;
     const operationId = state.nextOperationId;
     return result(Object.freeze({ ...state, enabled: event.preferences.enabled, hideGeneratedFiles: event.preferences.hideGeneratedFiles,
-      shortcuts: event.preferences.shortcuts || state.shortcuts, nextOperationId: leaveFocus ? operationId + 1 : operationId }), leaveFocus
-      ? [{ type: 'perform', action: 'set-fullscreen', active: false, operationId }] : []);
+      shortcuts: event.preferences.shortcuts || state.shortcuts, nextOperationId: leaveFocus ? operationId + 1 : operationId,
+      ...(disabling ? { semantic: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, cacheOperationId: undefined,
+        fullFileOperationId: undefined, fullFileControls: idleFullFileControls(state.fullFileControls), selected: undefined, occurrences: [], choices: [], externalUrl: undefined,
+        surface: undefined, status: undefined, announcement: undefined } : {}) }), [
+      ...(disabling ? [{ type: 'cancel-workflows' as const }] : []),
+      ...(leaveFocus ? [{ type: 'perform' as const, action: 'set-fullscreen' as const, active: false, operationId }] : []),
+    ]);
   }
   if (event.type === 'host-revised') {
     if (state.revision !== null && Number(event.revision) <= Number(state.revision)) return { state, effects: [] };
     const operationId = state.nextOperationId;
-    const next = Object.freeze({ ...withoutTransient(state), revision: event.revision, nextOperationId: operationId + 1 });
+    const controls = event.files || state.fullFileControls;
+    const next = Object.freeze({ ...withoutTransient(state), revision: event.revision, fullFileControls: controls, nextOperationId: operationId + 1 });
     return result(Object.freeze({ ...next, bookmarkOperationId: operationId }), [{ type: 'load-bookmarks', operationId, revision: event.revision, open: false }]);
   }
   if (event.type === 'semantic-completed') return semanticCompletion(state, event);
@@ -284,6 +322,22 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     return result(Object.freeze({ ...state, cacheBusy: false, cacheOperationId: undefined, snapshot: event.outcome.snapshot || state.snapshot,
       status: event.outcome.status === 'ready' ? 'Related package cache is ready.' : 'Related package cache is unavailable.' }));
   }
+  if (event.type === 'query-coverage-progress') {
+    if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.queryCoverageOperationId) return { state, effects: [] };
+    const { completed, total, phase } = event.progress;
+    const status = total === undefined ? `Expanding search coverage: ${phase}…` : `Expanding search coverage: ${completed} of ${total}.`;
+    return result(Object.freeze({ ...state, status }));
+  }
+  if (event.type === 'query-coverage-completed') {
+    if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.queryCoverageOperationId
+      || !sameSource(event.outcome.source, state.source)) return { state, effects: [] };
+    const retry = state.coverageRetry;
+    const next = Object.freeze({ ...state, queryCoverageOperationId: undefined, snapshot: event.outcome.snapshot || state.snapshot });
+    if (event.outcome.status === 'ready' && retry) return startQuery(Object.freeze({ ...next, surface: undefined }), retry.target, retry.purpose, retry.request, event.outcome.snapshot);
+    const surface = retry ? Object.freeze({ kind: 'popover' as const, title: 'More coverage needed', body: event.outcome.reason || 'Full-project search is unavailable.',
+      actions: [{ id: 'complete-coverage', label: 'Try again' }] }) : state.surface;
+    return result(Object.freeze({ ...next, surface, status: 'Full-project search is unavailable.' }));
+  }
   if (event.type === 'bookmarks-loaded' || event.type === 'bookmark-toggled') {
     if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.bookmarkOperationId) return { state, effects: [] };
     const currentBookmarks = event.bookmarks.filter(({ scope }) => scope.headSha === state.source.commitSha).length;
@@ -302,14 +356,28 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const history = state.historyIndex >= 0 ? [...state.history.slice(0, state.historyIndex + 1), event.destination] : [event.from, event.destination];
     return result(Object.freeze({ ...state, history, historyIndex: history.length - 1 }));
   }
+  if (event.type === 'full-file-completed') {
+    if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.fullFileOperationId) return { state, effects: [] };
+    const failed = event.outcome.kind !== 'completed' && event.outcome.kind !== 'unchanged';
+    const controls = state.fullFileControls.map((control) => {
+      if (control.path !== event.path) return control;
+      const { busy: _busy, error: _error, ...idle } = control;
+      return { ...idle, full: failed ? idle.full : event.full, ...(failed ? { error: 'Full file is unavailable.' } : {}) };
+    });
+    return result(Object.freeze({ ...state, fullFileOperationId: undefined, fullFileControls: controls }));
+  }
   if (state.revision === null || event.revision !== state.revision) return { state, effects: [] };
   if (event.type === 'fullscreen-changed') return result(Object.freeze({ ...state, focusMode: event.active, status: undefined }));
 
   if (event.command === 'toggle-enabled') {
     const operationId = state.nextOperationId;
     const enabled = !state.enabled;
-    return result(Object.freeze({ ...state, enabled, nextOperationId: operationId + 1 }), [
+    return result(Object.freeze({ ...state, enabled, nextOperationId: operationId + 1,
+      ...(!enabled ? { semantic: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, cacheOperationId: undefined,
+        fullFileOperationId: undefined, fullFileControls: idleFullFileControls(state.fullFileControls), selected: undefined, occurrences: [], choices: [], externalUrl: undefined,
+        surface: undefined, status: undefined, announcement: undefined } : {}) }), [
       { type: 'save-enabled', enabled },
+      ...(!enabled ? [{ type: 'cancel-workflows' as const }] : []),
       ...(state.focusMode ? [{ type: 'perform' as const, action: 'set-fullscreen' as const, active: false, operationId }] : []),
     ]);
   }
@@ -323,15 +391,21 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
   }
   if ((event.command === 'hover-target' || event.command === 'select-target' || event.command === 'activate-target') && event.target.identifier && state.enabled) {
     if (!sameSource(event.target.source, state.source)) return { state, effects: [] };
-    const next = remember(state, event.target);
-    return startQuery(next, event.target, event.command === 'hover-target' ? 'hover' : event.command === 'select-target' ? 'select' : 'activate', {
+    if (event.command === 'hover-target' && ((state.semantic?.purpose !== undefined && state.semantic.purpose !== 'hover')
+      || state.queryCoverageOperationId !== undefined)) return { state, effects: [] };
+    const supersedesCoverage = event.command !== 'hover-target' && state.queryCoverageOperationId !== undefined;
+    const next = remember(supersedesCoverage ? Object.freeze({ ...state, queryCoverageOperationId: undefined, coverageRetry: undefined, surface: undefined }) : state, event.target);
+    const started = startQuery(next, event.target, event.command === 'hover-target' ? 'hover' : event.command === 'select-target' ? 'select' : 'activate', {
       operation: 'resolve-symbol', path: event.target.path, line: event.target.line, column: event.target.column || 1, identifier: event.target.identifier,
       ...(event.target.occurrence === undefined ? {} : { occurrence: event.target.occurrence }),
     });
+    return supersedesCoverage ? { ...started, effects: [{ type: 'cancel-query-coverage' }, ...started.effects] } : started;
   }
   if (event.command === 'semantic-jump' && state.selected?.identifier && state.enabled) {
-    return startQuery(state, state.selected, 'activate', { operation: 'resolve-symbol', path: state.selected.path, line: state.selected.line, column: state.selected.column || 1, identifier: state.selected.identifier,
+    const supersedesCoverage = state.queryCoverageOperationId !== undefined;
+    const started = startQuery(supersedesCoverage ? Object.freeze({ ...state, queryCoverageOperationId: undefined, coverageRetry: undefined, surface: undefined }) : state, state.selected, 'activate', { operation: 'resolve-symbol', path: state.selected.path, line: state.selected.line, column: state.selected.column || 1, identifier: state.selected.identifier,
       ...(state.selected.occurrence === undefined ? {} : { occurrence: state.selected.occurrence }) });
+    return supersedesCoverage ? { ...started, effects: [{ type: 'cancel-query-coverage' }, ...started.effects] } : started;
   }
   if (event.command === 'cache-related' && state.enabled) {
     const operationId = state.nextOperationId;
@@ -341,20 +415,35 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const operationId = state.nextOperationId;
     return { state: Object.freeze({ ...state, bookmarkOperationId: operationId, nextOperationId: operationId + 1 }), effects: [{ type: 'load-bookmarks', operationId, revision: state.revision, open: true }] };
   }
-  if (event.command === 'toggle-bookmark' && state.selected) {
+  if (event.command === 'toggle-bookmark' && (event.bookmark || state.selected)) {
     const operationId = state.nextOperationId;
-    return { state: Object.freeze({ ...state, bookmarkOperationId: operationId, nextOperationId: operationId + 1 }), effects: [{ type: 'toggle-bookmark', operationId, revision: state.revision, target: state.selected }] };
+    const bookmark = event.bookmark || {
+      location: { path: state.selected!.path, side: state.selected!.side, startLine: state.selected!.line, endLine: state.selected!.line },
+      anchor: { symbol: state.selected!.identifier || '', selectionHash: '', beforeHash: '', afterHash: '' },
+    };
+    return { state: Object.freeze({ ...state, bookmarkOperationId: operationId, nextOperationId: operationId + 1 }), effects: [{ type: 'toggle-bookmark', operationId, revision: state.revision, bookmark }] };
   }
   if (event.command === 'toggle-full-file') {
     const current = state.fullFileControls.find(({ path }) => path === event.path);
     const full = !current?.full;
-    const controls = [...state.fullFileControls.filter(({ path }) => path !== event.path), { path: event.path, full }];
+    const controls = [...state.fullFileControls.filter(({ path }) => path !== event.path), { path: event.path, full: current?.full || false, busy: true }];
     const operationId = state.nextOperationId;
-    return result(Object.freeze({ ...state, fullFileControls: controls, nextOperationId: operationId + 1 }), [
+    return result(Object.freeze({ ...state, fullFileControls: controls, fullFileOperationId: operationId, nextOperationId: operationId + 1 }), [
       { type: 'perform', action: 'set-full-file', path: event.path, full, operationId },
     ]);
   }
   if (event.command === 'surface-action') {
+    if (event.actionId === 'complete-coverage' && state.coverageRetry) {
+      const operationId = state.nextOperationId;
+      const surface = Object.freeze({ ...state.surface!, actions: [{ id: 'cancel-coverage', label: 'Cancel' }] });
+      return result(Object.freeze({ ...state, queryCoverageOperationId: operationId, nextOperationId: operationId + 1, surface, status: 'Expanding search coverage…' }), [
+        { type: 'ensure-query-coverage', operationId, revision: state.revision, retry: state.coverageRetry },
+      ]);
+    }
+    if (event.actionId === 'cancel-coverage' && state.coverageRetry) {
+      const surface = Object.freeze({ ...state.surface!, actions: [{ id: 'complete-coverage', label: 'Search full project' }] });
+      return result(Object.freeze({ ...state, queryCoverageOperationId: undefined, surface, status: 'Coverage expansion cancelled.' }), [{ type: 'cancel-query-coverage' }]);
+    }
     if (event.actionId === 'external-documentation' && state.externalUrl) {
       const operationId = state.nextOperationId;
       return { state: Object.freeze({ ...state, nextOperationId: operationId + 1 }), effects: [{ type: 'perform', action: 'open-destination',

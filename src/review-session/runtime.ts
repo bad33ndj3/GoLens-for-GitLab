@@ -38,7 +38,10 @@ export function runReviewSession({
   let state = initialSessionState(sessionId, {
     repositoryKey: host.review.identity.repositoryKey,
     commitSha: host.review.identity.headSha,
-  }, preferences);
+  }, preferences, host.review.refs.startSha || host.review.refs.baseSha ? {
+    repositoryKey: host.review.identity.repositoryKey,
+    commitSha: host.review.refs.startSha || host.review.refs.baseSha!,
+  } : undefined);
   let stopped = false;
   const scopes = new Map<string, AbortController>();
   const pending = new Set<Promise<void>>();
@@ -64,9 +67,7 @@ export function runReviewSession({
   const dispatch = async (event: SessionRuntimeEvent): Promise<void> => {
     if (controller.signal.aborted) return;
     if (event.type === 'host-revised') {
-      scopes.get('semantic')?.abort();
-      scopes.get('bookmarks')?.abort();
-      for (const [name, scope] of scopes) if (name.startsWith('action:')) scope.abort();
+      for (const [name, scope] of scopes) if (name !== 'preferences') scope.abort();
     }
     const reduced = reduceSession(state, event);
     state = reduced.state;
@@ -75,9 +76,13 @@ export function runReviewSession({
 
   const perform = async (effect: Extract<SessionEffect, { type: 'perform' }>) => {
     if (state.revision === null || controller.signal.aborted) return;
+    const revision = state.revision;
     const { type: _type, operationId, ...action } = effect;
     const signal = scoped(`action:${action.action}`);
-    const outcome = await host.perform({ ...action, revision: state.revision, operationId: `${sessionId}:${operationId}` } as HostAction, signal);
+    const outcome = await host.perform({ ...action, revision, operationId: `${sessionId}:${operationId}` } as HostAction, signal);
+    if (action.action === 'set-full-file') {
+      await dispatch({ type: 'full-file-completed', sessionId, revision, operationId, path: action.path, full: action.full, outcome });
+    }
     if (action.action === 'reveal-source' && outcome.kind !== 'completed' && outcome.kind !== 'unchanged') {
       await host.perform({ action: 'open-destination', destination: { kind: 'source', source: action.source, path: action.path, line: action.line },
         revision: state.revision, operationId: `${sessionId}:${operationId}:fallback` }, signal);
@@ -85,8 +90,24 @@ export function runReviewSession({
   };
 
   const query = async (effect: Extract<SessionEffect, { type: 'query' }>) => {
-    const outcome = await intelligence.query(effect.request, scoped('semantic'));
+    const scope = effect.purpose === 'hover' ? 'semantic:hover' : effect.purpose === 'selection' || effect.purpose === 'select' ? 'semantic:selection' : 'semantic:navigation';
+    if (scope !== 'semantic:hover') scopes.get('semantic:hover')?.abort();
+    const outcome = await intelligence.query(effect.request, scoped(scope));
     await dispatch({ type: 'semantic-completed', sessionId, revision: effect.target.revision, operationId: effect.operationId, outcome });
+  };
+
+  const ensureQueryCoverage = async (effect: Extract<SessionEffect, { type: 'ensure-query-coverage' }>) => {
+    if (!intelligence.ensureCoverage) {
+      await dispatch({ type: 'query-coverage-completed', sessionId, revision: effect.revision, operationId: effect.operationId, outcome: {
+        status: 'unavailable', reason: 'Coverage is unavailable.', source: effect.retry.target.source, snapshot: state.snapshot || '',
+        coverage: { scope: 'current-package', complete: false, packageCount: 0, packagePaths: [] },
+      } });
+      return;
+    }
+    const outcome = await intelligence.ensureCoverage({ goal: 'complete-query', query: effect.retry.request }, (progress) => {
+      if (current(effect.revision)) void dispatch({ type: 'query-coverage-progress', sessionId, revision: effect.revision, operationId: effect.operationId, progress });
+    }, scoped('coverage:query'));
+    await dispatch({ type: 'query-coverage-completed', sessionId, revision: effect.revision, operationId: effect.operationId, outcome });
   };
 
   const bookmarkScope = () => ({
@@ -105,8 +126,8 @@ export function runReviewSession({
     const signal = scoped('bookmarks');
     const outcome = await abortable(bookmarks.toggle({
       scope: bookmarkScope(),
-      location: { path: effect.target.path, side: effect.target.side, startLine: effect.target.line, endLine: effect.target.line },
-      anchor: { symbol: effect.target.identifier || '', selectionHash: '', beforeHash: '', afterHash: '' },
+      location: effect.bookmark.location,
+      anchor: effect.bookmark.anchor,
     }), signal);
     const records = await abortable(bookmarks.list(bookmarkScope()), signal);
     if (current(effect.revision)) await dispatch({ type: 'bookmark-toggled', sessionId, revision: effect.revision, operationId: effect.operationId, bookmarks: records, action: outcome.action });
@@ -157,10 +178,15 @@ export function runReviewSession({
   const run = (effect: SessionEffect) => {
     if (controller.signal.aborted) return;
     if (effect.type === 'apply') host.apply(effect.projection);
+    else if (effect.type === 'cancel-query-coverage') scopes.get('coverage:query')?.abort();
+    else if (effect.type === 'cancel-workflows') {
+      for (const [name, scope] of scopes) if (name !== 'preferences') scope.abort();
+    }
     else {
       const operation = effect.type === 'perform' ? perform(effect)
         : effect.type === 'query' ? query(effect)
           : effect.type === 'cache-related' ? cacheRelated(effect)
+            : effect.type === 'ensure-query-coverage' ? ensureQueryCoverage(effect)
             : effect.type === 'load-bookmarks' ? loadBookmarks(effect)
               : effect.type === 'toggle-bookmark' ? toggleBookmark(effect)
                 : effect.type === 'read-review-status' ? readReviewStatus(effect)

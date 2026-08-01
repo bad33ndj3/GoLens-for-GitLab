@@ -165,7 +165,10 @@ export function createGitLabPage({
     let tokenSequence = 0;
     const tokens = new WeakMap<Element, HostTargetToken>();
 
-    const emitRevision = () => events.push({ type: 'host-revised', revision, surface: surface(window) });
+    const fileControls = () => fileRoots(document).flatMap((root) => {
+      try { return [{ path: repositoryPath(normalizedPath(root)), full: Boolean(root.querySelector('button[data-click="showChanges"]')) }]; } catch { return []; }
+    });
+    const emitRevision = () => events.push({ type: 'host-revised', revision, surface: surface(window), files: fileControls() });
     emitRevision();
 
     const revise = () => {
@@ -232,6 +235,37 @@ export function createGitLabPage({
       }
       return Object.freeze({ revision, token, path, side: old ? 'old' : 'new', line,
         ...(identifier && /^[A-Za-z_]\w*$/.test(identifier) ? { identifier, column, occurrence } : {}), source });
+    }
+
+    const hashText = async (value: string) => {
+      const normalized = value.replace(/\r\n?/g, '\n').trim();
+      if (!normalized) return '';
+      return [...new Uint8Array(await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized)))]
+        .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    };
+    async function selectedBookmark() {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode) return undefined;
+      const element = (node: Node) => node.nodeType === 1 ? node as Element : node.parentElement;
+      const anchor = diffTarget(element(selection.anchorNode));
+      const focus = diffTarget(element(selection.focusNode));
+      if (!anchor || !focus || anchor.path !== focus.path || anchor.side !== focus.side || anchor.source.commitSha !== focus.source.commitSha) return undefined;
+      const root = rootForPath(document, anchor.path);
+      if (!root) return undefined;
+      const startLine = Math.min(anchor.line, focus.line);
+      const endLine = Math.max(anchor.line, focus.line);
+      const textAt = (line: number) => targetElement(root, line, anchor.side)?.closest('tr,[role="row"]')
+        ?.querySelector('.line_content,[data-testid="diff-line-content"],[role="gridcell"]:last-child')?.textContent;
+      const lines: string[] = [];
+      for (let line = startLine; line <= endLine; line++) {
+        const text = textAt(line);
+        if (text === undefined) return undefined;
+        lines.push(text);
+      }
+      return Object.freeze({
+        location: { path: anchor.path, side: anchor.side, startLine, endLine },
+        anchor: { symbol: '', selectionHash: await hashText(lines.join('\n')), beforeHash: await hashText(textAt(startLine - 1) || ''), afterHash: await hashText(textAt(endLine + 1) || '') },
+      });
     }
 
     function removeProjection(): void {
@@ -463,7 +497,8 @@ export function createGitLabPage({
         && Boolean(candidate.metaKey) === event.metaKey && Boolean(candidate.shiftKey) === event.shiftKey);
       if (!shortcut) return;
       event.preventDefault();
-      emitIntent({ command: shortcut.command });
+      if (shortcut.command === 'toggle-bookmark') void selectedBookmark().then((bookmark) => emitIntent({ command: 'toggle-bookmark', ...(bookmark ? { bookmark } : {}) }));
+      else emitIntent({ command: shortcut.command });
     };
     const onPointerOver = (event: Event) => {
       const target = diffTarget(event.target);

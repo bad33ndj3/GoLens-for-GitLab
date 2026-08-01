@@ -34,12 +34,16 @@ function events() {
 
 const tick = () => new Promise((resolve) => setTimeout(resolve));
 
-function hostFor(stream, { projections = [], actions = [], reads = [] } = {}) {
+function hostFor(stream, { projections = [], actions = [], reads = [], actionOutcomes = [] } = {}) {
   return {
     review,
     events: (signal) => { signal.addEventListener('abort', () => stream.close(), { once: true }); return stream.iterable; },
     apply: (projection) => { projections.push(projection); return { kind: 'applied' }; },
-    perform: async (action) => { actions.push(action); return { kind: 'completed' }; },
+    perform: async (action, signal) => {
+      actions.push(action);
+      const outcome = actionOutcomes.shift();
+      return typeof outcome === 'function' ? outcome(action, signal) : outcome || { kind: 'completed' };
+    },
     read: async (request) => reads.shift()?.(request) || { kind: 'unavailable', reason: 'not-rendered' },
   };
 }
@@ -140,6 +144,120 @@ test('Review Session runs related Coverage and exposes monotonic progress', asyn
   await session.stop();
 });
 
+test('Review Session completes an insufficient semantic query and keeps cancellation retryable', async () => {
+  const stream = events();
+  const projections = [];
+  const coverageRequests = [];
+  let queryCount = 0;
+  let firstCoverageSignal;
+  const target = { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: {
+      async query(request) {
+        queryCount += 1;
+        const context = { source, snapshot: String(queryCount), coverage: { scope: 'current-package', complete: false, packageCount: 1, packagePaths: ['pkg'] } };
+        if (queryCount === 1) return { ...context, status: 'coverage-insufficient', required: 'complete-project-search', reason: 'More packages may contain the symbol.' };
+        return { ...context, status: 'resolved', isDefinition: true, symbol: { signature: 'func Target()', identity: { source, path: request.path, line: request.line, column: request.column, kind: 'function', name: 'Target' }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } };
+      },
+      ensureCoverage(request, _progress, signal) {
+        coverageRequests.push(request);
+        if (coverageRequests.length === 1) {
+          firstCoverageSignal = signal;
+          return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
+        }
+        return Promise.resolve({ status: 'ready', source, snapshot: '2', coverage: { scope: 'complete-project-search', queryFingerprint: 'target', searchStrategy: 'code-search', complete: true, packageCount: 2, packagePaths: ['pkg', 'other'] } });
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
+  await tick();
+  assert.equal(projections.at(-1).surface.actions[0].id, 'complete-coverage');
+  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: 'complete-coverage' });
+  await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: 'cancel-coverage' });
+  await tick();
+  assert.equal(firstCoverageSignal.aborted, true);
+  assert.equal(projections.at(-1).surface.actions[0].id, 'complete-coverage');
+  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: 'complete-coverage' });
+  await tick();
+  await tick();
+
+  assert.deepEqual(coverageRequests, [
+    { goal: 'complete-query', query: { operation: 'resolve-symbol', path: target.path, line: target.line, column: 1, identifier: 'Target' } },
+    { goal: 'complete-query', query: { operation: 'resolve-symbol', path: target.path, line: target.line, column: 1, identifier: 'Target' } },
+  ]);
+  assert.equal(projections.at(-1).status, 'func Target()');
+  await session.stop();
+});
+
+test('Review Session does not let hover supersede semantic navigation', async () => {
+  const stream = events();
+  let navigationSignal;
+  let queries = 0;
+  const target = { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source };
+  const session = startReviewSession({
+    host: hostFor(stream),
+    intelligence: {
+      query(_request, signal) {
+        queries += 1;
+        navigationSignal = signal;
+        return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'activate-target', target });
+  await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: { ...target, token: 'hover' } });
+  await tick();
+
+  assert.equal(queries, 1);
+  assert.equal(navigationSignal.aborted, false);
+  await session.stop();
+});
+
+test('Review Session cancels query Coverage when a newer semantic intent supersedes it', async () => {
+  const stream = events();
+  const projections = [];
+  let queryCount = 0;
+  let coverageSignal;
+  const target = { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: {
+      async query(request) {
+        queryCount += 1;
+        const context = { source, snapshot: '1', coverage: { scope: 'current-package', complete: false, packageCount: 1, packagePaths: ['pkg'] } };
+        if (queryCount === 1) return { ...context, status: 'coverage-insufficient', required: 'complete-project-search', reason: 'Incomplete.' };
+        return { ...context, status: 'resolved', isDefinition: false, symbol: { signature: 'func NewIntent()', identity: { source, path: request.path, line: request.line, column: request.column, kind: 'function', name: 'NewIntent' }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } };
+      },
+      ensureCoverage(_request, _progress, signal) {
+        coverageSignal = signal;
+        return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
+  await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: 'complete-coverage' });
+  await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'activate-target', target: { ...target, token: 'new-intent', identifier: 'NewIntent' } });
+  await tick();
+
+  assert.equal(coverageSignal.aborted, true);
+  assert.equal(projections.at(-1).status, undefined);
+  await session.stop();
+});
+
 test('Review Session loads and toggles private MR-local bookmarks through its port', async () => {
   const stream = events();
   const projections = [];
@@ -150,11 +268,12 @@ test('Review Session loads and toggles private MR-local bookmarks through its po
     location: { path: repositoryPath('pkg/main.go'), side: 'new', startLine: 2, endLine: 2 },
     anchor: { symbol: 'Target', selectionHash: '', beforeHash: '', afterHash: '' },
   };
+  const oldRecord = { ...record, id: 'old', location: { ...record.location, path: repositoryPath('pkg/old.go'), side: 'old', startLine: 7, endLine: 7 } };
   const session = startReviewSession({
     host: hostFor(stream, { projections }),
     intelligence: { query: async () => ({ status: 'missing', reason: 'identifier', source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] } }) },
     bookmarks: {
-      list: async () => [record],
+      list: async () => [record, oldRecord],
       toggle: async (input) => { toggles.push(input); return { action: 'added', record }; },
     },
     preferences: { enabled: true, hideGeneratedFiles: false },
@@ -164,17 +283,20 @@ test('Review Session loads and toggles private MR-local bookmarks through its po
   stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
   await tick();
   assert.equal(projections.at(-1).surface, undefined);
+  assert.equal(projections.at(-1).bookmarkLocations.find(({ path }) => path === oldRecord.location.path).source.commitSha, review.refs.startSha);
   stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
   await tick();
-  stream.emit({ type: 'intent', revision: 1, command: 'toggle-bookmark' });
+  const range = { location: { path: target.path, side: target.side, startLine: 2, endLine: 4 }, anchor: { symbol: '', selectionHash: '1'.repeat(64), beforeHash: '2'.repeat(64), afterHash: '3'.repeat(64) } };
+  stream.emit({ type: 'intent', revision: 1, command: 'toggle-bookmark', bookmark: range });
   await tick();
   stream.emit({ type: 'intent', revision: 1, command: 'open-bookmarks' });
   await tick();
 
   assert.equal(toggles.length, 1);
-  assert.deepEqual(toggles[0].location, { path: target.path, side: target.side, startLine: 2, endLine: 2 });
+  assert.deepEqual(toggles[0].location, range.location);
+  assert.deepEqual(toggles[0].anchor, range.anchor);
   assert.equal(projections.at(-1).surface.title, 'MR bookmarks');
-  assert.match(projections.at(-1).surface.body, /1 current bookmark/);
+  assert.match(projections.at(-1).surface.body, /2 current bookmarks/);
   assert.deepEqual(projections.at(-1).bookmarks, ['target']);
   await session.stop();
 });
@@ -195,10 +317,13 @@ test('Review Session stop is terminal, idempotent, and aborts replaceable work',
   stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
   stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source } });
   await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'toggle-enabled' });
+  await tick();
+  assert.equal(querySignal.aborted, true);
+  assert.equal(projections.at(-1).status, undefined);
   await session.stop();
   await session.stop();
 
-  assert.equal(querySignal.aborted, true);
   const count = projections.length;
   stream.emit({ type: 'host-revised', revision: 2, surface: 'changes' });
   await tick();
@@ -362,12 +487,14 @@ test('Review Session executes full-file and relative navigation helpers', async 
   const first = { revision: 1, token: 'first', path: repositoryPath('a.go'), side: 'new', line: 2, identifier: 'First', source };
   const second = { revision: 1, token: 'second', path: repositoryPath('b.go'), side: 'new', line: 8, identifier: 'Second', source };
   const session = startReviewSession({
-    host: hostFor(stream, { projections, actions }),
+    host: hostFor(stream, { projections, actions, actionOutcomes: [{ kind: 'completed' }, { kind: 'unavailable', reason: 'not-rendered' }] }),
     intelligence: { query: async (request) => ({ status: 'missing', reason: 'identifier', source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [String(request.path)] } }) },
     preferences: { enabled: true, hideGeneratedFiles: false },
   });
 
-  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes', files: [{ path: first.path, full: false }, { path: second.path, full: false }] });
+  await tick();
+  assert.deepEqual(projections.at(-1).fullFileControls, [{ path: first.path, full: false }, { path: second.path, full: false }]);
   stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: first });
   await tick();
   stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: second });
@@ -381,7 +508,36 @@ test('Review Session executes full-file and relative navigation helpers', async 
   await tick();
   assert.equal(actions.at(-1).action, 'set-full-file');
   assert.equal(actions.at(-1).full, true);
-  assert.deepEqual(projections.at(-1).fullFileControls, [{ path: second.path, full: true }]);
+  assert.deepEqual(projections.at(-1).fullFileControls, [{ path: first.path, full: false }, { path: second.path, full: false, error: 'Full file is unavailable.' }]);
+  stream.emit({ type: 'host-revised', revision: 2, surface: 'changes', files: [{ path: first.path, full: false }, { path: second.path, full: false }] });
+  await tick();
+  assert.deepEqual(projections.at(-1).fullFileControls, [{ path: first.path, full: false }, { path: second.path, full: false }]);
+  await session.stop();
+});
+
+test('Review Session rolls back a pending full-file projection when disabled', async () => {
+  const stream = events();
+  const projections = [];
+  let actionSignal;
+  const path = repositoryPath('pkg/main.go');
+  const session = startReviewSession({
+    host: hostFor(stream, { projections, actionOutcomes: [(_action, signal) => {
+      actionSignal = signal;
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
+    }] }),
+    intelligence: { query: async () => assert.fail('no semantic query expected') },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes', files: [{ path, full: false }] });
+  stream.emit({ type: 'intent', revision: 1, command: 'toggle-full-file', path });
+  await tick();
+  assert.equal(projections.at(-1).fullFileControls[0].busy, true);
+  stream.emit({ type: 'intent', revision: 1, command: 'toggle-enabled' });
+  await tick();
+
+  assert.equal(actionSignal.aborted, true);
+  assert.deepEqual(projections.at(-1).fullFileControls, [{ path, full: false }]);
   await session.stop();
 });
 
@@ -429,7 +585,7 @@ test('Review Session keeps semantic choices and confirmed review milestones insi
   await tick();
   await tick();
   assert.deepEqual(projections.at(-1).occurrenceLocations.map(({ path, line }) => ({ path, line })), [
-    { path: first.path, line: first.line }, { path: second.path, line: second.line },
+    { path: definition.path, line: definition.line }, { path: first.path, line: first.line }, { path: second.path, line: second.line },
   ]);
   await session.stop();
 });

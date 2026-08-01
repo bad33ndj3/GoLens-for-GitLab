@@ -84,6 +84,11 @@ export type DiffTarget = Readonly<{
   source: SourceIdentity;
 }>;
 
+export type BookmarkSelection = Readonly<{
+  location: Readonly<{ path: RepositoryPath; side: 'old' | 'new'; startLine: number; endLine: number }>;
+  anchor: Readonly<{ symbol: string; selectionHash: string; beforeHash: string; afterHash: string }>;
+}>;
+
 export type HostIntentCommand =
   | 'toggle-enabled' | 'toggle-focus' | 'cache-related' | 'open-bookmarks'
   | 'hover-target' | 'activate-target' | 'dismiss-surface' | 'surface-action'
@@ -93,14 +98,15 @@ export type HostIntentCommand =
   | 'previous-file' | 'next-file' | 'previous-bookmark' | 'next-bookmark'
   | 'history-back' | 'history-forward';
 type TargetIntentCommand = 'hover-target' | 'select-target' | 'activate-target';
-type SimpleIntentCommand = Exclude<HostIntentCommand, TargetIntentCommand | 'surface-action' | 'toggle-full-file'>;
+type SimpleIntentCommand = Exclude<HostIntentCommand, TargetIntentCommand | 'surface-action' | 'toggle-full-file' | 'toggle-bookmark'>;
 export type HostIntent =
   | Readonly<{ command: SimpleIntentCommand }>
   | Readonly<{ command: TargetIntentCommand; target: DiffTarget }>
   | Readonly<{ command: 'surface-action'; actionId: string }>
+  | Readonly<{ command: 'toggle-bookmark'; bookmark?: BookmarkSelection }>
   | Readonly<{ command: 'toggle-full-file'; path: RepositoryPath }>;
 export type HostEvent =
-  | Readonly<{ type: 'host-revised'; revision: HostRevision; surface: 'overview' | 'changes' | 'other' }>
+  | Readonly<{ type: 'host-revised'; revision: HostRevision; surface: 'overview' | 'changes' | 'other'; files?: readonly FullFileControlProjection[] }>
   | (Readonly<{ type: 'intent'; revision: HostRevision }> & HostIntent)
   | Readonly<{ type: 'fullscreen-changed'; revision: HostRevision; active: boolean }>;
 
@@ -125,7 +131,7 @@ export type FullFileControlProjection = Readonly<{
   error?: string;
 }>;
 export type ShortcutProjection = Readonly<{
-  command: SimpleIntentCommand;
+  command: SimpleIntentCommand | 'toggle-bookmark';
   key: string;
   code?: string;
   altKey?: boolean;

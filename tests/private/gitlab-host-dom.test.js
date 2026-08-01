@@ -46,11 +46,12 @@ test('Rapid and legacy diffs produce normalized revision-bound targets and compl
   const { controller, bound } = boundHost();
   const events = bound.events(controller.signal)[Symbol.asyncIterator]();
   const { value: initial } = await events.next();
+  assert.deepEqual(initial.files, [{ path: 'pkg/a.go', full: false }, { path: 'pkg/worker_test.go', full: false }]);
   const projection = {
     revision: initial.revision, enabled: true, hideGeneratedFiles: true, decorateTestFiles: true,
     fullFileControls: [{ path: 'pkg/a.go', full: false }, { path: 'pkg/worker_test.go', full: true, error: 'Unavailable' }],
     controls: [{ command: 'toggle-enabled', label: 'Turn GoLens off', pressed: true }],
-    shortcuts: [{ command: 'focus-file-search', key: 'p', ctrlKey: true }],
+    shortcuts: [{ command: 'focus-file-search', key: 'p', ctrlKey: true }, { command: 'toggle-bookmark', key: 'b', ctrlKey: true }],
   };
   assert.deepEqual(bound.apply(projection), { kind: 'applied' });
   assert.deepEqual(bound.apply(projection), { kind: 'unchanged' });
@@ -65,6 +66,18 @@ test('Rapid and legacy diffs produce normalized revision-bound targets and compl
   assert.deepEqual({ command: fullFileIntent.command, path: fullFileIntent.path }, { command: 'toggle-full-file', path: 'pkg/a.go' });
   window.document.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true }));
   assert.equal((await events.next()).value.command, 'focus-file-search');
+  const selection = window.getSelection();
+  const range = window.document.createRange();
+  const line = window.document.querySelector('#rapid .line_content');
+  range.selectNodeContents(line);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  window.document.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+  const bookmark = (await events.next()).value.bookmark;
+  assert.deepEqual(bookmark.location, { path: 'pkg/a.go', side: 'new', startLine: 12, endLine: 12 });
+  assert.match(bookmark.anchor.selectionHash, /^[a-f0-9]{64}$/);
+  assert.equal(bookmark.anchor.beforeHash, '');
+  assert.equal(bookmark.anchor.afterHash, '');
 
   window.document.querySelector('#rapid-code').dispatchEvent(new window.PointerEvent('pointerover', { bubbles: true, composed: true }));
   const { value: rapid } = await events.next();
