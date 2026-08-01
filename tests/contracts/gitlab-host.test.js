@@ -9,7 +9,7 @@ globalThis.HTMLElement = browserWindow.HTMLElement;
 globalThis.customElements = browserWindow.customElements;
 globalThis.CustomEvent = browserWindow.CustomEvent;
 const { commitSha, repositoryKey, repositoryPath, sourceIdentity } = await import('../../src/domain.ts');
-const { createGitLabHost, reviewDescriptor } = await import('../../src/gitlab-host/index.ts');
+const { createGitLabHost, reviewDescriptor, showFeatureGuide, showFirstRunSetup } = await import('../../src/gitlab-host/index.ts');
 
 const headSha = commitSha('a'.repeat(40));
 const review = reviewDescriptor({
@@ -106,4 +106,35 @@ test('host observes immutable reviews and bound events precede revision-bound in
     kind: 'stale', currentRevision: revised.value.revision,
   });
   controller.abort();
+});
+
+test('first-run setup stages choices in an accessible Lit projection and dismisses cleanly', async () => {
+  const controller = new AbortController();
+  const result = showFirstRunSetup(document, [{ title: 'Hover for Go insight', summary: 'Show proven Go details.' }], false, 'custom', controller.signal);
+  const host = document.querySelector('#golens-onboarding-root');
+  await host.updateComplete;
+  const dialog = host.shadowRoot.querySelector('[role="dialog"]');
+  assert.equal(dialog.getAttribute('aria-modal'), 'true');
+  const select = host.shadowRoot.querySelector('select');
+  const checkbox = host.shadowRoot.querySelector('input[type="checkbox"]');
+  select.value = 'vscode'; select.dispatchEvent(new window.Event('change'));
+  checkbox.checked = true; checkbox.dispatchEvent(new window.Event('change'));
+  host.shadowRoot.querySelector('.primary').click();
+  assert.deepEqual(await result, { preset: 'vscode', hideGeneratedFiles: true });
+  assert.equal(document.querySelector('#golens-onboarding-root'), null);
+
+  const dismissed = showFirstRunSetup(document, [], false, 'golens', new AbortController().signal);
+  const dismissedHost = document.querySelector('#golens-onboarding-root');
+  await dismissedHost.updateComplete;
+  dismissedHost.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(await dismissed, null);
+
+  const closeGuide = showFeatureGuide(document, [
+    { chapter: 'Page controls', title: 'Enable', summary: 'Turn GoLens on.' },
+    { chapter: 'Settings', title: 'Privacy', summary: 'Keep source local.' },
+  ]);
+  const guide = document.querySelector('#golens-feature-guide-root');
+  await guide.updateComplete;
+  assert.deepEqual([...guide.shadowRoot.querySelectorAll('h3')].map(({ textContent }) => textContent), ['Page controls', 'Settings']);
+  closeGuide();
 });

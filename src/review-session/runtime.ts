@@ -12,10 +12,66 @@ export type ReviewSessionPreferencePort = Readonly<{
   subscribe(listener: (preferences: ReviewSessionPreferences) => void): () => void;
   set(update: Partial<ReviewSessionPreferences>): Promise<void>;
 }>;
+type CoachAction = 'focusFileSearch' | 'semanticJump' | 'nextOccurrence' | 'historyBack';
+type CoachState = Readonly<{ version: 1; lastHintAt: number; actions: Readonly<Record<string, Readonly<{
+  manualUses: number; hintCount: number; lastHintAt: number; lastShortcutUseAt: number; learned: boolean;
+}>>> }>;
+export type ReviewSessionCoachStoragePort = Readonly<{
+  get(): Promise<CoachState>;
+  set(state: CoachState): Promise<void>;
+  settings(action: CoachAction): Promise<Readonly<{ enabled: boolean; binding: string }>>;
+  setEnabled(enabled: boolean): Promise<void>;
+}>;
+type ReviewSessionCoach = Readonly<{
+  consider(action: 'focusFileSearch' | 'semanticJump' | 'nextOccurrence' | 'historyBack'): Promise<Readonly<{ label: string; binding: string }> | null>;
+  markShortcutUsed(action: 'focusFileSearch' | 'semanticJump' | 'nextOccurrence' | 'historyBack'): Promise<void>;
+  setEnabled(enabled: boolean): Promise<void>;
+}>;
 export type ReviewSessionHandle = Readonly<{ stop(): Promise<void> }>;
 
 function aborted(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function createCoach(storage: ReviewSessionCoachStoragePort, now = () => Date.now()): ReviewSessionCoach {
+  const labels: Record<CoachAction, string> = { focusFileSearch: 'Focus file search', semanticJump: 'Go to definition or implementation', nextOccurrence: 'Next occurrence', historyBack: 'Go back' };
+  let sessionHintShown = false;
+  let queue = Promise.resolve();
+  const update = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = queue.then(operation, operation);
+    queue = result.then(() => undefined, () => undefined);
+    return result;
+  };
+  const mutable = (state: CoachState) => ({ version: 1 as const, lastHintAt: state.lastHintAt, actions: Object.fromEntries(Object.entries(state.actions).map(([id, action]) => [id, { ...action }])) });
+  return Object.freeze({
+    consider(action: CoachAction) {
+      return update(async () => {
+        try {
+          const [stored, settings] = await Promise.all([storage.get(), storage.settings(action)]);
+          const state = mutable(stored);
+          const record = state.actions[action] || { manualUses: 0, hintCount: 0, lastHintAt: 0, lastShortcutUseAt: 0, learned: false };
+          record.manualUses = Math.min(2, record.manualUses + 1); state.actions[action] = record;
+          const timestamp = now();
+          const eligible = settings.enabled && !sessionHintShown && !record.learned && record.hintCount < 2 && record.manualUses >= 2
+            && Boolean(settings.binding) && (!state.lastHintAt || timestamp - state.lastHintAt >= 24 * 60 * 60 * 1000);
+          if (eligible) { record.hintCount += 1; record.lastHintAt = timestamp; state.lastHintAt = timestamp; sessionHintShown = true; }
+          await storage.set(state);
+          return eligible ? Object.freeze({ label: labels[action], binding: settings.binding }) : null;
+        } catch { return null; }
+      });
+    },
+    markShortcutUsed(action: CoachAction) {
+      return update(async () => {
+        try {
+          const state = mutable(await storage.get());
+          const record = state.actions[action] || { manualUses: 0, hintCount: 0, lastHintAt: 0, lastShortcutUseAt: 0, learned: false };
+          record.lastShortcutUseAt = now(); record.learned = true; state.actions[action] = record;
+          await storage.set(state);
+        } catch { /* Coaching never interrupts review navigation. */ }
+      });
+    },
+    async setEnabled(enabled: boolean) { try { await storage.setEnabled(enabled); } catch { /* optional */ } },
+  });
 }
 
 export function runReviewSession({
@@ -24,6 +80,7 @@ export function runReviewSession({
   preferences,
   bookmarks,
   preferencePort,
+  coachStorage,
   signal,
 }: {
   host: BoundGitLabHost;
@@ -31,9 +88,11 @@ export function runReviewSession({
   preferences: ReviewSessionPreferences;
   bookmarks?: ReviewSessionBookmarkPort;
   preferencePort?: ReviewSessionPreferencePort;
+  coachStorage?: ReviewSessionCoachStoragePort;
   signal?: AbortSignal;
 }): ReviewSessionHandle {
   const controller = new AbortController();
+  const coach = coachStorage ? createCoach(coachStorage) : undefined;
   const sessionId = crypto.randomUUID();
   let state = initialSessionState(sessionId, {
     repositoryKey: host.review.identity.repositoryKey,
@@ -45,6 +104,10 @@ export function runReviewSession({
   let stopped = false;
   const scopes = new Map<string, AbortController>();
   const pending = new Set<Promise<void>>();
+  const coachAction = (event: Extract<SessionRuntimeEvent, { type: 'intent' }>) => event.command === 'focus-file-search' ? 'focusFileSearch'
+    : event.command === 'activate-target' || event.command === 'semantic-jump' ? 'semanticJump'
+      : event.command === 'select-target' || event.command === 'next-occurrence' ? 'nextOccurrence'
+        : event.command === 'history-back' ? 'historyBack' : null;
 
   const scoped = (name: string) => {
     scopes.get(name)?.abort();
@@ -191,7 +254,8 @@ export function runReviewSession({
               : effect.type === 'toggle-bookmark' ? toggleBookmark(effect)
                 : effect.type === 'read-review-status' ? readReviewStatus(effect)
                   : effect.type === 'navigate-source' ? navigateSource(effect)
-                    : preferencePort ? abortable(preferencePort.set({ enabled: effect.enabled }), scoped('preferences')) : Promise.resolve();
+                    : effect.type === 'save-coach-enabled' ? coach?.setEnabled(effect.enabled) || Promise.resolve()
+                      : preferencePort ? abortable(preferencePort.set({ enabled: effect.enabled }), scoped('preferences')) : Promise.resolve();
       let tracked: Promise<void>;
       tracked = operation.catch(failed(effect)).finally(() => pending.delete(tracked));
       pending.add(tracked);
@@ -207,7 +271,18 @@ export function runReviewSession({
   };
   const running = (async () => {
     try {
-      for await (const event of host.events(controller.signal)) await dispatch(event);
+      for await (const event of host.events(controller.signal)) {
+        await dispatch(event);
+        if (event.type !== 'intent' || !coach) continue;
+        const action = coachAction(event);
+        if (!action) continue;
+        const operation = event.source === 'shortcut' ? coach.markShortcutUsed(action) : coach.consider(action).then((tip) => {
+          if (tip) return dispatch({ type: 'coach-tip', sessionId, revision: event.revision, label: tip.label, binding: tip.binding });
+        });
+        let tracked: Promise<void>;
+        tracked = operation.catch(() => {}).finally(() => pending.delete(tracked));
+        pending.add(tracked);
+      }
     } catch (error) {
       if (!controller.signal.aborted && !aborted(error)) terminate(true);
     }

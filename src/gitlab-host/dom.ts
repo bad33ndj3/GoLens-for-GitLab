@@ -191,7 +191,7 @@ export function createGitLabPage({
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
-    const emitIntent = (intent: HostIntent) => events.push({ type: 'intent', revision, ...intent });
+    const emitIntent = (intent: HostIntent, source: 'manual' | 'shortcut' = 'manual') => events.push({ type: 'intent', revision, source, ...intent });
     const onFullscreen = () => events.push({ type: 'fullscreen-changed', revision, active: Boolean(document.fullscreenElement) });
     document.addEventListener('fullscreenchange', onFullscreen, { signal });
 
@@ -497,8 +497,8 @@ export function createGitLabPage({
         && Boolean(candidate.metaKey) === event.metaKey && Boolean(candidate.shiftKey) === event.shiftKey);
       if (!shortcut) return;
       event.preventDefault();
-      if (shortcut.command === 'toggle-bookmark') void selectedBookmark().then((bookmark) => emitIntent({ command: 'toggle-bookmark', ...(bookmark ? { bookmark } : {}) }));
-      else emitIntent({ command: shortcut.command });
+      if (shortcut.command === 'toggle-bookmark') void selectedBookmark().then((bookmark) => emitIntent({ command: 'toggle-bookmark', ...(bookmark ? { bookmark } : {}) }, 'shortcut'));
+      else emitIntent({ command: shortcut.command }, 'shortcut');
     };
     const onPointerOver = (event: Event) => {
       const target = diffTarget(event.target);

@@ -83,7 +83,8 @@ export type SessionEffect =
   | Readonly<{ type: 'toggle-bookmark'; operationId: number; revision: HostRevision; bookmark: BookmarkSelection }>
   | Readonly<{ type: 'read-review-status'; operationId: number; revision: HostRevision; milestone: 'approval' | 'merge' }>
   | Readonly<{ type: 'navigate-source'; operationId: number; revision: HostRevision; from: DiffTarget; destination: NavigationLocation }>
-  | Readonly<{ type: 'save-enabled'; enabled: boolean }>;
+  | Readonly<{ type: 'save-enabled'; enabled: boolean }>
+  | Readonly<{ type: 'save-coach-enabled'; enabled: boolean }>;
 
 export type SessionRuntimeEvent =
   | HostEvent
@@ -98,7 +99,8 @@ export type SessionRuntimeEvent =
   | Readonly<{ type: 'bookmark-toggled'; sessionId: string; revision: HostRevision; operationId: number; bookmarks: readonly SessionBookmark[]; action: 'added' | 'removed' }>
   | Readonly<{ type: 'review-status-read'; sessionId: string; revision: HostRevision; operationId: number; milestone: 'approval' | 'merge'; confirmed: boolean }>
   | Readonly<{ type: 'source-navigation-completed'; sessionId: string; revision: HostRevision; operationId: number; from: DiffTarget; destination: NavigationLocation }>
-  | Readonly<{ type: 'full-file-completed'; sessionId: string; revision: HostRevision; operationId: number; path: DiffTarget['path']; full: boolean; outcome: ActionOutcome }>;
+  | Readonly<{ type: 'full-file-completed'; sessionId: string; revision: HostRevision; operationId: number; path: DiffTarget['path']; full: boolean; outcome: ActionOutcome }>
+  | Readonly<{ type: 'coach-tip'; sessionId: string; revision: HostRevision; label: string; binding: string }>;
 
 function withoutTransient(state: SessionState): SessionState {
   return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, selected: undefined,
@@ -298,6 +300,10 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
       ...(leaveFocus ? [{ type: 'perform' as const, action: 'set-fullscreen' as const, active: false, operationId }] : []),
     ]);
   }
+  if (event.type === 'coach-tip') {
+    if (event.sessionId !== state.sessionId || event.revision !== state.revision) return { state, effects: [] };
+    return result(Object.freeze({ ...state, surface: Object.freeze({ kind: 'popover', title: 'Shortcut tip', body: `Use ${event.binding} for ${event.label.toLowerCase()}.`, actions: [{ id: 'disable-coach', label: 'Turn off tips' }] }) }));
+  }
   if (event.type === 'host-revised') {
     if (state.revision !== null && Number(event.revision) <= Number(state.revision)) return { state, effects: [] };
     const operationId = state.nextOperationId;
@@ -433,6 +439,9 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     ]);
   }
   if (event.command === 'surface-action') {
+    if (event.actionId === 'disable-coach') {
+      return result(Object.freeze({ ...state, surface: undefined }), [{ type: 'save-coach-enabled', enabled: false }]);
+    }
     if (event.actionId === 'complete-coverage' && state.coverageRetry) {
       const operationId = state.nextOperationId;
       const surface = Object.freeze({ ...state.surface!, actions: [{ id: 'cancel-coverage', label: 'Cancel' }] });

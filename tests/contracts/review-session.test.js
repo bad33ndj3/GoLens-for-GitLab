@@ -704,3 +704,35 @@ test('Review Session exposes ambiguous choices and external documentation safely
   assert.equal(actions.at(-1).destination.url, 'https://pkg.go.dev/net/http#Client');
   await session.stop();
 });
+
+test('Review Session projects contextual coaching and retires shortcut actions', async () => {
+  const stream = events();
+  const projections = [];
+  const considered = [];
+  const learned = [];
+  const enabled = [];
+  let learning = { version: 1, lastHintAt: 0, actions: {} };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: { query: async () => assert.fail('no semantic query expected') },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+    coachStorage: {
+      async get() { return learning; },
+      async set(state) { learning = state; considered.push(...Object.keys(state.actions).filter((action) => !considered.includes(action))); if (state.actions.focusFileSearch?.learned) learned.push('focusFileSearch'); },
+      async settings() { return { enabled: true, binding: 'Primary+KeyP' }; },
+      async setEnabled(value) { enabled.push(value); },
+    },
+  });
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, source: 'manual', command: 'focus-file-search' });
+  stream.emit({ type: 'intent', revision: 1, source: 'manual', command: 'focus-file-search' });
+  await tick(); await tick();
+  assert.deepEqual(considered, ['focusFileSearch']);
+  assert.equal(projections.at(-1).surface.title, 'Shortcut tip');
+  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: 'disable-coach' });
+  stream.emit({ type: 'intent', revision: 1, source: 'shortcut', command: 'focus-file-search' });
+  await tick(); await tick();
+  assert.deepEqual(enabled, [false]);
+  assert.deepEqual(learned, ['focusFileSearch']);
+  await session.stop();
+});

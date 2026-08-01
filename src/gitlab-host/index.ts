@@ -107,7 +107,7 @@ export type HostIntent =
   | Readonly<{ command: 'toggle-full-file'; path: RepositoryPath }>;
 export type HostEvent =
   | Readonly<{ type: 'host-revised'; revision: HostRevision; surface: 'overview' | 'changes' | 'other'; files?: readonly FullFileControlProjection[] }>
-  | (Readonly<{ type: 'intent'; revision: HostRevision }> & HostIntent)
+  | (Readonly<{ type: 'intent'; revision: HostRevision; source?: 'manual' | 'shortcut' }> & HostIntent)
   | Readonly<{ type: 'fullscreen-changed'; revision: HostRevision; active: boolean }>;
 
 export type ControlProjection = Readonly<{
@@ -214,5 +214,6 @@ export function createGitLabHost(options: GitLabHostOptions): GitLabHost {
   };
 }
 
-export { registerRewriteContentScript } from './access.ts';
+export { createSelfHostedAccess, registerRewriteContentScript } from './access.ts';
+export { showExtensionSettings, showFeatureGuide, showFirstRunSetup } from './surfaces.ts';
 export { HostContractError, reviewDescriptor };

@@ -1,8 +1,8 @@
 import type { GoIntelligence } from '../go-intelligence/index.ts';
 import type { BoundGitLabHost } from '../gitlab-host/index.ts';
-import { runReviewSession, type ReviewSessionBookmarkPort, type ReviewSessionHandle, type ReviewSessionPreferencePort, type ReviewSessionPreferences } from './runtime.ts';
+import { runReviewSession, type ReviewSessionBookmarkPort, type ReviewSessionCoachStoragePort, type ReviewSessionHandle, type ReviewSessionPreferencePort, type ReviewSessionPreferences } from './runtime.ts';
 
-export type { ReviewSessionBookmark, ReviewSessionBookmarkPort, ReviewSessionHandle, ReviewSessionPreferencePort, ReviewSessionPreferences } from './runtime.ts';
+export type { ReviewSessionBookmark, ReviewSessionBookmarkPort, ReviewSessionCoachStoragePort, ReviewSessionHandle, ReviewSessionPreferencePort, ReviewSessionPreferences } from './runtime.ts';
 
 export function startReviewSession({
   host,
@@ -10,6 +10,7 @@ export function startReviewSession({
   preferences,
   bookmarks,
   preferencePort,
+  coachStorage,
   signal,
 }: {
   host: BoundGitLabHost;
@@ -17,7 +18,8 @@ export function startReviewSession({
   preferences: ReviewSessionPreferences;
   bookmarks?: ReviewSessionBookmarkPort;
   preferencePort?: ReviewSessionPreferencePort;
+  coachStorage?: ReviewSessionCoachStoragePort;
   signal?: AbortSignal;
 }): ReviewSessionHandle {
-  return runReviewSession({ host, intelligence, preferences, ...(bookmarks ? { bookmarks } : {}), ...(preferencePort ? { preferencePort } : {}), ...(signal ? { signal } : {}) });
+  return runReviewSession({ host, intelligence, preferences, ...(bookmarks ? { bookmarks } : {}), ...(preferencePort ? { preferencePort } : {}), ...(coachStorage ? { coachStorage } : {}), ...(signal ? { signal } : {}) });
 }

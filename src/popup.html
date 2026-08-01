@@ -8,7 +8,44 @@
     <title>GoLens for GitLab</title>
   </head>
   <body>
-    <main>GoLens for GitLab</main>
+    <header class="popup-header">
+      <div class="identity">
+        <img src="assets/icons/golens-32.png" alt="">
+        <div>
+          <strong>GoLens for GitLab</strong>
+          <span>Review controls</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="settings-action" type="button" data-action="show-settings" aria-label="Open GoLens settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        </button>
+        <label class="plugin-switch" title="Enable GoLens for GitLab">
+          <span class="visually-hidden">Enable GoLens for GitLab</span>
+          <input type="checkbox" data-setting="enabled" aria-label="Enable GoLens for GitLab">
+        </label>
+      </div>
+    </header>
+
+    <main>
+      <section class="project-cache" aria-labelledby="project-cache-title" data-cache-panel data-state="idle">
+        <div class="cache-heading">
+          <div>
+            <h1 id="project-cache-title">Project intelligence</h1>
+            <p data-full-cache-status role="status">Checking active merge request…</p>
+          </div>
+          <output data-cache-size aria-live="polite">Loading…</output>
+        </div>
+        <button class="primary-action" type="button" data-action="cache-full-project">Cache full project</button>
+        <progress data-full-cache-progress max="100" value="0" hidden></progress>
+      </section>
+      <p class="settings-status" data-settings-status role="status" aria-live="polite"></p>
+    </main>
+
+    <footer>
+      <span>Source stays in this browser</span>
+      <strong data-page-context>Active MR</strong>
+    </footer>
     <script type="module" src="popup.js"></script>
   </body>
 </html>

@@ -55,7 +55,7 @@ None currently. New fog should be recorded here only when a frontier decision ex
 - [Implement GitLab Host repository contracts](issues/18-implement-gitlab-host-repository-contracts.md) — resolved.
 - [Implement GitLab Host page projection](issues/19-implement-gitlab-host-page-projection.md) — resolved.
 - [Implement Review Session orchestration](issues/20-implement-review-session-orchestration.md) — resolved.
-- [Compose rewrite extension entries](issues/21-compose-rewrite-extension-entries.md).
+- [Compose rewrite extension entries](issues/21-compose-rewrite-extension-entries.md) — resolved.
 - [Add Playwright rewrite parity coverage](issues/22-add-playwright-rewrite-parity-coverage.md).
 - [Enforce rewrite performance budgets](issues/23-enforce-rewrite-performance-budgets.md).
 - [Prepare architecture storage reset](issues/24-prepare-architecture-storage-reset.md).
