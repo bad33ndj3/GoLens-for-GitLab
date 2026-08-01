@@ -61,7 +61,8 @@ responsibilities; do not pre-slice it by feature or class.
   bound host's source reads directly to Go Intelligence's `SourceReader`, and
   replaces Review Sessions. It contains no selectors, product reducer, cache
   algorithm, or semantic logic.
-- `worker.ts` only starts the Go Intelligence worker runtime. `popup.ts` and
+- `worker.ts` starts the Go Intelligence worker runtime and owns the serialized
+  architecture-epoch reset required by the atomic switch plan. `popup.ts` and
   `settings.ts` own their page wiring and static-page rendering; they use public
   capabilities and do not import content-entry code.
 - `review-session/` owns product workflow, ephemeral state, effects,
@@ -80,8 +81,9 @@ responsibilities; do not pre-slice it by feature or class.
   targets, semantic outcomes, and workflow state remain with their owner.
 - `feature-catalog.ts` is the single immutable setup/guide inventory;
   `shortcuts.ts` owns keymap values and pure matching rules; `user-storage.ts`
-  owns validated `chrome.storage.sync` preferences and privacy-preserving local
-  bookmark/learning records. These are direct modules, not new package seams.
+  owns validated `chrome.storage.sync` preferences, privacy-preserving local
+  bookmark/learning records, and the architecture-epoch reset coordinator.
+  These are direct modules, not new package seams.
 
 ### Public interfaces and dependency direction
 

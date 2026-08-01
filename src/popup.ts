@@ -1,6 +1,5 @@
 import { mergeBindings } from './shortcuts.ts';
-import { createUserStorage } from './user-storage.ts';
-import { ensureStorageReady } from './storage-reset.ts';
+import { createUserStorage, ensureStorageReady } from './user-storage.ts';
 
 type PreferencePort = Readonly<{
   get(): Promise<{ enabled: boolean }>;

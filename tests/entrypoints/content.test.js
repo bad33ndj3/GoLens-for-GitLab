@@ -86,17 +86,19 @@ test('content entry composes replacement sessions and serves Chrome entry messag
     startSession: (input) => { sessions.push(input.preferences); coachStoragePassed = input.coachStorage; return { stop: async () => {} }; },
     openSettings: () => () => { modalOrder.push('settings-closed'); },
     showGuide: () => { modalOrder.push('guide-shown'); },
-    showUpgrade: async () => { modalOrder.push('upgrade-shown'); return true; },
+    showUpgrade: async () => { modalOrder.push('upgrade-shown'); return modalOrder.filter((value) => value === 'upgrade-shown').length > 1; },
     showSetup: async (_signal, _hideGeneratedFiles, preset) => { assert.equal(preset, 'custom'); return { preset: 'custom', hideGeneratedFiles: true }; },
   });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(savedSetup, undefined);
+  assert.equal(noticePending, true);
+  preferenceListener({ ...preferences, enabled: false });
+  nextReview();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(savedSetup.hideGeneratedFiles, true);
   assert.equal(savedSetup.shortcutBindings, undefined);
   assert.equal(savedOnboarding, 13);
   assert.equal(noticePending, false);
-  preferenceListener({ ...preferences, enabled: false });
-  nextReview();
-  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(sessions.length, 2);
   assert.equal(sessions[1].enabled, false);
   assert.equal(typeof coachStoragePassed.settings, 'function');
@@ -105,6 +107,6 @@ test('content entry composes replacement sessions and serves Chrome entry messag
   assert.equal(response.result.cache.bytes, 2);
   await new Promise((resolve) => runtimeListener({ type: 'golens:rewrite:open-settings' }, {}, resolve));
   await new Promise((resolve) => runtimeListener({ type: 'golens:rewrite:show-guide' }, {}, resolve));
-  assert.deepEqual(modalOrder, ['upgrade-shown', 'settings-closed', 'guide-shown']);
+  assert.deepEqual(modalOrder, ['upgrade-shown', 'upgrade-shown', 'settings-closed', 'guide-shown']);
   await entry.stop();
 });

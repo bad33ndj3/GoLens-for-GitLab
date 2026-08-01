@@ -1,5 +1,5 @@
 import { startGoIntelligenceWorker } from './go-intelligence/index.ts';
-import { ACTIVE_ARCHITECTURE_EPOCH, createStorageResetCoordinator } from './storage-reset.ts';
+import { ACTIVE_ARCHITECTURE_EPOCH, createStorageResetCoordinator } from './user-storage.ts';
 
 type WorkerRuntime = Pick<typeof chrome.runtime, 'onMessage'>;
 

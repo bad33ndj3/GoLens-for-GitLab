@@ -11,6 +11,9 @@ const root = rootArgument === -1
 const dist = join(root, 'dist');
 const output = join(dist, 'extension');
 const watchMode = process.argv.includes('--watch');
+const epochArgument = process.argv.indexOf('--architecture-epoch');
+const architectureEpoch = epochArgument === -1 ? 'null' : process.argv[epochArgument + 1];
+if (architectureEpoch !== 'null' && !/^\d+$/.test(architectureEpoch || '')) throw new Error('architecture epoch must be a non-negative integer');
 const contentScript = JSON.parse(await readFile(join(root, 'src/gitlab-host/content-script-registration.json'), 'utf8'));
 const staticFiles = [
   'LICENSE', 'PRIVACY.md', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md',
@@ -127,6 +130,7 @@ async function buildExtension() {
       sourcemap: watchMode ? 'external' : false,
       minify: false,
       treeShaking: true,
+      define: { __GOLENS_ACTIVE_ARCHITECTURE_EPOCH__: architectureEpoch },
       outdir: stage,
       logLevel: 'silent',
     };

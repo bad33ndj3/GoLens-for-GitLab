@@ -24,3 +24,9 @@ The first supported review shows the approved accessible upgrade notice before
 normal setup. Dismissal leaves it pending; Continue acknowledges it. Contract
 coverage exercises fresh, completed, interrupted, repeated, dismissed,
 acknowledged, and updated states.
+
+The upgrade notice is intentionally absent from the permanent Help feature
+inventory: it is a one-time migration disclosure that disappears after
+acknowledgement, not a reusable product capability. Its exact copy,
+accessibility, dismissal, and sequencing are covered at the GitLab Host and
+entrypoint seams instead of the legacy onboarding test.

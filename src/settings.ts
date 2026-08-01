@@ -1,8 +1,7 @@
 import { guideChapters } from './feature-catalog.ts';
 import { createSelfHostedAccess } from './gitlab-host/index.ts';
 import { ACTIONS, PRESETS, assignBinding, bindingForEvent, defaultBindings, mergeBindings, presetBindings, presetForBindings, type ShortcutPlatform } from './shortcuts.ts';
-import { createUserStorage } from './user-storage.ts';
-import { ensureStorageReady } from './storage-reset.ts';
+import { createUserStorage, ensureStorageReady } from './user-storage.ts';
 
 type Preferences = Readonly<{ enabled: boolean; hideGeneratedFiles: boolean; shortcutCoachEnabled: boolean; shortcutBindings: Readonly<Record<string, string>> }>;
 type PreferencePort = Readonly<{ get(): Promise<Preferences>; set(value: Partial<Preferences>): Promise<void>; subscribe(listener: (value: Preferences) => void): () => void }>;

@@ -4,8 +4,7 @@ import { createGitLabHost, showExtensionSettings, showFeatureGuide, showFirstRun
 import { openGoIntelligence, type Coverage, type CoverageRequest, type GoIntelligence, type SourceContent, type SourceReader } from './go-intelligence/index.ts';
 import { startReviewSession, type ReviewSessionHandle, type ReviewSessionPreferences } from './review-session/index.ts';
 import { ACTIONS, mergeBindings, presetBindings, presetForBindings, type ShortcutPlatform } from './shortcuts.ts';
-import { createUserStorage } from './user-storage.ts';
-import { acknowledgeUpgradeNotice as acknowledgeStoredUpgrade, ensureStorageReady, type StorageResetState } from './storage-reset.ts';
+import { acknowledgeUpgradeNotice as acknowledgeStoredUpgrade, createUserStorage, ensureStorageReady, type StorageResetState } from './user-storage.ts';
 
 const COMMANDS = {
   focusFileSearch: 'focus-file-search', clearFileSearch: 'clear-file-search', semanticJump: 'semantic-jump',
@@ -192,6 +191,7 @@ export async function startContentEntry({
     })().catch(() => {});
   };
   const running = runReviewSessionComposition({ host, signal: controller.signal, start(bound, signal) {
+    if (upgradeNoticePending) upgradeDismissed = false;
     const source = { repositoryKey: bound.review.identity.repositoryKey, commitSha: bound.review.identity.headSha };
     const intelligence = openIntelligence({ source, reader: createHostSourceReader(bound, source), runtime: runtime as never });
     active = { intelligence, signal, fullProject: false };
