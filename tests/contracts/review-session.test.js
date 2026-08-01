@@ -97,6 +97,15 @@ test('Review Session waits for fullscreen confirmation and reconciles the comple
   assert.deepEqual(projections.at(-1).controls.map(({ command }) => command), [
     'toggle-enabled', 'toggle-focus', 'cache-related', 'open-bookmarks',
   ]);
+  stream.emit({ type: 'host-revised', revision: 2, surface: 'changes' });
+  await tick();
+  assert.equal(projections.at(-1).focusMode, true, 'DOM reconciliation cannot end browser-confirmed focus');
+  stream.emit({ type: 'intent', revision: 2, command: 'toggle-enabled' });
+  await tick();
+  assert.equal(projections.at(-1).focusMode, true, 'disablement requests fullscreen exit but waits for confirmation');
+  stream.emit({ type: 'fullscreen-changed', revision: 2, active: false });
+  await tick();
+  assert.equal(projections.at(-1).focusMode, false);
   await session.stop();
 });
 
@@ -276,4 +285,132 @@ test('the composition root replaces immutable Review Sessions instead of retarge
   assert.deepEqual(started, ['42', '43']);
   assert.deepEqual(stopped, ['42', '43']);
   assert.ok(signals.every(({ aborted }) => aborted));
+});
+
+test('Review Session reconciles synchronized preferences and saves enablement through one port', async () => {
+  const stream = events();
+  const projections = [];
+  const saved = [];
+  let notify;
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: { query: async () => assert.fail('no semantic query expected') },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+    preferencePort: {
+      subscribe(listener) { notify = listener; return () => { notify = undefined; }; },
+      async set(update) { saved.push(update); },
+    },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  await tick();
+  notify({ enabled: true, hideGeneratedFiles: true });
+  await tick();
+  assert.equal(projections.at(-1).hideGeneratedFiles, true);
+  stream.emit({ type: 'intent', revision: 1, command: 'toggle-enabled' });
+  await tick();
+  assert.deepEqual(saved, [{ enabled: false }]);
+  await session.stop();
+  assert.equal(notify, undefined);
+});
+
+test('Review Session rejects a semantic result from the snapshot replaced by Coverage', async () => {
+  const stream = events();
+  const projections = [];
+  let resolveQuery;
+  const session = startReviewSession({
+    host: hostFor(stream, { projections, reads: [() => ({ kind: 'ok', value: { files: [{ path: repositoryPath('pkg/main.go'), contentId: 'blob' }] } })] }),
+    intelligence: {
+      query: () => new Promise((resolve) => { resolveQuery = resolve; }),
+      async ensureCoverage() {
+        return { status: 'ready', source, snapshot: 'new', coverage: { scope: 'indexed-packages', complete: true, packageCount: 1, packagePaths: ['pkg'] } };
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+  const target = { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source };
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
+  await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'cache-related' });
+  await tick();
+  await tick();
+  resolveQuery({ status: 'resolved', isDefinition: false, source, snapshot: 'old', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] }, symbol: { signature: 'late result', identity: { source, path: target.path, line: 2, column: 1, kind: 'function', name: 'Target' }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } });
+  await tick();
+
+  assert.notEqual(projections.at(-1).status, 'late result');
+  await session.stop();
+});
+
+test('Review Session executes full-file and relative navigation helpers', async () => {
+  const stream = events();
+  const projections = [];
+  const actions = [];
+  const first = { revision: 1, token: 'first', path: repositoryPath('a.go'), side: 'new', line: 2, identifier: 'First', source };
+  const second = { revision: 1, token: 'second', path: repositoryPath('b.go'), side: 'new', line: 8, identifier: 'Second', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections, actions }),
+    intelligence: { query: async (request) => ({ status: 'missing', reason: 'identifier', source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [String(request.path)] } }) },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: first });
+  await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: second });
+  await tick();
+  stream.emit({ type: 'intent', revision: 1, command: 'previous-file' });
+  await tick();
+  assert.equal(actions.at(-1).action, 'reveal-target');
+  assert.equal(actions.at(-1).target.token, first.token);
+
+  stream.emit({ type: 'intent', revision: 1, command: 'toggle-full-file', path: second.path });
+  await tick();
+  assert.equal(actions.at(-1).action, 'set-full-file');
+  assert.equal(actions.at(-1).full, true);
+  assert.deepEqual(projections.at(-1).fullFileControls, [{ path: second.path, full: true }]);
+  await session.stop();
+});
+
+test('Review Session keeps semantic choices and confirmed review milestones inside the workflow', async () => {
+  const stream = events();
+  const projections = [];
+  const actions = [];
+  const definition = { revision: 1, token: 'definition', path: repositoryPath('definition.go'), side: 'new', line: 2, identifier: 'Target', source };
+  const first = { revision: 1, token: 'first-use', path: repositoryPath('first.go'), side: 'new', line: 4, identifier: 'Target', source };
+  const second = { revision: 1, token: 'second-use', path: repositoryPath('second.go'), side: 'new', line: 6, identifier: 'Target', source };
+  const symbol = { source, path: definition.path, line: definition.line, column: 1, kind: 'function', name: 'Target' };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections, actions, reads: [() => ({ kind: 'ok', value: { state: 'opened', approvers: ['casper'], unresolvedDiscussions: 0 } })] }),
+    intelligence: {
+      async query(request) {
+        const context = { source, snapshot: 'stable', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] } };
+        if (request.operation === 'find-references') return { ...context, status: 'references', symbol: request.symbol, locations: [
+          { path: first.path, line: first.line, column: 1 }, { path: second.path, line: second.line, column: 1 },
+        ] };
+        if (request.path === definition.path) return { ...context, status: 'resolved', isDefinition: true, symbol: { signature: 'func Target()', identity: symbol, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } };
+        return { ...context, status: 'missing', reason: 'identifier' };
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  for (const target of [first, second]) {
+    stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
+    await tick();
+  }
+  stream.emit({ type: 'intent', revision: 1, command: 'activate-target', target: definition });
+  await tick();
+  await tick();
+  assert.equal(projections.at(-1).surface.actions.length, 2);
+  stream.emit({ type: 'intent', revision: 1, command: 'surface-action', actionId: `destination:${second.token}` });
+  await tick();
+  assert.equal(actions.at(-1).target.token, second.token);
+
+  stream.emit({ type: 'intent', revision: 1, command: 'native-approve' });
+  await tick();
+  assert.equal(projections.at(-1).announcement, 'Approval confirmed.');
+  await session.stop();
 });

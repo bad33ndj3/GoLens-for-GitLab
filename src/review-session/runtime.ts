@@ -8,6 +8,10 @@ export type ReviewSessionBookmarkPort = Readonly<{
   list(scope: { origin: string; project: string; mergeRequest: string }): Promise<readonly SessionBookmark[]>;
   toggle(input: { scope: unknown; location: unknown; anchor?: unknown }): Promise<{ action: 'added' | 'removed'; record: SessionBookmark }>;
 }>;
+export type ReviewSessionPreferencePort = Readonly<{
+  subscribe(listener: (preferences: ReviewSessionPreferences) => void): () => void;
+  set(update: Partial<ReviewSessionPreferences>): Promise<void>;
+}>;
 export type ReviewSessionHandle = Readonly<{ stop(): Promise<void> }>;
 
 function aborted(error: unknown): boolean {
@@ -19,14 +23,14 @@ export function runReviewSession({
   intelligence,
   preferences,
   bookmarks,
-  savePreferences,
+  preferencePort,
   signal,
 }: {
   host: BoundGitLabHost;
   intelligence: Pick<GoIntelligence, 'query'> & Partial<Pick<GoIntelligence, 'ensureCoverage'>>;
   preferences: ReviewSessionPreferences;
   bookmarks?: ReviewSessionBookmarkPort;
-  savePreferences?: (update: Partial<ReviewSessionPreferences>) => Promise<void>;
+  preferencePort?: ReviewSessionPreferencePort;
   signal?: AbortSignal;
 }): ReviewSessionHandle {
   const controller = new AbortController();
@@ -48,10 +52,22 @@ export function runReviewSession({
     return child.signal;
   };
   const current = (revision: HostRevision) => !controller.signal.aborted && state.revision === revision;
+  const abortable = <T>(operation: Promise<T>, operationSignal: AbortSignal): Promise<T> => {
+    if (operationSignal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => reject(new DOMException('Aborted', 'AbortError'));
+      operationSignal.addEventListener('abort', abort, { once: true });
+      operation.then(resolve, reject).finally(() => operationSignal.removeEventListener('abort', abort));
+    });
+  };
 
   const dispatch = async (event: SessionRuntimeEvent): Promise<void> => {
     if (controller.signal.aborted) return;
-    if (event.type === 'host-revised') scopes.get('semantic')?.abort();
+    if (event.type === 'host-revised') {
+      scopes.get('semantic')?.abort();
+      scopes.get('bookmarks')?.abort();
+      for (const [name, scope] of scopes) if (name.startsWith('action:')) scope.abort();
+    }
     const reduced = reduceSession(state, event);
     state = reduced.state;
     for (const effect of reduced.effects) run(effect);
@@ -76,17 +92,18 @@ export function runReviewSession({
   });
   const loadBookmarks = async (effect: Extract<SessionEffect, { type: 'load-bookmarks' }>) => {
     if (!bookmarks) return;
-    const records = await bookmarks.list(bookmarkScope());
+    const records = await abortable(bookmarks.list(bookmarkScope()), scoped('bookmarks'));
     if (current(effect.revision)) await dispatch({ type: 'bookmarks-loaded', sessionId, revision: effect.revision, operationId: effect.operationId, bookmarks: records, open: effect.open });
   };
   const toggleBookmark = async (effect: Extract<SessionEffect, { type: 'toggle-bookmark' }>) => {
     if (!bookmarks) return;
-    const outcome = await bookmarks.toggle({
+    const signal = scoped('bookmarks');
+    const outcome = await abortable(bookmarks.toggle({
       scope: bookmarkScope(),
       location: { path: effect.target.path, side: effect.target.side, startLine: effect.target.line, endLine: effect.target.line },
       anchor: { symbol: effect.target.identifier || '', selectionHash: '', beforeHash: '', afterHash: '' },
-    });
-    const records = await bookmarks.list(bookmarkScope());
+    }), signal);
+    const records = await abortable(bookmarks.list(bookmarkScope()), signal);
     if (current(effect.revision)) await dispatch({ type: 'bookmark-toggled', sessionId, revision: effect.revision, operationId: effect.operationId, bookmarks: records, action: outcome.action });
   };
   const cacheRelated = async (effect: Extract<SessionEffect, { type: 'cache-related' }>) => {
@@ -100,6 +117,12 @@ export function runReviewSession({
       if (current(effect.revision)) void dispatch({ type: 'coverage-progress', sessionId, revision: effect.revision, operationId: effect.operationId, progress });
     }, signal);
     await dispatch({ type: 'coverage-completed', sessionId, revision: effect.revision, operationId: effect.operationId, outcome });
+  };
+  const readReviewStatus = async (effect: Extract<SessionEffect, { type: 'read-review-status' }>) => {
+    const outcome = await host.read({ operation: 'review-status' }, scoped('review-status'));
+    const confirmed = outcome.kind === 'ok' && 'state' in outcome.value
+      && (effect.milestone === 'merge' ? /merged/i.test(outcome.value.state) : outcome.value.approvers.length > 0);
+    await dispatch({ type: 'review-status-read', sessionId, revision: effect.revision, operationId: effect.operationId, milestone: effect.milestone, confirmed });
   };
 
   const failed = (effect: SessionEffect) => (error: unknown) => {
@@ -118,7 +141,8 @@ export function runReviewSession({
           : effect.type === 'cache-related' ? cacheRelated(effect)
             : effect.type === 'load-bookmarks' ? loadBookmarks(effect)
               : effect.type === 'toggle-bookmark' ? toggleBookmark(effect)
-                : savePreferences?.({ enabled: effect.enabled }) || Promise.resolve();
+                : effect.type === 'read-review-status' ? readReviewStatus(effect)
+                  : preferencePort ? abortable(preferencePort.set({ enabled: effect.enabled }), scoped('preferences')) : Promise.resolve();
       let tracked: Promise<void>;
       tracked = operation.catch(failed(effect)).finally(() => pending.delete(tracked));
       pending.add(tracked);
@@ -132,9 +156,11 @@ export function runReviewSession({
       if (!controller.signal.aborted) throw error;
     }
   })();
+  const unsubscribePreferences = preferencePort?.subscribe((next) => { void dispatch({ type: 'preferences-changed', preferences: next }); });
   const stop = async () => {
     if (stopped) return;
     stopped = true;
+    unsubscribePreferences?.();
     controller.abort();
     for (const scope of scopes.values()) scope.abort();
     await running.catch((error) => { if (!aborted(error)) throw error; });

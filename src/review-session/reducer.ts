@@ -1,5 +1,5 @@
 import type { CoverageProgress, SemanticOutcome, SemanticQuery, SemanticSnapshotRevision } from '../go-intelligence/index.ts';
-import type { ActiveSurfaceProjection, ControlProjection, DiffTarget, HostEvent, HostProjection, HostRevision, ShortcutProjection } from '../gitlab-host/index.ts';
+import type { ActiveSurfaceProjection, ControlProjection, DiffTarget, FullFileControlProjection, HostEvent, HostProjection, HostRevision, ShortcutProjection } from '../gitlab-host/index.ts';
 
 export type SessionBookmark = Readonly<{
   id: string;
@@ -32,10 +32,15 @@ export type SessionState = Readonly<{
   cacheBusy: boolean;
   nextOperationId: number;
   semantic: SemanticWork | undefined;
+  snapshot: SemanticSnapshotRevision | undefined;
   cacheOperationId: number | undefined;
   bookmarkOperationId: number | undefined;
+  reviewOperationId: number | undefined;
   selected: DiffTarget | undefined;
   targets: readonly DiffTarget[];
+  occurrences: readonly DiffTarget[];
+  fullFileControls: readonly FullFileControlProjection[];
+  choices: readonly DiffTarget[];
   bookmarks: readonly SessionBookmark[];
   history: readonly DiffTarget[];
   historyIndex: number;
@@ -48,7 +53,8 @@ export type SessionState = Readonly<{
 type PerformEffect =
   | Readonly<{ action: 'set-fullscreen'; active: boolean }>
   | Readonly<{ action: 'focus-file-search' | 'clear-file-search' }>
-  | Readonly<{ action: 'reveal-target'; target: DiffTarget }>;
+  | Readonly<{ action: 'reveal-target'; target: DiffTarget }>
+  | Readonly<{ action: 'set-full-file'; path: DiffTarget['path']; full: boolean }>;
 
 export type SessionEffect =
   | Readonly<{ type: 'apply'; projection: HostProjection }>
@@ -57,27 +63,31 @@ export type SessionEffect =
   | Readonly<{ type: 'cache-related'; operationId: number; revision: HostRevision }>
   | Readonly<{ type: 'load-bookmarks'; operationId: number; revision: HostRevision; open: boolean }>
   | Readonly<{ type: 'toggle-bookmark'; operationId: number; revision: HostRevision; target: DiffTarget }>
+  | Readonly<{ type: 'read-review-status'; operationId: number; revision: HostRevision; milestone: 'approval' | 'merge' }>
   | Readonly<{ type: 'save-enabled'; enabled: boolean }>;
 
 export type SessionRuntimeEvent =
   | HostEvent
+  | Readonly<{ type: 'preferences-changed'; preferences: SessionPreferences }>
   | Readonly<{ type: 'semantic-completed'; sessionId: string; revision: HostRevision; operationId: number; outcome: SemanticOutcome }>
   | Readonly<{ type: 'semantic-failed'; sessionId: string; revision: HostRevision; operationId: number }>
   | Readonly<{ type: 'coverage-progress'; sessionId: string; revision: HostRevision; operationId: number; progress: CoverageProgress }>
   | Readonly<{ type: 'coverage-completed'; sessionId: string; revision: HostRevision; operationId: number; outcome: { status: string; source: DiffTarget['source']; snapshot: string } }>
   | Readonly<{ type: 'bookmarks-loaded'; sessionId: string; revision: HostRevision; operationId: number; bookmarks: readonly SessionBookmark[]; open: boolean }>
-  | Readonly<{ type: 'bookmark-toggled'; sessionId: string; revision: HostRevision; operationId: number; bookmarks: readonly SessionBookmark[]; action: 'added' | 'removed' }>;
+  | Readonly<{ type: 'bookmark-toggled'; sessionId: string; revision: HostRevision; operationId: number; bookmarks: readonly SessionBookmark[]; action: 'added' | 'removed' }>
+  | Readonly<{ type: 'review-status-read'; sessionId: string; revision: HostRevision; operationId: number; milestone: 'approval' | 'merge'; confirmed: boolean }>;
 
 function withoutTransient(state: SessionState): SessionState {
-  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, selected: undefined,
-    targets: [], bookmarks: [], history: [], historyIndex: -1, status: undefined, announcement: undefined, surface: undefined, destination: undefined });
+  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, selected: undefined,
+    targets: [], occurrences: [], fullFileControls: [], choices: [], bookmarks: [], history: [], historyIndex: -1, status: undefined, announcement: undefined, surface: undefined, destination: undefined });
 }
 
 export function initialSessionState(sessionId: string, source: DiffTarget['source'], preferences: SessionPreferences): SessionState {
   return Object.freeze({
     sessionId, source, revision: null, enabled: preferences.enabled, hideGeneratedFiles: preferences.hideGeneratedFiles,
     shortcuts: preferences.shortcuts || [], focusMode: false, cacheBusy: false, nextOperationId: 1,
-    semantic: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, selected: undefined, targets: [], bookmarks: [], history: [], historyIndex: -1,
+    semantic: undefined, snapshot: undefined, cacheOperationId: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, selected: undefined,
+    targets: [], occurrences: [], fullFileControls: [], choices: [], bookmarks: [], history: [], historyIndex: -1,
     status: undefined, announcement: undefined, surface: undefined, destination: undefined,
   });
 }
@@ -112,7 +122,9 @@ function projection(state: SessionState): HostProjection | null {
     ] satisfies readonly ControlProjection[]),
     shortcuts: state.shortcuts,
     interactiveTargets: state.targets,
+    occurrences: state.occurrences.map(({ token }) => token),
     bookmarks: bookmarkTokens(state),
+    fullFileControls: state.fullFileControls,
     ...(state.destination ? { destination: state.destination } : {}),
     ...(state.status ? { status: state.status } : {}),
     ...(state.announcement ? { announcement: state.announcement } : {}),
@@ -131,7 +143,8 @@ function remember(state: SessionState, target: DiffTarget): SessionState {
 }
 
 function startQuery(state: SessionState, target: DiffTarget, purpose: SemanticWork['purpose'], request: SemanticQuery, expectedSnapshot?: string) {
-  const work: SemanticWork = Object.freeze({ operationId: state.nextOperationId, target, purpose, request, ...(expectedSnapshot ? { expectedSnapshot } : {}) });
+  const snapshot = expectedSnapshot || state.snapshot;
+  const work: SemanticWork = Object.freeze({ operationId: state.nextOperationId, target, purpose, request, ...(snapshot ? { expectedSnapshot: snapshot } : {}) });
   return result(Object.freeze({ ...state, semantic: work, nextOperationId: state.nextOperationId + 1, status: purpose === 'hover' ? undefined : 'Resolving Go symbol…' }), [{ type: 'query', ...work }]);
 }
 
@@ -153,8 +166,14 @@ function semanticStatus(outcome: SemanticOutcome): string | undefined {
 function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEvent, { type: 'semantic-completed' }>) {
   const work = state.semantic;
   if (!work || event.sessionId !== state.sessionId || event.operationId !== work.operationId || event.revision !== state.revision
-    || !sameSource(event.outcome.source, work.target.source) || (work.expectedSnapshot && event.outcome.snapshot !== work.expectedSnapshot)) return { state, effects: [] };
-  const cleared = Object.freeze({ ...state, semantic: undefined });
+    || !sameSource(event.outcome.source, state.source) || !sameSource(work.target.source, state.source)
+    || ((work.expectedSnapshot || state.snapshot) && event.outcome.snapshot !== (work.expectedSnapshot || state.snapshot))) return { state, effects: [] };
+  let occurrences = state.occurrences;
+  if (event.outcome.status === 'resolved') {
+    const name = event.outcome.symbol.identity.name;
+    occurrences = state.targets.filter((target) => target.identifier === name && sameSource(target.source, event.outcome.source));
+  }
+  const cleared = Object.freeze({ ...state, semantic: undefined, snapshot: event.outcome.snapshot, occurrences });
   if (event.outcome.status === 'resolved' && work.purpose === 'activate') {
     const destination = targetFor(cleared, event.outcome.symbol.identity, event.outcome.source);
     if (!event.outcome.isDefinition && destination) return navigate(cleared, work.target, destination);
@@ -170,8 +189,9 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
       : event.outcome.candidates.map(({ definition }) => definition.identity);
     const destinations = locations.map((location) => targetFor(cleared, location, event.outcome.source)).filter((target): target is DiffTarget => Boolean(target));
     if (destinations.length === 1) return navigate(cleared, work.target, destinations[0]!);
-    const surface = Object.freeze({ kind: 'popover' as const, title: 'Go destinations', body: destinations.length ? `${destinations.length} destinations in this diff.` : 'No loaded destination in this diff.' });
-    return result(Object.freeze({ ...cleared, surface, status: semanticStatus(event.outcome) }));
+    const surface = Object.freeze({ kind: 'popover' as const, title: 'Go destinations', body: destinations.length ? `${destinations.length} destinations in this diff.` : 'No loaded destination in this diff.',
+      actions: destinations.map(({ token, path, line }) => ({ id: `destination:${token}`, label: `${path}:${line}` })) });
+    return result(Object.freeze({ ...cleared, choices: destinations, surface, status: semanticStatus(event.outcome) }));
   }
   const status = semanticStatus(event.outcome);
   const surface = event.outcome.status === 'resolved'
@@ -181,10 +201,14 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
 }
 
 export function reduceSession(state: SessionState, event: SessionRuntimeEvent): Readonly<{ state: SessionState; effects: readonly SessionEffect[] }> {
+  if (event.type === 'preferences-changed') {
+    return result(Object.freeze({ ...state, enabled: event.preferences.enabled, hideGeneratedFiles: event.preferences.hideGeneratedFiles,
+      shortcuts: event.preferences.shortcuts || state.shortcuts }));
+  }
   if (event.type === 'host-revised') {
     if (state.revision !== null && Number(event.revision) <= Number(state.revision)) return { state, effects: [] };
     const operationId = state.nextOperationId;
-    const next = Object.freeze({ ...withoutTransient(state), revision: event.revision, focusMode: false, nextOperationId: operationId + 1 });
+    const next = Object.freeze({ ...withoutTransient(state), revision: event.revision, nextOperationId: operationId + 1 });
     return result(Object.freeze({ ...next, bookmarkOperationId: operationId }), [{ type: 'load-bookmarks', operationId, revision: event.revision, open: false }]);
   }
   if (event.type === 'semantic-completed') return semanticCompletion(state, event);
@@ -201,7 +225,8 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
   if (event.type === 'coverage-completed') {
     if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.cacheOperationId
       || !sameSource(event.outcome.source, state.source)) return { state, effects: [] };
-    return result(Object.freeze({ ...state, cacheBusy: false, cacheOperationId: undefined, status: event.outcome.status === 'ready' ? 'Related package cache is ready.' : 'Related package cache is unavailable.' }));
+    return result(Object.freeze({ ...state, cacheBusy: false, cacheOperationId: undefined, snapshot: event.outcome.snapshot || state.snapshot,
+      status: event.outcome.status === 'ready' ? 'Related package cache is ready.' : 'Related package cache is unavailable.' }));
   }
   if (event.type === 'bookmarks-loaded' || event.type === 'bookmark-toggled') {
     if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.bookmarkOperationId) return { state, effects: [] };
@@ -212,13 +237,17 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const announcement = event.type === 'bookmark-toggled' ? `Bookmark ${event.action}.` : state.announcement;
     return result(Object.freeze({ ...state, bookmarks: event.bookmarks, ...(surface ? { surface } : {}), ...(announcement ? { announcement } : {}) }));
   }
+  if (event.type === 'review-status-read') {
+    if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.reviewOperationId) return { state, effects: [] };
+    return event.confirmed ? result(Object.freeze({ ...state, announcement: `${event.milestone === 'approval' ? 'Approval' : 'Merge'} confirmed.` })) : { state, effects: [] };
+  }
   if (state.revision === null || event.revision !== state.revision) return { state, effects: [] };
   if (event.type === 'fullscreen-changed') return result(Object.freeze({ ...state, focusMode: event.active, status: undefined }));
 
   if (event.command === 'toggle-enabled') {
     const operationId = state.nextOperationId;
     const enabled = !state.enabled;
-    return result(Object.freeze({ ...state, enabled, focusMode: false, nextOperationId: operationId + 1 }), [
+    return result(Object.freeze({ ...state, enabled, nextOperationId: operationId + 1 }), [
       { type: 'save-enabled', enabled },
       ...(state.focusMode ? [{ type: 'perform' as const, action: 'set-fullscreen' as const, active: false, operationId }] : []),
     ]);
@@ -232,6 +261,7 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     return { state: Object.freeze({ ...state, nextOperationId: operationId + 1 }), effects: [{ type: 'perform', action: event.command, operationId }] };
   }
   if ((event.command === 'hover-target' || event.command === 'activate-target') && event.target.identifier && state.enabled) {
+    if (!sameSource(event.target.source, state.source)) return { state, effects: [] };
     const next = remember(state, event.target);
     return startQuery(next, event.target, event.command === 'hover-target' ? 'hover' : 'activate', {
       operation: 'resolve-symbol', path: event.target.path, line: event.target.line, column: event.target.column || 1, identifier: event.target.identifier,
@@ -252,6 +282,43 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const operationId = state.nextOperationId;
     return { state: Object.freeze({ ...state, bookmarkOperationId: operationId, nextOperationId: operationId + 1 }), effects: [{ type: 'toggle-bookmark', operationId, revision: state.revision, target: state.selected }] };
   }
+  if (event.command === 'toggle-full-file') {
+    const current = state.fullFileControls.find(({ path }) => path === event.path);
+    const full = !current?.full;
+    const controls = [...state.fullFileControls.filter(({ path }) => path !== event.path), { path: event.path, full }];
+    const operationId = state.nextOperationId;
+    return result(Object.freeze({ ...state, fullFileControls: controls, nextOperationId: operationId + 1 }), [
+      { type: 'perform', action: 'set-full-file', path: event.path, full, operationId },
+    ]);
+  }
+  if (event.command === 'surface-action') {
+    const target = state.choices.find(({ token }) => event.actionId === `destination:${token}`);
+    return target && state.selected ? navigate(state, state.selected, target) : { state, effects: [] };
+  }
+  if (event.command === 'native-approve' || event.command === 'native-merge') {
+    const operationId = state.nextOperationId;
+    return { state: Object.freeze({ ...state, reviewOperationId: operationId, nextOperationId: operationId + 1 }), effects: [{
+      type: 'read-review-status', operationId, revision: state.revision, milestone: event.command === 'native-approve' ? 'approval' : 'merge',
+    }] };
+  }
+  if (event.command === 'previous-occurrence' || event.command === 'next-occurrence'
+    || event.command === 'previous-hunk' || event.command === 'next-hunk'
+    || event.command === 'previous-file' || event.command === 'next-file'
+    || event.command === 'previous-bookmark' || event.command === 'next-bookmark') {
+    const backwards = event.command.startsWith('previous-');
+    const kind = event.command.slice(event.command.indexOf('-') + 1);
+    let targets = kind === 'occurrence' ? state.occurrences
+      : kind === 'bookmark' ? state.targets.filter(({ token }) => bookmarkTokens(state).includes(token))
+        : [...state.targets].sort((left, right) => String(left.path).localeCompare(String(right.path)) || left.line - right.line);
+    if (kind === 'file') targets = targets.filter((target, index) => !index || target.path !== targets[index - 1]?.path);
+    if (!targets.length) return result(Object.freeze({ ...state, announcement: `No ${kind} destination.` }));
+    const current = Math.max(0, targets.findIndex(({ token }) => token === state.selected?.token));
+    const target = targets[(current + (backwards ? targets.length - 1 : 1)) % targets.length]!;
+    const operationId = state.nextOperationId;
+    return result(Object.freeze({ ...state, selected: target, destination: target.token, nextOperationId: operationId + 1 }), [
+      { type: 'perform', action: 'reveal-target', target, operationId },
+    ]);
+  }
   if ((event.command === 'history-back' || event.command === 'history-forward') && state.history.length) {
     const index = Math.max(0, Math.min(state.history.length - 1, state.historyIndex + (event.command === 'history-back' ? -1 : 1)));
     const target = state.history[index]!;
@@ -259,7 +326,7 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     return result(Object.freeze({ ...state, historyIndex: index, selected: target, destination: target.token, nextOperationId: operationId + 1 }), [{ type: 'perform', action: 'reveal-target', target, operationId }]);
   }
   if (event.command === 'dismiss-surface') {
-    return result(Object.freeze({ ...state, surface: undefined, status: undefined, announcement: undefined }));
+    return result(Object.freeze({ ...state, choices: [], surface: undefined, status: undefined, announcement: undefined }));
   }
   return { state, effects: [] };
 }

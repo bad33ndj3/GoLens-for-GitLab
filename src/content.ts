@@ -1,4 +1,4 @@
-import type { BoundGitLabHost, GitLabHost } from './gitlab-host/index.ts';
+import type { BoundGitLabHost, GitLabHost, ReviewDescriptor } from './gitlab-host/index.ts';
 import type { ReviewSessionHandle } from './review-session/index.ts';
 
 export async function runReviewSessionComposition({
@@ -11,7 +11,7 @@ export async function runReviewSessionComposition({
   signal: AbortSignal;
 }): Promise<void> {
   let active: Readonly<{ handle: ReviewSessionHandle; controller: AbortController }> | null = null;
-  let identity = '';
+  let identity: ReviewDescriptor['identity'] | null = null;
   const stopActive = async () => {
     const current = active;
     active = null;
@@ -21,8 +21,11 @@ export async function runReviewSessionComposition({
   try {
     for await (const review of host.observeReviews(signal)) {
       if (signal.aborted) break;
-      const nextIdentity = review ? JSON.stringify(review.identity) : '';
-      if (nextIdentity === identity) continue;
+      const nextIdentity = review?.identity || null;
+      if ((!nextIdentity && !identity) || (nextIdentity && identity
+        && nextIdentity.origin === identity.origin && nextIdentity.repositoryKey === identity.repositoryKey
+        && nextIdentity.projectPath === identity.projectPath && nextIdentity.mergeRequestIid === identity.mergeRequestIid
+        && nextIdentity.headSha === identity.headSha)) continue;
       await stopActive();
       identity = nextIdentity;
       if (review) {

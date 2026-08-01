@@ -1,23 +1,23 @@
 import type { GoIntelligence } from '../go-intelligence/index.ts';
 import type { BoundGitLabHost } from '../gitlab-host/index.ts';
-import { runReviewSession, type ReviewSessionBookmarkPort, type ReviewSessionHandle, type ReviewSessionPreferences } from './runtime.ts';
+import { runReviewSession, type ReviewSessionBookmarkPort, type ReviewSessionHandle, type ReviewSessionPreferencePort, type ReviewSessionPreferences } from './runtime.ts';
 
-export type { ReviewSessionBookmark, ReviewSessionBookmarkPort, ReviewSessionHandle, ReviewSessionPreferences } from './runtime.ts';
+export type { ReviewSessionBookmark, ReviewSessionBookmarkPort, ReviewSessionHandle, ReviewSessionPreferencePort, ReviewSessionPreferences } from './runtime.ts';
 
 export function startReviewSession({
   host,
   intelligence,
   preferences,
   bookmarks,
-  savePreferences,
+  preferencePort,
   signal,
 }: {
   host: BoundGitLabHost;
   intelligence: Pick<GoIntelligence, 'query'> & Partial<Pick<GoIntelligence, 'ensureCoverage'>>;
   preferences: ReviewSessionPreferences;
   bookmarks?: ReviewSessionBookmarkPort;
-  savePreferences?: (update: Partial<ReviewSessionPreferences>) => Promise<void>;
+  preferencePort?: ReviewSessionPreferencePort;
   signal?: AbortSignal;
 }): ReviewSessionHandle {
-  return runReviewSession({ host, intelligence, preferences, ...(bookmarks ? { bookmarks } : {}), ...(savePreferences ? { savePreferences } : {}), ...(signal ? { signal } : {}) });
+  return runReviewSession({ host, intelligence, preferences, ...(bookmarks ? { bookmarks } : {}), ...(preferencePort ? { preferencePort } : {}), ...(signal ? { signal } : {}) });
 }
