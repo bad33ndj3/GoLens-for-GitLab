@@ -1,6 +1,6 @@
 # Remove legacy runtime and harness
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 25
 
 ## Acceptance criteria
