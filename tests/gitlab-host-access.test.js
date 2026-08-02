@@ -14,7 +14,7 @@ test('manifest limits automatic access to GitLab.com and keeps self-hosted acces
   assert.deepEqual(manifest.host_permissions, ['https://gitlab.com/*']);
   assert.deepEqual(manifest.optional_host_permissions, ['http://*/*', 'https://*/*']);
   assert.deepEqual(manifest.content_scripts[0].matches, ['https://gitlab.com/*']);
-  assert.deepEqual(manifest.content_scripts[0].js, ['shortcut-settings.js', 'bookmark-store.js', 'go-navigation.js', 'content.js']);
+  assert.deepEqual(manifest.content_scripts[0].js, ['content.js']);
   assert.ok(manifest.permissions.includes('scripting'));
 });
 

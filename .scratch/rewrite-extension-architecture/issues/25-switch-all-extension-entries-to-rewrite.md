@@ -1,6 +1,6 @@
 # Switch all extension entries to rewrite
 
-Status: ready-for-agent
+Status: resolved
 Blocked by: 22, 23, 24
 
 ## Acceptance criteria
