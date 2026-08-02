@@ -289,7 +289,7 @@ export function createGitLabPage({
 
     function removeProjection(): void {
       document.querySelectorAll('golens-host-surface:not(#golens-onboarding-root):not(#golens-feature-guide-root)').forEach((node) => node.remove());
-      document.querySelectorAll('[data-golens-generated-hidden],[data-golens-generated-file-row],[data-golens-generated-folder],[data-golens-test-file],[data-golens-full-file],[data-golens-interactive],[data-golens-occurrence],[data-golens-bookmark],[data-golens-destination]').forEach((node) => {
+      document.querySelectorAll('[data-golens-generated-hidden],[data-golens-generated-file-row],[data-golens-generated-folder],[data-golens-test-file],[data-golens-go-test-file-row],[data-golens-full-file],[data-golens-interactive],[data-golens-occurrence],[data-golens-bookmark],[data-golens-destination]').forEach((node) => {
         for (const name of [...node.getAttributeNames()].filter((name) => name.startsWith('data-golens-'))) node.removeAttribute(name);
       });
       document.querySelectorAll('[data-golens-status]').forEach((node) => node.remove());
@@ -330,7 +330,7 @@ export function createGitLabPage({
         }
         if (next.decorateTestFiles && path.endsWith('_test.go')) root.setAttribute('data-golens-test-file', '');
         if (next.decorateTestFiles && path.endsWith('_test.go')) for (const row of document.querySelectorAll<HTMLElement>('[data-file-row]')) {
-          if ([row.title, row.getAttribute('aria-label'), row.textContent].some((value) => value?.includes(path))) row.setAttribute('data-golens-test-file', '');
+          if ([row.title, row.getAttribute('aria-label'), row.textContent].some((value) => value?.includes(path))) row.setAttribute('data-golens-go-test-file-row', '');
         }
         const fullFile = next.fullFileControls?.find((control) => control.path === path);
         if (fullFile) {
@@ -370,45 +370,53 @@ export function createGitLabPage({
         const host = activeSurface(document, next.surface);
         host.dataset.golensActiveSurface = '';
         if (next.surface.kind === 'popover') {
-          let targetEl: Element | null = null;
-          if (next.selected) {
-            const tokenEl = elements.get(next.selected.token);
-            if (tokenEl?.isConnected) {
-              targetEl = tokenEl;
-            } else {
-              const root = fileRoots(document).find((r) => normalizedPath(r) === next.selected?.path);
-              if (root) {
-                const lineEl = targetElement(root, next.selected.line, next.selected.side);
-                const row = lineEl?.closest('tr,[role="row"]');
-                if (row) {
-                  const codeCell = codeCellForSide(row, next.selected.side);
-                  if (codeCell && next.selected.identifier) {
-                    const matches = [...codeCell.querySelectorAll('*')].filter((el) => el.textContent?.trim() === next.selected?.identifier);
-                    targetEl = matches[next.selected.occurrence || 0] || matches[0] || codeCell;
-                  } else {
-                    targetEl = codeCell || lineEl;
+          const width = 440;
+          const height = 280;
+          let left: number | undefined;
+          let top: number | undefined;
+          if (next.surface.anchor) {
+            const gap = 18;
+            const { x, y } = next.surface.anchor;
+            left = Math.max(12, Math.min(window.innerWidth - width - 12, x));
+            const below = y + gap;
+            top = (below + height <= window.innerHeight - 12) ? below : Math.max(12, y - gap - height);
+          } else {
+            let targetEl: Element | null = null;
+            if (next.selected) {
+              const tokenEl = elements.get(next.selected.token);
+              if (tokenEl?.isConnected) {
+                targetEl = tokenEl;
+              } else {
+                const root = fileRoots(document).find((r) => normalizedPath(r) === next.selected?.path);
+                if (root) {
+                  const lineEl = targetElement(root, next.selected.line, next.selected.side);
+                  const row = lineEl?.closest('tr,[role="row"]');
+                  if (row) {
+                    const codeCell = codeCellForSide(row, next.selected.side);
+                    if (codeCell && next.selected.identifier) {
+                      const matches = [...codeCell.querySelectorAll('*')].filter((el) => el.textContent?.trim() === next.selected?.identifier);
+                      targetEl = matches[next.selected.occurrence || 0] || matches[0] || codeCell;
+                    } else {
+                      targetEl = codeCell || lineEl;
+                    }
                   }
                 }
               }
             }
-          }
-          if (targetEl && targetEl.isConnected) {
-            const rect = targetEl.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0 && !(rect.top === 0 && rect.left === 0)) {
-              const width = 440;
-              const height = 280;
-              const gap = 6;
-              const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
-              const top = (rect.top - gap - height >= 12)
-                ? rect.top - gap - height
-                : Math.min(window.innerHeight - height - 12, rect.bottom + gap);
-              host.style.cssText = `position:fixed; z-index:2147483647; left:${left}px; top:${top}px; pointer-events:auto;`;
-            } else {
-              host.style.cssText = `position:fixed; z-index:2147483647; right:24px; top:72px; pointer-events:auto;`;
+            if (targetEl && targetEl.isConnected) {
+              const rect = targetEl.getBoundingClientRect();
+              if (rect.width > 0 && rect.height > 0 && !(rect.top === 0 && rect.left === 0)) {
+                const gap = 6;
+                left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
+                top = (rect.top - gap - height >= 12)
+                  ? rect.top - gap - height
+                  : Math.min(window.innerHeight - height - 12, rect.bottom + gap);
+              }
             }
-          } else {
-            host.style.cssText = `position:fixed; z-index:2147483647; right:24px; top:72px; pointer-events:auto;`;
           }
+          host.style.cssText = left !== undefined && top !== undefined
+            ? `position:fixed; z-index:2147483647; left:${left}px; top:${top}px; pointer-events:auto;`
+            : `position:fixed; z-index:2147483647; right:24px; top:72px; pointer-events:auto;`;
         }
         document.documentElement.append(host);
       }
@@ -563,7 +571,7 @@ export function createGitLabPage({
     };
     const onPointerOver = (event: Event) => {
       const target = diffTarget(event.target);
-      if (target) emitIntent({ command: 'hover-target', target });
+      if (target) emitIntent({ command: 'hover-target', target, clientX: (event as PointerEvent).clientX, clientY: (event as PointerEvent).clientY });
     };
     document.addEventListener('click', onClick, { capture: true, signal });
     document.addEventListener('pointerover', onPointerOver, { capture: true, signal });

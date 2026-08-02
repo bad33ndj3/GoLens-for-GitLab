@@ -74,10 +74,16 @@ function surfaceTemplate(state: SurfaceView, emit: (detail: SurfaceIntent) => vo
   if (projection.kind === 'status') return html`<div class="status" role="status" aria-live="polite">${projection.body || projection.title}</div>`;
   const isPopover = projection.kind === 'popover';
   const modal = projection.modal !== false && projection.kind === 'dialog';
+  const symbol = projection.symbol;
   return html`<div class=${modal ? 'backdrop' : ''}><section class=${`surface ${isPopover ? 'popover' : ''}`} role=${modal ? 'dialog' : 'region'} aria-modal=${modal ? 'true' : undefined} aria-labelledby="golens-surface-title">
-    <header><h2 id="golens-surface-title">${projection.title}</h2><button type="button" data-close aria-label="Close ${projection.title}" @click=${() => emit({ command: 'dismiss-surface' })}><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1L1 9"/></svg></button></header>
-    ${projection.body ? html`<div class="surface-body">${projection.body}</div>` : ''}
+    <header>${symbol ? html`<span class="symbol-kind">${symbol.kind}</span>` : ''}<h2 id="golens-surface-title">${projection.title}</h2><button type="button" data-close aria-label="Close ${projection.title}" @click=${() => emit({ command: 'dismiss-surface' })}><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1L1 9"/></svg></button></header>
+    ${symbol ? html`<div class="surface-body symbol-body">
+      <pre class="symbol-signature">${symbol.signature}</pre>
+      ${symbol.documentation ? html`<p class="symbol-doc">${symbol.documentation}</p>` : ''}
+      <p class="symbol-location">${symbol.location}</p>
+    </div>` : projection.body ? html`<div class="surface-body">${projection.body}</div>` : ''}
     ${(projection.actions && projection.actions.length > 0) ? html`<div class="actions">${projection.actions.map((action) => html`<button type="button" class=${action.primary ? 'primary' : ''} @click=${() => emit({ command: 'surface-action', actionId: action.id })}>${action.label}</button>`)}</div>` : ''}
+    ${symbol ? html`<p class="symbol-hint">⌘/Ctrl + click for definition</p>` : ''}
   </section></div>`;
 }
 
@@ -147,6 +153,12 @@ class GoLensHostSurface extends LitElement {
 .surface.popover .surface-body { padding:10px 14px; font-size:12px; color:var(--golens-text-secondary); line-height:1.55; white-space:pre-wrap; }
 .surface.popover .actions { padding:7px 10px; gap:6px; flex-wrap:wrap; border-top:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
 .surface.popover .actions button { width:auto; height:auto; padding:4px 10px; font-size:11px; }
+.surface.popover .symbol-kind { flex-shrink:0; align-self:flex-start; margin-top:1px; padding:1px 6px; border-radius:999px; border:1px solid var(--golens-border-default); background:var(--golens-surface-inset); color:var(--golens-text-secondary); font:700 9.5px/1.6 var(--golens-font-ui); text-transform:uppercase; letter-spacing:.04em; }
+.surface.popover .symbol-body { display:grid; gap:6px; }
+.surface.popover .symbol-signature { margin:0; font:12px/1.5 var(--golens-font-mono, monospace); color:#dcdcaa; white-space:pre-wrap; word-break:break-word; }
+.surface.popover .symbol-doc { margin:0; color:var(--golens-text-secondary); }
+.surface.popover .symbol-location { margin:0; color:var(--golens-text-muted); font:11px/1.5 var(--golens-font-mono, monospace); }
+.surface.popover .symbol-hint { margin:0; padding:5px 14px 8px; color:var(--golens-text-muted); font-size:10.5px; border-top:1px solid var(--golens-border-subtle); }
     .surface > header { display:grid; grid-template-columns:56px minmax(0,1fr); gap:var(--golens-space-4, 16px); align-items:center; padding:var(--golens-space-5, 24px) var(--golens-space-6, 32px); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
     .surface > header h2 { margin:0; font-size:20px; line-height:1.2; letter-spacing:-.015em; }
     .surface > header p { margin:4px 0 0; color:var(--golens-text-secondary); font-size:12px; }

@@ -1,4 +1,4 @@
-import type { CoverageOutcome, GoIntelligence } from '../go-intelligence/index.ts';
+import type { Coverage, CoverageOutcome, GoIntelligence, SemanticOutcome } from '../go-intelligence/index.ts';
 import type { BoundGitLabHost, HostAction, HostRevision } from '../gitlab-host/index.ts';
 import { initialSessionState, reduceSession, type SessionBookmark, type SessionEffect, type SessionPreferences, type SessionRuntimeEvent } from './reducer.ts';
 
@@ -31,6 +31,12 @@ export type ReviewSessionHandle = Readonly<{ stop(): Promise<void> }>;
 
 function aborted(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
+}
+
+const unresolvedCoverage: Coverage = Object.freeze({ scope: 'current-package', complete: false, packageCount: 0, packagePaths: [] });
+
+function errorReason(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function createCoach(storage: ReviewSessionCoachStoragePort, now = () => Date.now()): ReviewSessionCoach {
@@ -155,7 +161,13 @@ export function runReviewSession({
   const query = async (effect: Extract<SessionEffect, { type: 'query' }>) => {
     const scope = effect.purpose === 'hover' ? 'semantic:hover' : effect.purpose === 'selection' || effect.purpose === 'select' ? 'semantic:selection' : 'semantic:navigation';
     if (scope !== 'semantic:hover') scopes.get('semantic:hover')?.abort();
-    const outcome = await intelligence.query(effect.request, scoped(scope));
+    let outcome: SemanticOutcome;
+    try {
+      outcome = await intelligence.query(effect.request, scoped(scope));
+    } catch (error) {
+      outcome = { status: 'unavailable', reason: errorReason(error, 'The Go symbol lookup failed.'),
+        source: effect.target.source, snapshot: state.snapshot || '', coverage: unresolvedCoverage };
+    }
     await dispatch({ type: 'semantic-completed', sessionId, revision: effect.target.revision, operationId: effect.operationId, outcome });
   };
 
@@ -163,13 +175,19 @@ export function runReviewSession({
     if (!intelligence.ensureCoverage) {
       await dispatch({ type: 'query-coverage-completed', sessionId, revision: effect.revision, operationId: effect.operationId, outcome: {
         status: 'unavailable', reason: 'Coverage is unavailable.', source: effect.retry.target.source, snapshot: state.snapshot || '',
-        coverage: { scope: 'current-package', complete: false, packageCount: 0, packagePaths: [] },
+        coverage: unresolvedCoverage,
       } });
       return;
     }
-    const outcome = await intelligence.ensureCoverage(effect.request, (progress) => {
-      if (current(effect.revision)) void dispatch({ type: 'query-coverage-progress', sessionId, revision: effect.revision, operationId: effect.operationId, progress });
-    }, scoped('coverage:query'));
+    let outcome: CoverageOutcome;
+    try {
+      outcome = await intelligence.ensureCoverage(effect.request, (progress) => {
+        if (current(effect.revision)) void dispatch({ type: 'query-coverage-progress', sessionId, revision: effect.revision, operationId: effect.operationId, progress });
+      }, scoped('coverage:query'));
+    } catch (error) {
+      outcome = { status: 'unavailable', reason: errorReason(error, 'Expanding search coverage failed.'),
+        source: effect.retry.target.source, snapshot: state.snapshot || '', coverage: unresolvedCoverage };
+    }
     await dispatch({ type: 'query-coverage-completed', sessionId, revision: effect.revision, operationId: effect.operationId, outcome });
   };
 

@@ -225,7 +225,147 @@ test('Review Session silently indexes the current package and retries the first 
 
   assert.deepEqual(coverageRequests, [{ goal: 'current-package', packagePath: 'pkg' }]);
   assert.equal(queryCount, 2);
-  assert.equal(projections.at(-1).surface?.title, 'func Target()');
+  assert.equal(projections.at(-1).surface?.title, 'Target');
+  assert.equal(projections.at(-1).surface?.symbol?.signature, 'func Target()');
+  await session.stop();
+});
+
+test('Review Session clears the Coverage lock and accepts a fresh hover after an internal Coverage abort', async () => {
+  const stream = events();
+  const projections = [];
+  let queryCount = 0;
+  const target = { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: {
+      async query(request) {
+        queryCount += 1;
+        const context = { source, snapshot: String(queryCount), coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: ['pkg'] } };
+        if (queryCount === 1) return { ...context, status: 'coverage-insufficient', required: 'current-package', reason: 'No semantic snapshot is published.' };
+        return { ...context, status: 'resolved', isDefinition: true, symbol: { signature: 'func Target()', identity: { source, path: request.path, line: request.line, column: request.column, kind: 'function', name: 'Target' }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } };
+      },
+      async ensureCoverage() { throw new DOMException('Aborted', 'AbortError'); },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
+  await tick();
+  await tick();
+
+  assert.equal(queryCount, 1, 'the internally-timed-out Coverage attempt must not silently vanish');
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: { ...target, token: 'target2', line: 3, identifier: 'Target2' } });
+  await tick();
+  assert.equal(queryCount, 2, 'a hover-target arriving after the Coverage lock clears must start a fresh query');
+  await session.stop();
+});
+
+test('Review Session redirects a pending Coverage retry to the latest hover target', async () => {
+  const stream = events();
+  const projections = [];
+  const coverageRequests = [];
+  let queryCount = 0;
+  let snapshot = '1';
+  const targetA = { revision: 1, token: 'a', path: repositoryPath('pkg/a.go'), side: 'new', line: 2, identifier: 'A', source };
+  const targetB = { revision: 1, token: 'b', path: repositoryPath('pkg/b.go'), side: 'new', line: 5, identifier: 'B', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: {
+      async query(request) {
+        queryCount += 1;
+        const context = { source, snapshot, coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: ['pkg'] } };
+        if (queryCount === 1) return { ...context, status: 'coverage-insufficient', required: 'current-package', reason: 'No semantic snapshot is published.' };
+        return { ...context, status: 'resolved', isDefinition: true, symbol: { signature: `func ${request.identifier}()`, identity: { source, path: request.path, line: request.line, column: request.column, kind: 'function', name: request.identifier }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } };
+      },
+      ensureCoverage(request, _progress, signal) {
+        coverageRequests.push(request);
+        if (coverageRequests.length === 1) return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true }));
+        snapshot = '9';
+        return Promise.resolve({ status: 'ready', source, snapshot, coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: ['pkg'] } });
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: targetA });
+  await tick();
+  assert.deepEqual(coverageRequests[0], { goal: 'current-package', packagePath: 'pkg/a.go'.slice(0, 'pkg/a.go'.lastIndexOf('/')) });
+
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: targetB });
+  await tick();
+  await tick();
+
+  assert.equal(coverageRequests.length, 2, 'the redirect must cancel the first Coverage attempt and start a second one for B');
+  assert.deepEqual(coverageRequests[1], { goal: 'current-package', packagePath: 'pkg/b.go'.slice(0, 'pkg/b.go'.lastIndexOf('/')) });
+  assert.equal(queryCount, 2, 'only the redirected target must be resolved, not the original A hover');
+  assert.equal(projections.at(-1).surface?.title, 'B');
+  assert.equal(projections.at(-1).surface?.symbol?.signature, 'func B()');
+  await session.stop();
+});
+
+test('Review Session anchors the hover popover to the pointer coordinates from the hover intent', async () => {
+  const stream = events();
+  const projections = [];
+  const target = { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: {
+      async query(request) {
+        return { source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: ['pkg'] },
+          status: 'resolved', isDefinition: true, symbol: { signature: 'func Target()', identity: { source, path: request.path, line: request.line, column: request.column, kind: 'function', name: 'Target' }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } };
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target, clientX: 210, clientY: 340 });
+  await tick();
+
+  assert.deepEqual(projections.at(-1).surface?.anchor, { x: 210, y: 340 });
+  await session.stop();
+});
+
+test('Review Session recovers a hover that arrived while a click-driven query was in flight', async () => {
+  const stream = events();
+  const projections = [];
+  let queryCount = 0;
+  let resolveFirst;
+  const targetA = { revision: 1, token: 'a', path: repositoryPath('pkg/a.go'), side: 'new', line: 2, identifier: 'A', source };
+  const targetB = { revision: 1, token: 'b', path: repositoryPath('pkg/b.go'), side: 'new', line: 5, identifier: 'B', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: {
+      query(request) {
+        queryCount += 1;
+        if (queryCount === 1) {
+          return new Promise((resolve) => { resolveFirst = () => resolve({ source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: ['pkg'] }, status: 'missing' }); });
+        }
+        return Promise.resolve({ source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: ['pkg'] },
+          status: 'resolved', isDefinition: true, symbol: { signature: `func ${request.identifier}()`, identity: { source, path: request.path, line: request.line, column: request.column, kind: 'function', name: request.identifier }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } });
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'select-target', target: targetA });
+  await tick();
+  assert.equal(queryCount, 1);
+
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: targetB, clientX: 50, clientY: 60 });
+  await tick();
+  assert.equal(queryCount, 1, 'the hover must not start a query while the click-driven query is still in flight');
+
+  resolveFirst();
+  await tick();
+  await tick();
+
+  assert.equal(queryCount, 2, 'the pending hover must fire once the blocking query completes');
+  assert.equal(projections.at(-1).surface?.title, 'B');
+  assert.deepEqual(projections.at(-1).surface?.anchor, { x: 50, y: 60 });
   await session.stop();
 });
 
@@ -674,12 +814,13 @@ test('Review Session terminates on a broken Host contract and leaves one bounded
   await session.stop();
 });
 
-test('Review Session terminates when an asynchronous dependency breaks its contract', async () => {
+test('Review Session survives a failed semantic query and stays fully operational', async () => {
   const stream = events();
   const projections = [];
+  let queries = 0;
   const session = startReviewSession({
     host: hostFor(stream, { projections }),
-    intelligence: { query: async () => { throw new Error('broken Intelligence invariant'); } },
+    intelligence: { query: async () => { queries += 1; if (queries === 1) throw new Error('broken Intelligence invariant'); return { status: 'missing', reason: 'identifier', source, snapshot: '1', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: [] } }; } },
     preferences: { enabled: true, hideGeneratedFiles: false },
   });
   stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
@@ -687,7 +828,12 @@ test('Review Session terminates when an asynchronous dependency breaks its contr
     revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source,
   } });
   await tick();
-  assert.equal(projections.at(-1).status, 'GoLens stopped after an internal error.');
+  assert.equal(projections.at(-1).status, 'Go Intelligence unavailable: broken Intelligence invariant');
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: {
+    revision: 1, token: 'target2', path: repositoryPath('pkg/main.go'), side: 'new', line: 3, identifier: 'Target2', source,
+  } });
+  await tick();
+  assert.equal(queries, 2, 'the session must accept a fresh hover query after a failure, without reloading');
   await session.stop();
 });
 

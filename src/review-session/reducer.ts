@@ -20,6 +20,7 @@ type SemanticWork = Readonly<{
   request: SemanticQuery;
   expectedSnapshot?: SemanticSnapshotRevision;
   locations?: readonly SourceLocation[];
+  testDoubles?: readonly string[];
 }>;
 
 type SemanticRetry = Readonly<Pick<SemanticWork, 'target' | 'purpose' | 'request'>>;
@@ -39,6 +40,7 @@ export type SessionState = Readonly<{
   cacheBusy: boolean;
   nextOperationId: number;
   semantic: SemanticWork | undefined;
+  pendingHover: Readonly<{ target: DiffTarget; pointer: Readonly<{ x: number; y: number }> }> | undefined;
   snapshot: SemanticSnapshotRevision | undefined;
   cacheOperationId: number | undefined;
   queryCoverageOperationId: number | undefined;
@@ -47,6 +49,7 @@ export type SessionState = Readonly<{
   reviewOperationId: number | undefined;
   navigationOperationId: number | undefined;
   fullFileOperationId: number | undefined;
+  hoverPointer: Readonly<{ x: number; y: number }> | undefined;
   selected: DiffTarget | undefined;
   targets: readonly DiffTarget[];
   occurrences: readonly SourceLocation[];
@@ -103,7 +106,7 @@ export type SessionRuntimeEvent =
   | Readonly<{ type: 'coach-tip'; sessionId: string; revision: HostRevision; label: string; binding: string }>;
 
 function withoutTransient(state: SessionState): SessionState {
-  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, selected: undefined,
+  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, pendingHover: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, hoverPointer: undefined, selected: undefined,
     targets: [], occurrences: [], choices: [], externalUrl: undefined, bookmarks: [], history: [], historyIndex: -1, status: undefined, announcement: undefined, surface: undefined, destination: undefined });
 }
 
@@ -111,7 +114,7 @@ export function initialSessionState(sessionId: string, source: DiffTarget['sourc
   return Object.freeze({
     sessionId, source, oldSource, revision: null, enabled: preferences.enabled, hideGeneratedFiles: preferences.hideGeneratedFiles,
     shortcuts: preferences.shortcuts || [], focusMode: false, cacheBusy: false, nextOperationId: 1,
-    semantic: undefined, snapshot: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, selected: undefined,
+    semantic: undefined, pendingHover: undefined, snapshot: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, hoverPointer: undefined, selected: undefined,
     targets: [], occurrences: [], fullFileControls: [], choices: [], externalUrl: undefined, bookmarks: [], history: [], historyIndex: -1,
     status: undefined, announcement: undefined, surface: undefined, destination: undefined,
   });
@@ -162,7 +165,7 @@ function projection(state: SessionState): HostProjection | null {
     ...(state.selected ? { selected: state.selected } : {}),
     ...(state.status ? { status: state.status } : {}),
     ...(state.announcement ? { announcement: state.announcement } : {}),
-    ...(state.surface ? { surface: state.surface } : {}),
+    ...(state.surface ? { surface: (state.hoverPointer && state.surface.kind === 'popover') ? Object.freeze({ ...state.surface, anchor: state.hoverPointer }) : state.surface } : {}),
   });
 }
 
@@ -176,10 +179,10 @@ function remember(state: SessionState, target: DiffTarget): SessionState {
   return Object.freeze({ ...state, targets, selected: target });
 }
 
-function startQuery(state: SessionState, target: DiffTarget, purpose: SemanticWork['purpose'], request: SemanticQuery, expectedSnapshot?: string, locations?: readonly SourceLocation[]) {
+function startQuery(state: SessionState, target: DiffTarget, purpose: SemanticWork['purpose'], request: SemanticQuery, expectedSnapshot?: string, locations?: readonly SourceLocation[], testDoubles?: readonly string[]) {
   const snapshot = expectedSnapshot || state.snapshot;
   const work: SemanticWork = Object.freeze({ operationId: state.nextOperationId, target, purpose, request,
-    ...(snapshot ? { expectedSnapshot: snapshot } : {}), ...(locations ? { locations } : {}) });
+    ...(snapshot ? { expectedSnapshot: snapshot } : {}), ...(locations ? { locations } : {}), ...(testDoubles ? { testDoubles } : {}) });
   return result(Object.freeze({ ...state, semantic: work, nextOperationId: state.nextOperationId + 1, status: purpose === 'hover' ? undefined : 'Resolving Go symbol…' }), [{ type: 'query', ...work }]);
 }
 
@@ -209,13 +212,27 @@ function packagePath(path: string): string {
   return path.slice(0, Math.max(0, path.lastIndexOf('/')));
 }
 
+const symbolBadges: Record<string, string> = {
+  constant: 'const', function: 'func', interface: 'interface', interfaceMethod: 'method',
+  method: 'method', struct: 'struct', type: 'type', variable: 'var', field: 'field', parameter: 'parameter',
+};
+
+function symbolBadge(kind: string): string {
+  return symbolBadges[kind] || kind;
+}
+
+function fileName(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1);
+}
+
 function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEvent, { type: 'semantic-completed' }>) {
   const work = state.semantic;
   if (!work || event.sessionId !== state.sessionId || event.operationId !== work.operationId || event.revision !== state.revision
     || !sameSource(event.outcome.source, state.source) || !sameSource(work.target.source, state.source)
     || (event.outcome.status !== 'stale-page' && (work.expectedSnapshot || state.snapshot)
       && event.outcome.snapshot !== (work.expectedSnapshot || state.snapshot))) return { state, effects: [] };
-  const cleared = Object.freeze({ ...state, semantic: undefined, coverageRetry: undefined, snapshot: event.outcome.snapshot });
+  const cleared = Object.freeze({ ...state, semantic: undefined, coverageRetry: undefined, snapshot: event.outcome.snapshot,
+    ...(work.purpose === 'hover' ? {} : { hoverPointer: undefined }) });
   if (event.outcome.status === 'stale-page' && (work.request.operation === 'find-references' || work.request.operation === 'find-implementations')) {
     const { pageToken: _pageToken, ...request } = work.request;
     return startQuery(cleared, work.target, work.purpose, request, event.outcome.snapshot);
@@ -258,11 +275,15 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
       ? event.outcome.locations
       : event.outcome.candidates.map(({ definition }) => definition.identity);
     const allLocations = [...new Map([...(work.locations || []), ...locations].map((location) => [`${location.path}:${location.line}:${location.column}`, location])).values()];
+    const pageTestDoubles = event.outcome.status === 'implementations'
+      ? event.outcome.candidates.filter((candidate) => candidate.isTestDouble).map(({ definition }) => `${definition.identity.path}:${definition.identity.line}:${definition.identity.column}`)
+      : [];
+    const allTestDoubles = [...new Set([...(work.testDoubles || []), ...pageTestDoubles])];
     if (event.outcome.nextPageToken) {
       const request: SemanticQuery = event.outcome.status === 'references'
         ? { operation: 'find-references', symbol: event.outcome.symbol, pageToken: event.outcome.nextPageToken }
         : { operation: 'find-implementations', symbol: event.outcome.symbol, pageToken: event.outcome.nextPageToken };
-      return startQuery(cleared, work.target, work.purpose, request, event.outcome.snapshot, allLocations);
+      return startQuery(cleared, work.target, work.purpose, request, event.outcome.snapshot, allLocations, allTestDoubles);
     }
     if (work.purpose === 'selection') {
       const selected = { path: work.target.path, line: work.target.line, column: work.target.column || 1 };
@@ -274,8 +295,9 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
       const target = targetFor(cleared, destinations[0]!, event.outcome.source);
       return target ? navigate(cleared, work.target, target) : navigateSource(cleared, work.target, destinations[0]!);
     }
+    const testDoubles = new Set(allTestDoubles);
     const surface = Object.freeze({ kind: 'popover' as const, title: 'Go destinations', body: destinations.length ? `${destinations.length} destinations.` : 'No destination found.',
-      actions: destinations.map(({ path, line }, index) => ({ id: `destination:${index}`, label: `${path}:${line}` })) });
+      actions: allLocations.map((location, index) => ({ id: `destination:${index}`, label: `${location.path}:${location.line}${testDoubles.has(`${location.path}:${location.line}:${location.column}`) ? ' (test double)' : ''}` })) });
     return result(Object.freeze({ ...cleared, choices: destinations, surface, status: semanticStatus(event.outcome) }));
   }
   if (event.outcome.status === 'ambiguous') {
@@ -293,9 +315,29 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
   }
   const status = semanticStatus(event.outcome);
   const surface = event.outcome.status === 'resolved'
-    ? Object.freeze({ kind: 'popover' as const, title: event.outcome.symbol.signature, body: event.outcome.symbol.documentation || `${event.outcome.symbol.identity.path}:${event.outcome.symbol.identity.line}` })
+    ? Object.freeze({ kind: 'popover' as const, title: event.outcome.symbol.identity.name,
+        symbol: Object.freeze({
+          kind: symbolBadge(event.outcome.symbol.identity.kind),
+          signature: event.outcome.symbol.signature,
+          ...(event.outcome.symbol.documentation ? { documentation: event.outcome.symbol.documentation } : {}),
+          location: `${event.outcome.symbol.packagePath}/${fileName(event.outcome.symbol.identity.path)}:${event.outcome.symbol.identity.line}`,
+        }),
+        actions: [
+          ...(!event.outcome.isDefinition ? [{ id: 'goto-definition', label: 'Go to definition' }] : []),
+          { id: 'find-usages', label: 'Find usages' },
+        ] })
     : undefined;
   return result(Object.freeze({ ...cleared, ...(status ? { status } : {}), ...(surface ? { surface } : {}) }));
+}
+
+function resumePendingHover(outcome: Readonly<{ state: SessionState; effects: readonly SessionEffect[] }>, before: SessionState): Readonly<{ state: SessionState; effects: readonly SessionEffect[] }> {
+  const pending = before.pendingHover;
+  if (!pending || outcome.state === before || outcome.state.semantic !== undefined) return outcome;
+  const targets = outcome.state.targets.some(({ token }) => token === pending.target.token) ? outcome.state.targets : [...outcome.state.targets, pending.target];
+  const primed = Object.freeze({ ...outcome.state, pendingHover: undefined, hoverPointer: pending.pointer, targets });
+  const started = startQuery(primed, pending.target, 'hover', { operation: 'resolve-symbol', path: pending.target.path, line: pending.target.line, column: pending.target.column || 1,
+    identifier: pending.target.identifier!, ...(pending.target.occurrence === undefined ? {} : { occurrence: pending.target.occurrence }) });
+  return { state: started.state, effects: [...outcome.effects, ...started.effects] };
 }
 
 export function reduceSession(state: SessionState, event: SessionRuntimeEvent): Readonly<{ state: SessionState; effects: readonly SessionEffect[] }> {
@@ -305,8 +347,8 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const operationId = state.nextOperationId;
     return result(Object.freeze({ ...state, enabled: event.preferences.enabled, hideGeneratedFiles: event.preferences.hideGeneratedFiles,
       shortcuts: event.preferences.shortcuts || state.shortcuts, nextOperationId: leaveFocus ? operationId + 1 : operationId,
-      ...(disabling ? { semantic: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, cacheOperationId: undefined,
-        fullFileOperationId: undefined, fullFileControls: idleFullFileControls(state.fullFileControls), selected: undefined, occurrences: [], choices: [], externalUrl: undefined,
+      ...(disabling ? { semantic: undefined, pendingHover: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, cacheOperationId: undefined,
+        fullFileOperationId: undefined, hoverPointer: undefined, fullFileControls: idleFullFileControls(state.fullFileControls), selected: undefined, occurrences: [], choices: [], externalUrl: undefined,
         surface: undefined, status: undefined, announcement: undefined } : {}) }), [
       ...(disabling ? [{ type: 'cancel-workflows' as const }] : []),
       ...(leaveFocus ? [{ type: 'perform' as const, action: 'set-fullscreen' as const, active: false, operationId }] : []),
@@ -323,10 +365,10 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const next = Object.freeze({ ...withoutTransient(state), revision: event.revision, fullFileControls: controls, nextOperationId: operationId + 1 });
     return result(Object.freeze({ ...next, bookmarkOperationId: operationId }), [{ type: 'load-bookmarks', operationId, revision: event.revision, open: false }]);
   }
-  if (event.type === 'semantic-completed') return semanticCompletion(state, event);
+  if (event.type === 'semantic-completed') return resumePendingHover(semanticCompletion(state, event), state);
   if (event.type === 'semantic-failed') {
     if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.semantic?.operationId) return { state, effects: [] };
-    return result(Object.freeze({ ...state, semantic: undefined, status: 'Go Intelligence is unavailable.' }));
+    return resumePendingHover(result(Object.freeze({ ...state, semantic: undefined, status: 'Go Intelligence is unavailable.' })), state);
   }
   if (event.type === 'coverage-progress') {
     if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.cacheOperationId) return { state, effects: [] };
@@ -392,9 +434,9 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const operationId = state.nextOperationId;
     const enabled = !state.enabled;
     return result(Object.freeze({ ...state, enabled, nextOperationId: operationId + 1,
-      ...(!enabled ? { semantic: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, cacheOperationId: undefined,
+      ...(!enabled ? { semantic: undefined, pendingHover: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, cacheOperationId: undefined,
         fullFileOperationId: undefined, fullFileControls: idleFullFileControls(state.fullFileControls), selected: undefined, occurrences: [], choices: [], externalUrl: undefined,
-        surface: undefined, status: undefined, announcement: undefined } : {}) }), [
+        surface: undefined, status: undefined, announcement: undefined, hoverPointer: undefined } : {}) }), [
       { type: 'save-enabled', enabled },
       ...(!enabled ? [{ type: 'cancel-workflows' as const }] : []),
       ...(state.focusMode ? [{ type: 'perform' as const, action: 'set-fullscreen' as const, active: false, operationId }] : []),
@@ -410,16 +452,29 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
   }
   if ((event.command === 'hover-target' || event.command === 'select-target' || event.command === 'activate-target') && event.target.identifier && state.enabled) {
     if (!sameSource(event.target.source, state.source)) return { state, effects: [] };
-    if (event.command === 'hover-target' && ((state.semantic?.purpose !== undefined && state.semantic.purpose !== 'hover')
-      || state.queryCoverageOperationId !== undefined)) return { state, effects: [] };
+    if (event.command === 'hover-target' && state.semantic?.purpose !== undefined && state.semantic.purpose !== 'hover') {
+      const pointer = Object.freeze({ x: event.clientX, y: event.clientY });
+      return result(Object.freeze({ ...state, pendingHover: Object.freeze({ target: event.target, pointer }) }));
+    }
+    const hoverPointer = event.command === 'hover-target' ? Object.freeze({ x: event.clientX, y: event.clientY }) : state.hoverPointer;
+    if (event.command === 'hover-target' && state.queryCoverageOperationId !== undefined) {
+      const next = remember(Object.freeze({ ...state, hoverPointer }), event.target);
+      const request: SemanticQuery = { operation: 'resolve-symbol', path: event.target.path, line: event.target.line, column: event.target.column || 1, identifier: event.target.identifier,
+        ...(event.target.occurrence === undefined ? {} : { occurrence: event.target.occurrence }) };
+      const coverageRetry: SemanticRetry = Object.freeze({ target: event.target, purpose: 'hover', request });
+      const operationId = next.nextOperationId;
+      return result(Object.freeze({ ...next, queryCoverageOperationId: operationId, coverageRetry, cacheBusy: true, nextOperationId: operationId + 1 }), [
+        { type: 'cancel-query-coverage' },
+        { type: 'ensure-query-coverage', operationId, revision: state.revision!, retry: coverageRetry,
+          request: { goal: 'current-package', packagePath: packagePath(event.target.path) } },
+      ]);
+    }
     const supersedesCoverage = event.command !== 'hover-target' && state.queryCoverageOperationId !== undefined;
-    const next = remember(supersedesCoverage ? Object.freeze({
+    const next = remember(Object.freeze({
       ...state,
-      queryCoverageOperationId: undefined,
-      coverageRetry: undefined,
-      cacheBusy: false,
-      surface: undefined,
-    }) : state, event.target);
+      hoverPointer,
+      ...(supersedesCoverage ? { queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, surface: undefined } : {}),
+    }), event.target);
     const started = startQuery(next, event.target, event.command === 'hover-target' ? 'hover' : event.command === 'select-target' ? 'select' : 'activate', {
       operation: 'resolve-symbol', path: event.target.path, line: event.target.line, column: event.target.column || 1, identifier: event.target.identifier,
       ...(event.target.occurrence === undefined ? {} : { occurrence: event.target.occurrence }),
@@ -464,6 +519,11 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     ]);
   }
   if (event.command === 'surface-action') {
+    if ((event.actionId === 'goto-definition' || event.actionId === 'find-usages') && state.selected?.identifier) {
+      const request: SemanticQuery = { operation: 'resolve-symbol', path: state.selected.path, line: state.selected.line, column: state.selected.column || 1, identifier: state.selected.identifier,
+        ...(state.selected.occurrence === undefined ? {} : { occurrence: state.selected.occurrence }) };
+      return startQuery(state, state.selected, event.actionId === 'goto-definition' ? 'activate' : 'select', request);
+    }
     if (event.actionId === 'disable-coach') {
       return result(Object.freeze({ ...state, surface: undefined }), [{ type: 'save-coach-enabled', enabled: false }]);
     }

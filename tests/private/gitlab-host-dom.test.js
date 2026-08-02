@@ -33,7 +33,8 @@ function fixture() {
       <header class="file-header"><span class="file-title-name">pkg/worker_test.go</span></header>
       <table><tr><td class="old_line"><a aria-label="Deleted line 7" href="#old_7">7</a></td><td class="line_content old"><span id="legacy-code">OldTarget</span></td></tr></table>
       <button data-click="showFullFile">Native full file</button>
-    </div>`;
+    </div>
+    <div id="tree-row" data-file-row title="pkg/worker_test.go">pkg/worker_test.go</div>`;
 }
 
 function boundHost() {
@@ -58,6 +59,8 @@ test('Rapid and legacy diffs produce normalized revision-bound targets and compl
   assert.deepEqual(bound.apply(projection), { kind: 'unchanged' });
   assert.equal(window.document.querySelector('#rapid').hasAttribute('data-golens-generated-hidden'), true);
   assert.equal(window.document.querySelector('#legacy').hasAttribute('data-golens-test-file'), true);
+  assert.equal(window.document.querySelector('#tree-row').hasAttribute('data-golens-go-test-file-row'), true);
+  assert.equal(window.document.querySelector('#legacy').hasAttribute('data-golens-go-test-file-row'), false);
   assert.equal(window.document.querySelectorAll('[data-golens-full-file-control]').length, 2);
   assert.equal(window.document.querySelector('#ai-panel-button').nextElementSibling.tagName, 'GOLENS-HOST-SURFACE');
   const fullFileControl = window.document.querySelector('#rapid [data-golens-full-file-control]');
@@ -80,10 +83,10 @@ test('Rapid and legacy diffs produce normalized revision-bound targets and compl
   assert.equal(bookmark.anchor.beforeHash, '');
   assert.equal(bookmark.anchor.afterHash, '');
 
-  window.document.querySelector('#rapid-code').dispatchEvent(new window.PointerEvent('pointerover', { bubbles: true, composed: true }));
+  window.document.querySelector('#rapid-code').dispatchEvent(new window.PointerEvent('pointerover', { bubbles: true, composed: true, clientX: 210, clientY: 340 }));
   const { value: rapid } = await events.next();
-  assert.deepEqual({ type: rapid.type, command: rapid.command, path: rapid.target.path, side: rapid.target.side, line: rapid.target.line, column: rapid.target.column, occurrence: rapid.target.occurrence, sha: rapid.target.source.commitSha }, {
-    type: 'intent', command: 'hover-target', path: 'pkg/a.go', side: 'new', line: 12, column: 6, occurrence: 0, sha: 'a'.repeat(40),
+  assert.deepEqual({ type: rapid.type, command: rapid.command, path: rapid.target.path, side: rapid.target.side, line: rapid.target.line, column: rapid.target.column, occurrence: rapid.target.occurrence, sha: rapid.target.source.commitSha, clientX: rapid.clientX, clientY: rapid.clientY }, {
+    type: 'intent', command: 'hover-target', path: 'pkg/a.go', side: 'new', line: 12, column: 6, occurrence: 0, sha: 'a'.repeat(40), clientX: 210, clientY: 340,
   });
   window.document.querySelector('#rapid-code').dispatchEvent(new window.MouseEvent('click', { bubbles: true, composed: true }));
   assert.equal((await events.next()).value.command, 'select-target');
@@ -94,7 +97,27 @@ test('Rapid and legacy diffs produce normalized revision-bound targets and compl
   });
 
   assert.deepEqual(bound.apply({ revision: initial.revision, enabled: true }), { kind: 'applied' });
-  assert.equal(window.document.querySelectorAll('[data-golens-generated-hidden],[data-golens-test-file],[data-golens-full-file-control]').length, 0);
+  assert.equal(window.document.querySelectorAll('[data-golens-generated-hidden],[data-golens-test-file],[data-golens-go-test-file-row],[data-golens-full-file-control]').length, 0);
+  controller.abort();
+});
+
+test('a resolved hover surface renders a structured signature block and documentation in the shadow DOM', async () => {
+  fixture();
+  const { controller, bound } = boundHost();
+  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
+  const { value: initial } = await events.next();
+  bound.apply({ revision: initial.revision, enabled: true, surface: {
+    kind: 'popover', title: 'Target', anchor: { x: 100, y: 200 },
+    symbol: { kind: 'func', signature: 'func Target(ctx context.Context) error', documentation: 'Target performs the operation.', location: 'pkg/main.go:12' },
+    actions: [{ id: 'find-usages', label: 'Find usages' }],
+  } });
+  await new Promise((resolve) => setTimeout(resolve));
+  const surface = window.document.querySelector('[data-golens-active-surface]');
+  assert.equal(surface.shadowRoot.querySelector('.symbol-kind')?.textContent, 'func');
+  assert.equal(surface.shadowRoot.querySelector('.symbol-signature')?.textContent, 'func Target(ctx context.Context) error');
+  assert.equal(surface.shadowRoot.querySelector('.symbol-doc')?.textContent, 'Target performs the operation.');
+  assert.equal(surface.shadowRoot.querySelector('.symbol-location')?.textContent, 'pkg/main.go:12');
+  assert.match(surface.style.cssText, /left:\s*\d+px;\s*top:\s*\d+px/);
   controller.abort();
 });
 
