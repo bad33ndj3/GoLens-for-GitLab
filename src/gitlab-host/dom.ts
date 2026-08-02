@@ -43,9 +43,17 @@ function sameReview(left: ReviewDescriptor | null, right: ReviewDescriptor | nul
 }
 
 function golensMutation(mutation: MutationRecord): boolean {
+  if (mutation.type === 'attributes') {
+    const attr = mutation.attributeName || '';
+    if (attr.startsWith('data-golens-')) return true;
+    const target = mutation.target as Element;
+    if (target?.tagName?.startsWith('GOLENS-') || target?.hasAttribute?.('data-golens-active-surface')) return true;
+  }
   const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
   return nodes.length > 0 && nodes.every((node) => node.nodeType === 1 && ((node as Element).tagName.startsWith('GOLENS-')
-    || (node as Element).matches('[data-golens-status],[data-golens-full-file-control]')));
+    || (node as Element).matches('[data-golens-status],[data-golens-full-file-control],[data-golens-active-surface]')
+    || (node as Element).hasAttribute?.('data-golens-')
+    || (node as Element).closest?.('golens-host-surface,golens-full-file-button,golens-bookmark-marker,[data-golens-active-surface]') !== null));
 }
 
 function fileRoots(document: Document): Element[] {
@@ -109,6 +117,16 @@ function targetElement(root: Element, line: number, side: 'old' | 'new'): Elemen
   return preferred || candidates[0] || null;
 }
 
+function codeCellForSide(row: Element, side: 'old' | 'new'): Element | null {
+  const cells = [...row.querySelectorAll('.line_content,[data-testid="diff-line-content"],[role="gridcell"]')];
+  if (!cells.length) return null;
+  const sideMatch = cells.find((cell) => {
+    const label = `${cell.className || ''} ${cell.closest('td,[role="cell"]')?.className || ''} ${cell.getAttribute('aria-label') || ''}`;
+    return side === 'old' ? /old|deleted/i.test(label) : !/old|deleted/i.test(label);
+  });
+  return sideMatch || cells[0] || null;
+}
+
 export function createGitLabPage({
   window,
   resolveReview,
@@ -166,7 +184,8 @@ export function createGitLabPage({
     const tokens = new WeakMap<Element, HostTargetToken>();
 
     const fileControls = () => fileRoots(document).flatMap((root) => {
-      try { return [{ path: repositoryPath(normalizedPath(root)), full: Boolean(root.querySelector('button[data-click="showChanges"]')) }]; } catch { return []; }
+      const action = root.querySelector('button[data-click="showFullFile"]:not(:disabled),button[data-click="showChanges"]:not(:disabled),.js-unfold-all:not(:disabled),button[data-click="expandLines"]:not(:disabled)');
+      try { return action ? [{ path: repositoryPath(normalizedPath(root)), full: Boolean(root.querySelector('button[data-click="showChanges"]')) }] : []; } catch { return []; }
     });
     const emitRevision = () => events.push({ type: 'host-revised', revision, surface: surface(window), files: fileControls() });
     emitRevision();
@@ -318,7 +337,8 @@ export function createGitLabPage({
           const header = root.querySelector('[data-testid="file-title"],.file-title-name,.file-header') || root;
           const control = fullFileSurface(document, fullFile);
           control.dataset.golensFullFileControl = '';
-          header.append(control);
+          const viewed = [...root.querySelectorAll('label,[role="checkbox"]')].find((element) => /\bviewed\b/i.test(element.textContent || ''));
+          if (viewed) viewed.before(control); else header.append(control);
         }
       }
       if (next.hideGeneratedFiles) for (const folder of document.querySelectorAll<HTMLElement>('[data-testid="file-row"].folder')) {
@@ -349,6 +369,47 @@ export function createGitLabPage({
       if (next.surface) {
         const host = activeSurface(document, next.surface);
         host.dataset.golensActiveSurface = '';
+        if (next.surface.kind === 'popover') {
+          let targetEl: Element | null = null;
+          if (next.selected) {
+            const tokenEl = elements.get(next.selected.token);
+            if (tokenEl?.isConnected) {
+              targetEl = tokenEl;
+            } else {
+              const root = fileRoots(document).find((r) => normalizedPath(r) === next.selected?.path);
+              if (root) {
+                const lineEl = targetElement(root, next.selected.line, next.selected.side);
+                const row = lineEl?.closest('tr,[role="row"]');
+                if (row) {
+                  const codeCell = codeCellForSide(row, next.selected.side);
+                  if (codeCell && next.selected.identifier) {
+                    const matches = [...codeCell.querySelectorAll('*')].filter((el) => el.textContent?.trim() === next.selected?.identifier);
+                    targetEl = matches[next.selected.occurrence || 0] || matches[0] || codeCell;
+                  } else {
+                    targetEl = codeCell || lineEl;
+                  }
+                }
+              }
+            }
+          }
+          if (targetEl && targetEl.isConnected) {
+            const rect = targetEl.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0 && !(rect.top === 0 && rect.left === 0)) {
+              const width = 440;
+              const height = 280;
+              const gap = 6;
+              const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
+              const top = (rect.top - gap - height >= 12)
+                ? rect.top - gap - height
+                : Math.min(window.innerHeight - height - 12, rect.bottom + gap);
+              host.style.cssText = `position:fixed; z-index:2147483647; left:${left}px; top:${top}px; pointer-events:auto;`;
+            } else {
+              host.style.cssText = `position:fixed; z-index:2147483647; right:24px; top:72px; pointer-events:auto;`;
+            }
+          } else {
+            host.style.cssText = `position:fixed; z-index:2147483647; right:24px; top:72px; pointer-events:auto;`;
+          }
+        }
         document.documentElement.append(host);
       }
       return { kind: 'applied' };

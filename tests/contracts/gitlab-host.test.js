@@ -108,6 +108,28 @@ test('host observes immutable reviews and bound events precede revision-bound in
   controller.abort();
 });
 
+test('host offers the full-file icon only for expandable files and places it before Viewed', async () => {
+  const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
+  window.document.body.innerHTML = `<meta name="csrf-token" content="token"><div class="layout-page is-merge-request"><div class="ai-panels"><nav><button>AI</button></nav></div></div>
+    <diff-file data-file-data='{"new_path":"pkg/expandable.go"}'><header data-testid="file-title">pkg/expandable.go <button data-click="showFullFile">Show full file</button><label><input type="checkbox"> Viewed</label></header></diff-file>
+    <diff-file data-file-data='{"new_path":"pkg/plain.go"}'><header data-testid="file-title">pkg/plain.go <label><input type="checkbox"> Viewed</label></header></diff-file>`;
+  const host = createGitLabHost({ origin: 'https://gitlab.example', window, fetch: async () => new Response() });
+  const controller = new AbortController();
+  const bound = host.connect(review, controller.signal);
+  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
+  const initial = await events.next();
+
+  assert.deepEqual(initial.value.files, [{ path: repositoryPath('pkg/expandable.go'), full: false }]);
+  bound.apply({ revision: initial.value.revision, enabled: true, fullFileControls: initial.value.files });
+  await new Promise((resolve) => setTimeout(resolve));
+
+  const viewed = window.document.querySelector('label');
+  const control = window.document.querySelector('[data-golens-full-file-control]');
+  assert.equal(control?.nextElementSibling, viewed);
+  assert.equal(control?.shadowRoot?.querySelector('button')?.getAttribute('aria-label'), 'Show full file pkg/expandable.go');
+  controller.abort();
+});
+
 test('first-run setup stages choices in an accessible Lit projection and dismisses cleanly', async () => {
   const controller = new AbortController();
   const result = showFirstRunSetup(document, [{ title: 'Hover for Go insight', summary: 'Show proven Go details.' }], false, 'custom', controller.signal);
@@ -153,4 +175,127 @@ test('upgrade notice uses the approved copy and only Continue acknowledges it', 
   await host.updateComplete;
   host.shadowRoot.querySelector('.primary').click();
   assert.equal(await continued, true);
+});
+
+test('host popover positions above the target element by default when space allows and ignores GoLens attribute mutations', async () => {
+  const window = browserWindow;
+  window.document.body.innerHTML = `
+    <div class="layout-page is-merge-request">
+      <div class="ai-panels"><nav><button>AI</button></nav></div>
+      <diff-file data-file-data='{"new_path":"pkg/main.go"}'>
+        <table>
+          <tr role="row">
+            <td data-line-number="10">10</td>
+            <td class="line_content" role="gridcell"><span class="token">mySymbol</span></td>
+          </tr>
+        </table>
+      </diff-file>
+    </div>`;
+
+  const host = createGitLabHost({ origin: 'https://gitlab.example', window, fetch: async () => new Response() });
+  const controller = new AbortController();
+  const bound = host.connect(review, controller.signal);
+  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
+  const initial = await events.next();
+  const source = sourceIdentity({ repositoryKey: review.identity.repositoryKey, commitSha: review.identity.headSha });
+
+  const tokenSpan = window.document.querySelector('.token');
+  tokenSpan.getBoundingClientRect = () => ({ top: 400, left: 100, bottom: 420, right: 180, width: 80, height: 20, x: 100, y: 400, toJSON: () => {} });
+  window.innerWidth = 1024;
+  window.innerHeight = 768;
+
+  // Trigger pointerover to resolve target token
+  tokenSpan.dispatchEvent(new window.MouseEvent('pointerover', { bubbles: true }));
+  const intent = await events.next();
+  assert.equal(intent.value.type, 'intent');
+  assert.equal(intent.value.command, 'hover-target');
+  const targetToken = intent.value.target.token;
+
+  // Apply popover surface with selected target
+  const applied = bound.apply({
+    revision: initial.value.revision,
+    enabled: true,
+    selected: intent.value.target,
+    interactiveTargets: [intent.value.target],
+    surface: { kind: 'popover', title: 'mySymbol', body: 'func mySymbol()' },
+  });
+  assert.equal(applied.kind, 'applied');
+
+  const popoverHost = window.document.querySelector('[data-golens-active-surface]');
+  assert.ok(popoverHost);
+  // Target top is 400, height 280, gap 6. Expected top: 400 - 6 - 280 = 114px (ABOVE the target token)
+  assert.match(popoverHost.style.cssText, /top:\s*114px/);
+  assert.match(popoverHost.style.cssText, /left:\s*100px/);
+
+  // Mutate data-golens- attributes multiple times (e.g. 10 times)
+  for (let i = 0; i < 10; i++) {
+    tokenSpan.setAttribute('data-golens-interactive', String(i));
+    popoverHost.setAttribute('data-golens-test', String(i));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  // Verify that setting data-golens-* attributes did NOT trigger a host-revised event
+  const outcome = bound.apply({
+    revision: initial.value.revision,
+    enabled: true,
+    selected: intent.value.target,
+    interactiveTargets: [intent.value.target],
+    surface: { kind: 'popover', title: 'mySymbol', body: 'func mySymbol()' },
+  });
+  assert.equal(outcome.kind, 'unchanged');
+
+  controller.abort();
+});
+
+test('host popover fallback anchors to the selected diff side', async () => {
+  const window = browserWindow;
+  window.document.body.innerHTML = `
+    <div class="layout-page is-merge-request">
+      <div class="ai-panels"><nav><button>AI</button></nav></div>
+      <diff-file data-file-data='{"new_path":"pkg/main.go"}'>
+        <table>
+          <tr role="row">
+            <td class="old_line"><a data-line-number="10" aria-label="Deleted line 10">10</a></td>
+            <td class="line_content old" role="gridcell"><span class="old-token">OldSymbol</span></td>
+            <td class="new_line"><a data-line-number="10" aria-label="Added line 10">10</a></td>
+            <td class="line_content new" role="gridcell"><span class="new-token">NewSymbol</span></td>
+          </tr>
+        </table>
+      </diff-file>
+    </div>`;
+
+  const host = createGitLabHost({ origin: 'https://gitlab.example', window, fetch: async () => new Response() });
+  const controller = new AbortController();
+  const bound = host.connect(review, controller.signal);
+  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
+  const initial = await events.next();
+  const source = sourceIdentity({ repositoryKey: review.identity.repositoryKey, commitSha: review.identity.headSha });
+
+  const oldToken = window.document.querySelector('.old-token');
+  const newToken = window.document.querySelector('.new-token');
+  oldToken.getBoundingClientRect = () => ({ top: 400, left: 80, bottom: 420, right: 140, width: 60, height: 20, x: 80, y: 400, toJSON: () => {} });
+  newToken.getBoundingClientRect = () => ({ top: 400, left: 320, bottom: 420, right: 420, width: 100, height: 20, x: 320, y: 400, toJSON: () => {} });
+  window.innerWidth = 1024;
+  window.innerHeight = 768;
+
+  const applied = bound.apply({
+    revision: initial.value.revision,
+    enabled: true,
+    selected: {
+      revision: initial.value.revision,
+      token: 'not-in-map',
+      path: repositoryPath('pkg/main.go'),
+      side: 'new',
+      line: 10,
+      identifier: 'NewSymbol',
+      source,
+    },
+    surface: { kind: 'popover', title: 'NewSymbol', body: 'func NewSymbol()' },
+  });
+
+  assert.equal(applied.kind, 'applied');
+  const popoverHost = window.document.querySelector('[data-golens-active-surface]');
+  assert.ok(popoverHost);
+  assert.match(popoverHost.style.cssText, /left:\s*320px/);
+  controller.abort();
 });

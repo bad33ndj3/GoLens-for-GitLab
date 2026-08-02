@@ -32,6 +32,7 @@ function fixture() {
     <div id="legacy" class="diff-file file-holder" data-path="pkg/worker_test.go">
       <header class="file-header"><span class="file-title-name">pkg/worker_test.go</span></header>
       <table><tr><td class="old_line"><a aria-label="Deleted line 7" href="#old_7">7</a></td><td class="line_content old"><span id="legacy-code">OldTarget</span></td></tr></table>
+      <button data-click="showFullFile">Native full file</button>
     </div>`;
 }
 

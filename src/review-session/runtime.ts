@@ -167,7 +167,7 @@ export function runReviewSession({
       } });
       return;
     }
-    const outcome = await intelligence.ensureCoverage({ goal: 'complete-query', query: effect.retry.request }, (progress) => {
+    const outcome = await intelligence.ensureCoverage(effect.request, (progress) => {
       if (current(effect.revision)) void dispatch({ type: 'query-coverage-progress', sessionId, revision: effect.revision, operationId: effect.operationId, progress });
     }, scoped('coverage:query'));
     await dispatch({ type: 'query-coverage-completed', sessionId, revision: effect.revision, operationId: effect.operationId, outcome });

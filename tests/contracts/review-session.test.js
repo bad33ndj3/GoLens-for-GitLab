@@ -194,6 +194,41 @@ test('Review Session completes an insufficient semantic query and keeps cancella
   await session.stop();
 });
 
+test('Review Session silently indexes the current package and retries the first semantic query', async () => {
+  const stream = events();
+  const projections = [];
+  const coverageRequests = [];
+  let queryCount = 0;
+  const target = { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source };
+  const session = startReviewSession({
+    host: hostFor(stream, { projections }),
+    intelligence: {
+      async query(request) {
+        queryCount += 1;
+        const context = { source, snapshot: String(queryCount), coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: ['pkg'] } };
+        if (queryCount === 1) return { ...context, status: 'coverage-insufficient', required: 'current-package', reason: 'No semantic snapshot is published.' };
+        return { ...context, status: 'resolved', isDefinition: true, symbol: { signature: 'func Target()', identity: { source, path: request.path, line: request.line, column: request.column, kind: 'function', name: 'Target' }, documentation: '', documentationLine: 1, packageName: 'pkg', packagePath: 'pkg' } };
+      },
+      async ensureCoverage(request) {
+        coverageRequests.push(request);
+        return { status: 'ready', source, snapshot: '2', coverage: { scope: 'current-package', complete: true, packageCount: 1, packagePaths: ['pkg'] } };
+      },
+    },
+    preferences: { enabled: true, hideGeneratedFiles: false },
+  });
+
+  stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
+  await tick();
+  await tick();
+  await tick();
+
+  assert.deepEqual(coverageRequests, [{ goal: 'current-package', packagePath: 'pkg' }]);
+  assert.equal(queryCount, 2);
+  assert.equal(projections.at(-1).surface?.title, 'func Target()');
+  await session.stop();
+});
+
 test('Review Session does not let hover supersede semantic navigation', async () => {
   const stream = events();
   let navigationSignal;
@@ -254,6 +289,7 @@ test('Review Session cancels query Coverage when a newer semantic intent superse
   await tick();
 
   assert.equal(coverageSignal.aborted, true);
+  assert.equal(projections.at(-1).controls[2].busy, false);
   assert.equal(projections.at(-1).status, undefined);
   await session.stop();
 });

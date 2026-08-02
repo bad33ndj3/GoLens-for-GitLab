@@ -1,4 +1,4 @@
-import type { CoverageOutcome, CoverageProgress, SemanticOutcome, SemanticQuery, SemanticSnapshotRevision, SourceLocation } from '../go-intelligence/index.ts';
+import type { CoverageOutcome, CoverageProgress, CoverageRequest, SemanticOutcome, SemanticQuery, SemanticSnapshotRevision, SourceLocation } from '../go-intelligence/index.ts';
 import type { ActionOutcome, ActiveSurfaceProjection, BookmarkSelection, ControlProjection, DiffTarget, FullFileControlProjection, HostEvent, HostProjection, HostRevision, ShortcutProjection } from '../gitlab-host/index.ts';
 
 export type SessionBookmark = Readonly<{
@@ -76,7 +76,7 @@ export type SessionEffect =
   | (Readonly<{ type: 'perform'; operationId: number }> & PerformEffect)
   | (Readonly<{ type: 'query' }> & SemanticWork)
   | Readonly<{ type: 'cache-related'; operationId: number; revision: HostRevision }>
-  | Readonly<{ type: 'ensure-query-coverage'; operationId: number; revision: HostRevision; retry: SemanticRetry }>
+  | Readonly<{ type: 'ensure-query-coverage'; operationId: number; revision: HostRevision; retry: SemanticRetry; request: CoverageRequest }>
   | Readonly<{ type: 'cancel-query-coverage' }>
   | Readonly<{ type: 'cancel-workflows' }>
   | Readonly<{ type: 'load-bookmarks'; operationId: number; revision: HostRevision; open: boolean }>
@@ -159,6 +159,7 @@ function projection(state: SessionState): HostProjection | null {
     })),
     fullFileControls: state.fullFileControls,
     ...(state.destination ? { destination: state.destination } : {}),
+    ...(state.selected ? { selected: state.selected } : {}),
     ...(state.status ? { status: state.status } : {}),
     ...(state.announcement ? { announcement: state.announcement } : {}),
     ...(state.surface ? { surface: state.surface } : {}),
@@ -204,6 +205,10 @@ function semanticStatus(outcome: SemanticOutcome): string | undefined {
   return outcome.status.replace(/-/g, ' ');
 }
 
+function packagePath(path: string): string {
+  return path.slice(0, Math.max(0, path.lastIndexOf('/')));
+}
+
 function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEvent, { type: 'semantic-completed' }>) {
   const work = state.semantic;
   if (!work || event.sessionId !== state.sessionId || event.operationId !== work.operationId || event.revision !== state.revision
@@ -237,6 +242,13 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
       request = firstPage;
     }
     const coverageRetry = Object.freeze({ target: work.target, purpose: work.purpose, request });
+    if (event.outcome.required === 'current-package') {
+      const operationId = state.nextOperationId;
+      return result(Object.freeze({ ...cleared, cacheBusy: true, queryCoverageOperationId: operationId, coverageRetry, nextOperationId: operationId + 1 }), [
+        { type: 'ensure-query-coverage', operationId, revision: state.revision!, retry: coverageRetry,
+          request: { goal: 'current-package', packagePath: packagePath(work.target.path) } },
+      ]);
+    }
     const surface = Object.freeze({ kind: 'popover' as const, title: 'More coverage needed', body: event.outcome.reason,
       actions: [{ id: 'complete-coverage', label: 'Search full project' }] });
     return result(Object.freeze({ ...cleared, coverageRetry, surface, status: `Coverage insufficient: ${event.outcome.reason}` }));
@@ -338,8 +350,9 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     if (event.sessionId !== state.sessionId || event.revision !== state.revision || event.operationId !== state.queryCoverageOperationId
       || !sameSource(event.outcome.source, state.source)) return { state, effects: [] };
     const retry = state.coverageRetry;
-    const next = Object.freeze({ ...state, queryCoverageOperationId: undefined, snapshot: event.outcome.snapshot || state.snapshot });
+    const next = Object.freeze({ ...state, cacheBusy: false, queryCoverageOperationId: undefined, snapshot: event.outcome.snapshot || state.snapshot });
     if (event.outcome.status === 'ready' && retry) return startQuery(Object.freeze({ ...next, surface: undefined }), retry.target, retry.purpose, retry.request, event.outcome.snapshot);
+    if (state.surface === undefined) return result(Object.freeze({ ...next, status: 'Could not index the current package.' }));
     const surface = retry ? Object.freeze({ kind: 'popover' as const, title: 'More coverage needed', body: event.outcome.reason || 'Full-project search is unavailable.',
       actions: [{ id: 'complete-coverage', label: 'Try again' }] }) : state.surface;
     return result(Object.freeze({ ...next, surface, status: 'Full-project search is unavailable.' }));
@@ -400,7 +413,13 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     if (event.command === 'hover-target' && ((state.semantic?.purpose !== undefined && state.semantic.purpose !== 'hover')
       || state.queryCoverageOperationId !== undefined)) return { state, effects: [] };
     const supersedesCoverage = event.command !== 'hover-target' && state.queryCoverageOperationId !== undefined;
-    const next = remember(supersedesCoverage ? Object.freeze({ ...state, queryCoverageOperationId: undefined, coverageRetry: undefined, surface: undefined }) : state, event.target);
+    const next = remember(supersedesCoverage ? Object.freeze({
+      ...state,
+      queryCoverageOperationId: undefined,
+      coverageRetry: undefined,
+      cacheBusy: false,
+      surface: undefined,
+    }) : state, event.target);
     const started = startQuery(next, event.target, event.command === 'hover-target' ? 'hover' : event.command === 'select-target' ? 'select' : 'activate', {
       operation: 'resolve-symbol', path: event.target.path, line: event.target.line, column: event.target.column || 1, identifier: event.target.identifier,
       ...(event.target.occurrence === undefined ? {} : { occurrence: event.target.occurrence }),
@@ -409,7 +428,13 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
   }
   if (event.command === 'semantic-jump' && state.selected?.identifier && state.enabled) {
     const supersedesCoverage = state.queryCoverageOperationId !== undefined;
-    const started = startQuery(supersedesCoverage ? Object.freeze({ ...state, queryCoverageOperationId: undefined, coverageRetry: undefined, surface: undefined }) : state, state.selected, 'activate', { operation: 'resolve-symbol', path: state.selected.path, line: state.selected.line, column: state.selected.column || 1, identifier: state.selected.identifier,
+    const started = startQuery(supersedesCoverage ? Object.freeze({
+      ...state,
+      queryCoverageOperationId: undefined,
+      coverageRetry: undefined,
+      cacheBusy: false,
+      surface: undefined,
+    }) : state, state.selected, 'activate', { operation: 'resolve-symbol', path: state.selected.path, line: state.selected.line, column: state.selected.column || 1, identifier: state.selected.identifier,
       ...(state.selected.occurrence === undefined ? {} : { occurrence: state.selected.occurrence }) });
     return supersedesCoverage ? { ...started, effects: [{ type: 'cancel-query-coverage' }, ...started.effects] } : started;
   }
@@ -446,12 +471,13 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
       const operationId = state.nextOperationId;
       const surface = Object.freeze({ ...state.surface!, actions: [{ id: 'cancel-coverage', label: 'Cancel' }] });
       return result(Object.freeze({ ...state, queryCoverageOperationId: operationId, nextOperationId: operationId + 1, surface, status: 'Expanding search coverage…' }), [
-        { type: 'ensure-query-coverage', operationId, revision: state.revision, retry: state.coverageRetry },
+        { type: 'ensure-query-coverage', operationId, revision: state.revision, retry: state.coverageRetry,
+          request: { goal: 'complete-query', query: state.coverageRetry.request } },
       ]);
     }
     if (event.actionId === 'cancel-coverage' && state.coverageRetry) {
       const surface = Object.freeze({ ...state.surface!, actions: [{ id: 'complete-coverage', label: 'Search full project' }] });
-      return result(Object.freeze({ ...state, queryCoverageOperationId: undefined, surface, status: 'Coverage expansion cancelled.' }), [{ type: 'cancel-query-coverage' }]);
+      return result(Object.freeze({ ...state, cacheBusy: false, queryCoverageOperationId: undefined, surface, status: 'Coverage expansion cancelled.' }), [{ type: 'cancel-query-coverage' }]);
     }
     if (event.actionId === 'external-documentation' && state.externalUrl) {
       const operationId = state.nextOperationId;
