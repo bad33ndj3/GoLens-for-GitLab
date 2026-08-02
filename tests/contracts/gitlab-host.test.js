@@ -299,3 +299,45 @@ test('host popover fallback anchors to the selected diff side', async () => {
   assert.match(popoverHost.style.cssText, /left:\s*320px/);
   controller.abort();
 });
+
+test('host popover close button renders as an SVG icon that fits within the button, not as clipped text', async () => {
+  const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
+  window.document.body.innerHTML = `
+    <div class="layout-page is-merge-request">
+      <div class="ai-panels"><nav><button>AI</button></nav></div>
+      <diff-file data-file-data='{"new_path":"pkg/main.go"}'>
+        <table>
+          <tr role="row">
+            <td data-line-number="5">5</td>
+            <td class="line_content" role="gridcell"><span class="token">myFunc</span></td>
+          </tr>
+        </table>
+      </diff-file>
+    </div>`;
+
+  const host = createGitLabHost({ origin: 'https://gitlab.example', window, fetch: async () => new Response() });
+  const controller = new AbortController();
+  const bound = host.connect(review, controller.signal);
+  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
+  const initial = await events.next();
+
+  bound.apply({
+    revision: initial.value.revision,
+    enabled: true,
+    surface: { kind: 'popover', title: 'func myFunc() error', body: 'Documentation for myFunc.' },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve));
+
+  const popoverHost = window.document.querySelector('[data-golens-active-surface]');
+  assert.ok(popoverHost, 'popover host element should be present');
+
+  const closeButton = popoverHost.shadowRoot?.querySelector('[data-close]');
+  assert.ok(closeButton, 'close button should be present in the shadow root');
+  // The close button must contain an SVG icon — not the literal text "Close" which overflows
+  // the 32px wide button at font-size 22px and becomes an unreadable clipped stub.
+  const svg = closeButton.querySelector('svg');
+  assert.ok(svg, 'close button must render an SVG icon, not clipped text');
+
+  controller.abort();
+});

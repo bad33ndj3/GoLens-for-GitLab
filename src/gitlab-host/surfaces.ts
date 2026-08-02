@@ -75,7 +75,7 @@ function surfaceTemplate(state: SurfaceView, emit: (detail: SurfaceIntent) => vo
   const isPopover = projection.kind === 'popover';
   const modal = projection.modal !== false && projection.kind === 'dialog';
   return html`<div class=${modal ? 'backdrop' : ''}><section class=${`surface ${isPopover ? 'popover' : ''}`} role=${modal ? 'dialog' : 'region'} aria-modal=${modal ? 'true' : undefined} aria-labelledby="golens-surface-title">
-    <header><h2 id="golens-surface-title">${projection.title}</h2><button type="button" data-close aria-label="Close ${projection.title}" @click=${() => emit({ command: 'dismiss-surface' })}>Close</button></header>
+    <header><h2 id="golens-surface-title">${projection.title}</h2><button type="button" data-close aria-label="Close ${projection.title}" @click=${() => emit({ command: 'dismiss-surface' })}><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1l8 8M9 1L1 9"/></svg></button></header>
     ${projection.body ? html`<div class="surface-body">${projection.body}</div>` : ''}
     ${(projection.actions && projection.actions.length > 0) ? html`<div class="actions">${projection.actions.map((action) => html`<button type="button" class=${action.primary ? 'primary' : ''} @click=${() => emit({ command: 'surface-action', actionId: action.id })}>${action.label}</button>`)}</div>` : ''}
   </section></div>`;
@@ -139,12 +139,14 @@ class GoLensHostSurface extends LitElement {
     .bookmark-count[hidden] { display:none; }
     .backdrop { position:fixed; inset:0; z-index:2147483000; display:grid; place-items:center; overflow:auto; padding:var(--golens-space-6, 32px); background:rgba(9,10,12,.82); backdrop-filter:blur(4px); }
     .surface { position:relative; display:grid; grid-template-rows:auto minmax(0,1fr) auto; width:min(680px,calc(100vw - 32px)); max-height:min(680px,calc(100dvh - 32px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-xl, 14px); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); }
-.surface.popover { width:min(440px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); border-radius:var(--golens-radius-panel, 9px); border:1px solid var(--golens-border-default); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); }
-.surface.popover > header { grid-template-columns:minmax(0,1fr) auto; padding:10px 14px; background:var(--golens-surface-raised); }
-.surface.popover > header h2 { font:600 12px/1.4 var(--golens-font-mono, monospace); color:#dcdcaa; word-break:break-word; white-space:pre-wrap; }
-.surface.popover .surface-body { padding:12px 14px; font-size:12px; color:var(--golens-text-secondary); line-height:1.5; white-space:pre-wrap; }
-.surface.popover .actions { padding:8px 12px; gap:6px; flex-wrap:wrap; }
-.surface.popover .actions button { width:auto; height:auto; padding:5px 10px; font-size:11px; }
+.surface.popover { width:min(440px,calc(100vw - 24px)); max-height:min(280px,calc(100vh - 24px)); border-radius:var(--golens-radius-panel, 9px); border:1px solid var(--golens-border-default); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); }
+.surface.popover > header { display:flex; align-items:flex-start; gap:8px; padding:9px 10px 9px 14px; background:var(--golens-surface-raised); border-bottom:1px solid var(--golens-border-subtle); }
+.surface.popover > header h2 { flex:1 1 0; min-width:0; font:600 11.5px/1.5 var(--golens-font-mono, monospace); color:#dcdcaa; word-break:break-word; white-space:pre-wrap; overflow:hidden; }
+.surface.popover > header [data-close] { position:static; flex-shrink:0; align-self:flex-start; width:24px; height:24px; margin-top:1px; }
+.surface.popover > header [data-close] > svg { width:10px; height:10px; stroke-width:2; }
+.surface.popover .surface-body { padding:10px 14px; font-size:12px; color:var(--golens-text-secondary); line-height:1.55; white-space:pre-wrap; }
+.surface.popover .actions { padding:7px 10px; gap:6px; flex-wrap:wrap; border-top:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+.surface.popover .actions button { width:auto; height:auto; padding:4px 10px; font-size:11px; }
     .surface > header { display:grid; grid-template-columns:56px minmax(0,1fr); gap:var(--golens-space-4, 16px); align-items:center; padding:var(--golens-space-5, 24px) var(--golens-space-6, 32px); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
     .surface > header h2 { margin:0; font-size:20px; line-height:1.2; letter-spacing:-.015em; }
     .surface > header p { margin:4px 0 0; color:var(--golens-text-secondary); font-size:12px; }

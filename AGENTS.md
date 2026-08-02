@@ -78,3 +78,7 @@ Triage uses the default canonical labels. See `docs/agents/triage-labels.md`.
 ### Domain docs
 
 This is a single-context repository. See `docs/agents/domain.md`.
+
+## Build Requirement
+
+Always run `npm run build` after making any source change before declaring the task done. A passing build confirms TypeScript compiles and all four extension entry points bundle without errors.
