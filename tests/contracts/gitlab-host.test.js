@@ -346,6 +346,41 @@ test('host popover anchors to the recorded pointer when the token element has no
   controller.abort();
 });
 
+test('host marks Go test files in both the file tree and the diff, and only while decoration is on', async () => {
+  const window = browserWindow;
+  window.document.body.innerHTML = `
+    <div class="layout-page is-merge-request">
+      <div class="ai-panels"><nav><button>AI</button></nav></div>
+      <diff-file id="test-file" data-file-data='{"new_path":"pkg/worker_test.go"}'><table></table></diff-file>
+      <diff-file id="prod-file" data-file-data='{"new_path":"pkg/worker.go"}'><table></table></diff-file>
+    </div>
+    <div id="test-row" data-file-row title="pkg/worker_test.go">worker_test.go</div>
+    <div id="prod-row" data-file-row title="pkg/worker.go">worker.go</div>`;
+
+  const host = createGitLabHost({ origin: 'https://gitlab.example', window, fetch: async () => new Response() });
+  const controller = new AbortController();
+  const bound = host.connect(review, controller.signal);
+  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
+  const initial = await events.next();
+
+  const hasAttribute = (selector, name) => window.document.querySelector(selector).hasAttribute(name);
+
+  assert.equal(bound.apply({ revision: initial.value.revision, enabled: true, decorateTestFiles: true }).kind, 'applied');
+  // Each marker belongs to one element: the tree row and the diff root are decorated separately.
+  assert.equal(hasAttribute('#test-row', 'data-golens-go-test-file-row'), true);
+  assert.equal(hasAttribute('#test-file', 'data-golens-test-file'), true);
+  // The row marker is not the diff marker, and neither reaches a production file.
+  assert.equal(hasAttribute('#test-row', 'data-golens-test-file'), false);
+  assert.equal(hasAttribute('#prod-row', 'data-golens-go-test-file-row'), false);
+  assert.equal(hasAttribute('#prod-file', 'data-golens-test-file'), false);
+
+  assert.equal(bound.apply({ revision: initial.value.revision, enabled: true, decorateTestFiles: false }).kind, 'applied');
+  assert.equal(hasAttribute('#test-row', 'data-golens-go-test-file-row'), false);
+  assert.equal(hasAttribute('#test-file', 'data-golens-test-file'), false);
+
+  controller.abort();
+});
+
 test('host popover renders a resolved hover outcome as structured semantic content', async () => {
   const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
   window.document.body.innerHTML = `
