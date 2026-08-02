@@ -305,7 +305,7 @@ test('Review Session redirects a pending Coverage retry to the latest hover targ
   await session.stop();
 });
 
-test('Review Session anchors the hover popover to the pointer coordinates from the hover intent', async () => {
+test('Review Session keeps viewport pixel coordinates out of its state, projections, and effects', async () => {
   const stream = events();
   const projections = [];
   const target = { revision: 1, token: 'target', path: repositoryPath('pkg/main.go'), side: 'new', line: 2, identifier: 'Target', source };
@@ -321,10 +321,20 @@ test('Review Session anchors the hover popover to the pointer coordinates from t
   });
 
   stream.emit({ type: 'host-revised', revision: 1, surface: 'changes' });
-  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target, clientX: 210, clientY: 340 });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target });
   await tick();
 
-  assert.deepEqual(projections.at(-1).surface?.anchor, { x: 210, y: 340 });
+  assert.equal(projections.at(-1).surface?.title, 'Target', 'the hover must still resolve without pointer coordinates');
+  const pixelKeys = [];
+  const scan = (value, path) => {
+    if (!value || typeof value !== 'object') return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'clientX' || key === 'clientY' || (key === 'anchor' && typeof child?.x === 'number')) pixelKeys.push(`${path}.${key}`);
+      scan(child, `${path}.${key}`);
+    }
+  };
+  for (const [index, projection] of projections.entries()) scan(projection, `projection[${index}]`);
+  assert.deepEqual(pixelKeys, [], 'projections must carry no viewport pixel coordinates');
   await session.stop();
 });
 
@@ -355,7 +365,7 @@ test('Review Session recovers a hover that arrived while a click-driven query wa
   await tick();
   assert.equal(queryCount, 1);
 
-  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: targetB, clientX: 50, clientY: 60 });
+  stream.emit({ type: 'intent', revision: 1, command: 'hover-target', target: targetB });
   await tick();
   assert.equal(queryCount, 1, 'the hover must not start a query while the click-driven query is still in flight');
 
@@ -365,7 +375,7 @@ test('Review Session recovers a hover that arrived while a click-driven query wa
 
   assert.equal(queryCount, 2, 'the pending hover must fire once the blocking query completes');
   assert.equal(projections.at(-1).surface?.title, 'B');
-  assert.deepEqual(projections.at(-1).surface?.anchor, { x: 50, y: 60 });
+  assert.equal(projections.at(-1).surface?.anchor, undefined, 'the resumed hover surface must carry no pixel anchor');
   await session.stop();
 });
 

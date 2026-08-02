@@ -182,6 +182,7 @@ export function createGitLabPage({
     let revisionScheduled = false;
     let tokenSequence = 0;
     const tokens = new WeakMap<Element, HostTargetToken>();
+    let pointerAnchor: Readonly<{ token: HostTargetToken; x: number; y: number }> | undefined;
 
     const fileControls = () => fileRoots(document).flatMap((root) => {
       const action = root.querySelector('button[data-click="showFullFile"]:not(:disabled),button[data-click="showChanges"]:not(:disabled),.js-unfold-all:not(:disabled),button[data-click="expandLines"]:not(:disabled)');
@@ -374,45 +375,42 @@ export function createGitLabPage({
           const height = 280;
           let left: number | undefined;
           let top: number | undefined;
-          if (next.surface.anchor) {
-            const gap = 18;
-            const { x, y } = next.surface.anchor;
-            left = Math.max(12, Math.min(window.innerWidth - width - 12, x));
-            const below = y + gap;
-            top = (below + height <= window.innerHeight - 12) ? below : Math.max(12, y - gap - height);
-          } else {
-            let targetEl: Element | null = null;
-            if (next.selected) {
-              const tokenEl = elements.get(next.selected.token);
-              if (tokenEl?.isConnected) {
-                targetEl = tokenEl;
-              } else {
-                const root = fileRoots(document).find((r) => normalizedPath(r) === next.selected?.path);
-                if (root) {
-                  const lineEl = targetElement(root, next.selected.line, next.selected.side);
-                  const row = lineEl?.closest('tr,[role="row"]');
-                  if (row) {
-                    const codeCell = codeCellForSide(row, next.selected.side);
-                    if (codeCell && next.selected.identifier) {
-                      const matches = [...codeCell.querySelectorAll('*')].filter((el) => el.textContent?.trim() === next.selected?.identifier);
-                      targetEl = matches[next.selected.occurrence || 0] || matches[0] || codeCell;
-                    } else {
-                      targetEl = codeCell || lineEl;
-                    }
+          let targetEl: Element | null = null;
+          if (next.selected) {
+            const tokenEl = elements.get(next.selected.token);
+            if (tokenEl?.isConnected) {
+              targetEl = tokenEl;
+            } else {
+              const root = fileRoots(document).find((r) => normalizedPath(r) === next.selected?.path);
+              if (root) {
+                const lineEl = targetElement(root, next.selected.line, next.selected.side);
+                const row = lineEl?.closest('tr,[role="row"]');
+                if (row) {
+                  const codeCell = codeCellForSide(row, next.selected.side);
+                  if (codeCell && next.selected.identifier) {
+                    const matches = [...codeCell.querySelectorAll('*')].filter((el) => el.textContent?.trim() === next.selected?.identifier);
+                    targetEl = matches[next.selected.occurrence || 0] || matches[0] || codeCell;
+                  } else {
+                    targetEl = codeCell || lineEl;
                   }
                 }
               }
             }
-            if (targetEl && targetEl.isConnected) {
-              const rect = targetEl.getBoundingClientRect();
-              if (rect.width > 0 && rect.height > 0 && !(rect.top === 0 && rect.left === 0)) {
-                const gap = 6;
-                left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
-                top = (rect.top - gap - height >= 12)
-                  ? rect.top - gap - height
-                  : Math.min(window.innerHeight - height - 12, rect.bottom + gap);
-              }
-            }
+          }
+          const rect = targetEl?.isConnected ? targetEl.getBoundingClientRect() : undefined;
+          const usableRect = rect && rect.width > 0 && rect.height > 0 && !(rect.top === 0 && rect.left === 0) ? rect : undefined;
+          const pointer = next.selected && pointerAnchor?.token === next.selected.token ? pointerAnchor : undefined;
+          if (usableRect) {
+            const gap = 6;
+            left = Math.max(12, Math.min(window.innerWidth - width - 12, usableRect.left));
+            top = (usableRect.top - gap - height >= 12)
+              ? usableRect.top - gap - height
+              : Math.min(window.innerHeight - height - 12, usableRect.bottom + gap);
+          } else if (pointer) {
+            const gap = 18;
+            left = Math.max(12, Math.min(window.innerWidth - width - 12, pointer.x));
+            const below = pointer.y + gap;
+            top = (below + height <= window.innerHeight - 12) ? below : Math.max(12, pointer.y - gap - height);
           }
           host.style.cssText = left !== undefined && top !== undefined
             ? `position:fixed; z-index:2147483647; left:${left}px; top:${top}px; pointer-events:auto;`
@@ -571,7 +569,9 @@ export function createGitLabPage({
     };
     const onPointerOver = (event: Event) => {
       const target = diffTarget(event.target);
-      if (target) emitIntent({ command: 'hover-target', target, clientX: (event as PointerEvent).clientX, clientY: (event as PointerEvent).clientY });
+      if (!target) return;
+      pointerAnchor = Object.freeze({ token: target.token, x: (event as PointerEvent).clientX, y: (event as PointerEvent).clientY });
+      emitIntent({ command: 'hover-target', target });
     };
     document.addEventListener('click', onClick, { capture: true, signal });
     document.addEventListener('pointerover', onPointerOver, { capture: true, signal });

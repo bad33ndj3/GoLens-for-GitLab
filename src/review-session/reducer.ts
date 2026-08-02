@@ -40,7 +40,7 @@ export type SessionState = Readonly<{
   cacheBusy: boolean;
   nextOperationId: number;
   semantic: SemanticWork | undefined;
-  pendingHover: Readonly<{ target: DiffTarget; pointer: Readonly<{ x: number; y: number }> }> | undefined;
+  pendingHover: Readonly<{ target: DiffTarget }> | undefined;
   snapshot: SemanticSnapshotRevision | undefined;
   cacheOperationId: number | undefined;
   queryCoverageOperationId: number | undefined;
@@ -49,7 +49,6 @@ export type SessionState = Readonly<{
   reviewOperationId: number | undefined;
   navigationOperationId: number | undefined;
   fullFileOperationId: number | undefined;
-  hoverPointer: Readonly<{ x: number; y: number }> | undefined;
   selected: DiffTarget | undefined;
   targets: readonly DiffTarget[];
   occurrences: readonly SourceLocation[];
@@ -106,7 +105,7 @@ export type SessionRuntimeEvent =
   | Readonly<{ type: 'coach-tip'; sessionId: string; revision: HostRevision; label: string; binding: string }>;
 
 function withoutTransient(state: SessionState): SessionState {
-  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, pendingHover: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, hoverPointer: undefined, selected: undefined,
+  return Object.freeze({ ...state, cacheBusy: false, semantic: undefined, pendingHover: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, selected: undefined,
     targets: [], occurrences: [], choices: [], externalUrl: undefined, bookmarks: [], history: [], historyIndex: -1, status: undefined, announcement: undefined, surface: undefined, destination: undefined });
 }
 
@@ -114,7 +113,7 @@ export function initialSessionState(sessionId: string, source: DiffTarget['sourc
   return Object.freeze({
     sessionId, source, oldSource, revision: null, enabled: preferences.enabled, hideGeneratedFiles: preferences.hideGeneratedFiles,
     shortcuts: preferences.shortcuts || [], focusMode: false, cacheBusy: false, nextOperationId: 1,
-    semantic: undefined, pendingHover: undefined, snapshot: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, hoverPointer: undefined, selected: undefined,
+    semantic: undefined, pendingHover: undefined, snapshot: undefined, cacheOperationId: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, bookmarkOperationId: undefined, reviewOperationId: undefined, navigationOperationId: undefined, fullFileOperationId: undefined, selected: undefined,
     targets: [], occurrences: [], fullFileControls: [], choices: [], externalUrl: undefined, bookmarks: [], history: [], historyIndex: -1,
     status: undefined, announcement: undefined, surface: undefined, destination: undefined,
   });
@@ -165,7 +164,7 @@ function projection(state: SessionState): HostProjection | null {
     ...(state.selected ? { selected: state.selected } : {}),
     ...(state.status ? { status: state.status } : {}),
     ...(state.announcement ? { announcement: state.announcement } : {}),
-    ...(state.surface ? { surface: (state.hoverPointer && state.surface.kind === 'popover') ? Object.freeze({ ...state.surface, anchor: state.hoverPointer }) : state.surface } : {}),
+    ...(state.surface ? { surface: state.surface } : {}),
   });
 }
 
@@ -231,8 +230,7 @@ function semanticCompletion(state: SessionState, event: Extract<SessionRuntimeEv
     || !sameSource(event.outcome.source, state.source) || !sameSource(work.target.source, state.source)
     || (event.outcome.status !== 'stale-page' && (work.expectedSnapshot || state.snapshot)
       && event.outcome.snapshot !== (work.expectedSnapshot || state.snapshot))) return { state, effects: [] };
-  const cleared = Object.freeze({ ...state, semantic: undefined, coverageRetry: undefined, snapshot: event.outcome.snapshot,
-    ...(work.purpose === 'hover' ? {} : { hoverPointer: undefined }) });
+  const cleared = Object.freeze({ ...state, semantic: undefined, coverageRetry: undefined, snapshot: event.outcome.snapshot });
   if (event.outcome.status === 'stale-page' && (work.request.operation === 'find-references' || work.request.operation === 'find-implementations')) {
     const { pageToken: _pageToken, ...request } = work.request;
     return startQuery(cleared, work.target, work.purpose, request, event.outcome.snapshot);
@@ -334,7 +332,7 @@ function resumePendingHover(outcome: Readonly<{ state: SessionState; effects: re
   const pending = before.pendingHover;
   if (!pending || outcome.state === before || outcome.state.semantic !== undefined) return outcome;
   const targets = outcome.state.targets.some(({ token }) => token === pending.target.token) ? outcome.state.targets : [...outcome.state.targets, pending.target];
-  const primed = Object.freeze({ ...outcome.state, pendingHover: undefined, hoverPointer: pending.pointer, targets });
+  const primed = Object.freeze({ ...outcome.state, pendingHover: undefined, targets });
   const started = startQuery(primed, pending.target, 'hover', { operation: 'resolve-symbol', path: pending.target.path, line: pending.target.line, column: pending.target.column || 1,
     identifier: pending.target.identifier!, ...(pending.target.occurrence === undefined ? {} : { occurrence: pending.target.occurrence }) });
   return { state: started.state, effects: [...outcome.effects, ...started.effects] };
@@ -348,7 +346,7 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     return result(Object.freeze({ ...state, enabled: event.preferences.enabled, hideGeneratedFiles: event.preferences.hideGeneratedFiles,
       shortcuts: event.preferences.shortcuts || state.shortcuts, nextOperationId: leaveFocus ? operationId + 1 : operationId,
       ...(disabling ? { semantic: undefined, pendingHover: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, cacheOperationId: undefined,
-        fullFileOperationId: undefined, hoverPointer: undefined, fullFileControls: idleFullFileControls(state.fullFileControls), selected: undefined, occurrences: [], choices: [], externalUrl: undefined,
+        fullFileOperationId: undefined, fullFileControls: idleFullFileControls(state.fullFileControls), selected: undefined, occurrences: [], choices: [], externalUrl: undefined,
         surface: undefined, status: undefined, announcement: undefined } : {}) }), [
       ...(disabling ? [{ type: 'cancel-workflows' as const }] : []),
       ...(leaveFocus ? [{ type: 'perform' as const, action: 'set-fullscreen' as const, active: false, operationId }] : []),
@@ -436,7 +434,7 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     return result(Object.freeze({ ...state, enabled, nextOperationId: operationId + 1,
       ...(!enabled ? { semantic: undefined, pendingHover: undefined, queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, cacheOperationId: undefined,
         fullFileOperationId: undefined, fullFileControls: idleFullFileControls(state.fullFileControls), selected: undefined, occurrences: [], choices: [], externalUrl: undefined,
-        surface: undefined, status: undefined, announcement: undefined, hoverPointer: undefined } : {}) }), [
+        surface: undefined, status: undefined, announcement: undefined } : {}) }), [
       { type: 'save-enabled', enabled },
       ...(!enabled ? [{ type: 'cancel-workflows' as const }] : []),
       ...(state.focusMode ? [{ type: 'perform' as const, action: 'set-fullscreen' as const, active: false, operationId }] : []),
@@ -453,12 +451,10 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
   if ((event.command === 'hover-target' || event.command === 'select-target' || event.command === 'activate-target') && event.target.identifier && state.enabled) {
     if (!sameSource(event.target.source, state.source)) return { state, effects: [] };
     if (event.command === 'hover-target' && state.semantic?.purpose !== undefined && state.semantic.purpose !== 'hover') {
-      const pointer = Object.freeze({ x: event.clientX, y: event.clientY });
-      return result(Object.freeze({ ...state, pendingHover: Object.freeze({ target: event.target, pointer }) }));
+      return result(Object.freeze({ ...state, pendingHover: Object.freeze({ target: event.target }) }));
     }
-    const hoverPointer = event.command === 'hover-target' ? Object.freeze({ x: event.clientX, y: event.clientY }) : state.hoverPointer;
     if (event.command === 'hover-target' && state.queryCoverageOperationId !== undefined) {
-      const next = remember(Object.freeze({ ...state, hoverPointer }), event.target);
+      const next = remember(state, event.target);
       const request: SemanticQuery = { operation: 'resolve-symbol', path: event.target.path, line: event.target.line, column: event.target.column || 1, identifier: event.target.identifier,
         ...(event.target.occurrence === undefined ? {} : { occurrence: event.target.occurrence }) };
       const coverageRetry: SemanticRetry = Object.freeze({ target: event.target, purpose: 'hover', request });
@@ -472,7 +468,6 @@ export function reduceSession(state: SessionState, event: SessionRuntimeEvent): 
     const supersedesCoverage = event.command !== 'hover-target' && state.queryCoverageOperationId !== undefined;
     const next = remember(Object.freeze({
       ...state,
-      hoverPointer,
       ...(supersedesCoverage ? { queryCoverageOperationId: undefined, coverageRetry: undefined, cacheBusy: false, surface: undefined } : {}),
     }), event.target);
     const started = startQuery(next, event.target, event.command === 'hover-target' ? 'hover' : event.command === 'select-target' ? 'select' : 'activate', {

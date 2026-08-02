@@ -85,9 +85,10 @@ test('Rapid and legacy diffs produce normalized revision-bound targets and compl
 
   window.document.querySelector('#rapid-code').dispatchEvent(new window.PointerEvent('pointerover', { bubbles: true, composed: true, clientX: 210, clientY: 340 }));
   const { value: rapid } = await events.next();
-  assert.deepEqual({ type: rapid.type, command: rapid.command, path: rapid.target.path, side: rapid.target.side, line: rapid.target.line, column: rapid.target.column, occurrence: rapid.target.occurrence, sha: rapid.target.source.commitSha, clientX: rapid.clientX, clientY: rapid.clientY }, {
-    type: 'intent', command: 'hover-target', path: 'pkg/a.go', side: 'new', line: 12, column: 6, occurrence: 0, sha: 'a'.repeat(40), clientX: 210, clientY: 340,
+  assert.deepEqual({ type: rapid.type, command: rapid.command, path: rapid.target.path, side: rapid.target.side, line: rapid.target.line, column: rapid.target.column, occurrence: rapid.target.occurrence, sha: rapid.target.source.commitSha }, {
+    type: 'intent', command: 'hover-target', path: 'pkg/a.go', side: 'new', line: 12, column: 6, occurrence: 0, sha: 'a'.repeat(40),
   });
+  assert.deepEqual(Object.keys(rapid).filter((key) => key === 'clientX' || key === 'clientY'), [], 'hover intents must carry no viewport pixel coordinates');
   window.document.querySelector('#rapid-code').dispatchEvent(new window.MouseEvent('click', { bubbles: true, composed: true }));
   assert.equal((await events.next()).value.command, 'select-target');
   window.document.querySelector('#legacy-code').dispatchEvent(new window.MouseEvent('click', { bubbles: true, composed: true, ctrlKey: true }));
@@ -107,7 +108,7 @@ test('a resolved hover surface renders a structured signature block and document
   const events = bound.events(controller.signal)[Symbol.asyncIterator]();
   const { value: initial } = await events.next();
   bound.apply({ revision: initial.revision, enabled: true, surface: {
-    kind: 'popover', title: 'Target', anchor: { x: 100, y: 200 },
+    kind: 'popover', title: 'Target',
     symbol: { kind: 'func', signature: 'func Target(ctx context.Context) error', documentation: 'Target performs the operation.', location: 'pkg/main.go:12' },
     actions: [{ id: 'find-usages', label: 'Find usages' }],
   } });
@@ -117,7 +118,6 @@ test('a resolved hover surface renders a structured signature block and document
   assert.equal(surface.shadowRoot.querySelector('.symbol-signature')?.textContent, 'func Target(ctx context.Context) error');
   assert.equal(surface.shadowRoot.querySelector('.symbol-doc')?.textContent, 'Target performs the operation.');
   assert.equal(surface.shadowRoot.querySelector('.symbol-location')?.textContent, 'pkg/main.go:12');
-  assert.match(surface.style.cssText, /left:\s*\d+px;\s*top:\s*\d+px/);
   controller.abort();
 });
 

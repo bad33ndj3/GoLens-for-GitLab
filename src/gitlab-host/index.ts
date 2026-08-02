@@ -101,8 +101,7 @@ type TargetIntentCommand = 'hover-target' | 'select-target' | 'activate-target';
 type SimpleIntentCommand = Exclude<HostIntentCommand, TargetIntentCommand | 'surface-action' | 'toggle-full-file' | 'toggle-bookmark'>;
 export type HostIntent =
   | Readonly<{ command: SimpleIntentCommand }>
-  | Readonly<{ command: 'hover-target'; target: DiffTarget; clientX: number; clientY: number }>
-  | Readonly<{ command: Exclude<TargetIntentCommand, 'hover-target'>; target: DiffTarget }>
+  | Readonly<{ command: TargetIntentCommand; target: DiffTarget }>
   | Readonly<{ command: 'surface-action'; actionId: string }>
   | Readonly<{ command: 'toggle-bookmark'; bookmark?: BookmarkSelection }>
   | Readonly<{ command: 'toggle-full-file'; path: RepositoryPath }>;
@@ -124,7 +123,6 @@ export type ActiveSurfaceProjection = Readonly<{
   body?: string;
   modal?: boolean;
   actions?: readonly Readonly<{ id: string; label: string; primary?: boolean }>[];
-  anchor?: Readonly<{ x: number; y: number }>;
   symbol?: Readonly<{ kind: string; signature: string; documentation?: string; location: string }>;
 }>;
 export type FullFileControlProjection = Readonly<{

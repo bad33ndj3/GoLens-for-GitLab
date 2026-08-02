@@ -177,7 +177,7 @@ test('upgrade notice uses the approved copy and only Continue acknowledges it', 
   assert.equal(await continued, true);
 });
 
-test('host popover positions above the target element by default when space allows and ignores GoLens attribute mutations', async () => {
+test('host popover lets the token rect refine the recorded pointer anchor and ignores GoLens attribute mutations', async () => {
   const window = browserWindow;
   window.document.body.innerHTML = `
     <div class="layout-page is-merge-request">
@@ -205,7 +205,7 @@ test('host popover positions above the target element by default when space allo
   window.innerHeight = 768;
 
   // Trigger pointerover to resolve target token
-  tokenSpan.dispatchEvent(new window.MouseEvent('pointerover', { bubbles: true }));
+  tokenSpan.dispatchEvent(new window.PointerEvent('pointerover', { bubbles: true, clientX: 140, clientY: 410 }));
   const intent = await events.next();
   assert.equal(intent.value.type, 'intent');
   assert.equal(intent.value.command, 'hover-target');
@@ -223,7 +223,7 @@ test('host popover positions above the target element by default when space allo
 
   const popoverHost = window.document.querySelector('[data-golens-active-surface]');
   assert.ok(popoverHost);
-  // Target top is 400, height 280, gap 6. Expected top: 400 - 6 - 280 = 114px (ABOVE the target token)
+  // Pointer was recorded at (140, 410), but the token rect refines it: top 400, height 280, gap 6 -> 114px, ABOVE the token.
   assert.match(popoverHost.style.cssText, /top:\s*114px/);
   assert.match(popoverHost.style.cssText, /left:\s*100px/);
 
@@ -297,6 +297,52 @@ test('host popover fallback anchors to the selected diff side', async () => {
   const popoverHost = window.document.querySelector('[data-golens-active-surface]');
   assert.ok(popoverHost);
   assert.match(popoverHost.style.cssText, /left:\s*320px/);
+  controller.abort();
+});
+
+test('host popover anchors to the recorded pointer when the token element has no usable rect', async () => {
+  const window = browserWindow;
+  window.document.body.innerHTML = `
+    <div class="layout-page is-merge-request">
+      <div class="ai-panels"><nav><button>AI</button></nav></div>
+      <diff-file data-file-data='{"new_path":"pkg/main.go"}'>
+        <table>
+          <tr role="row">
+            <td data-line-number="10">10</td>
+            <td class="line_content" role="gridcell"><span class="token">mySymbol</span></td>
+          </tr>
+        </table>
+      </diff-file>
+    </div>`;
+
+  const host = createGitLabHost({ origin: 'https://gitlab.example', window, fetch: async () => new Response() });
+  const controller = new AbortController();
+  const bound = host.connect(review, controller.signal);
+  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
+  const initial = await events.next();
+  window.innerWidth = 1024;
+  window.innerHeight = 768;
+
+  // No getBoundingClientRect stub: happy-dom reports a zero rect, so element anchoring is unavailable.
+  window.document.querySelector('.token').dispatchEvent(new window.PointerEvent('pointerover', { bubbles: true, clientX: 300, clientY: 120 }));
+  const intent = await events.next();
+  assert.equal(intent.value.command, 'hover-target');
+  assert.equal(intent.value.clientX, undefined, 'pixel coordinates must stay inside the host adapter');
+
+  bound.apply({
+    revision: initial.value.revision,
+    enabled: true,
+    selected: intent.value.target,
+    interactiveTargets: [intent.value.target],
+    surface: { kind: 'popover', title: 'mySymbol', body: 'func mySymbol()' },
+  });
+
+  const popoverHost = window.document.querySelector('[data-golens-active-surface]');
+  assert.ok(popoverHost);
+  // Pointer at (300, 120), gap 18: the popover sits just below the pointer, not in the fixed corner.
+  assert.match(popoverHost.style.cssText, /left:\s*300px/);
+  assert.match(popoverHost.style.cssText, /top:\s*138px/);
+  assert.doesNotMatch(popoverHost.style.cssText, /right:\s*24px/);
   controller.abort();
 });
 
