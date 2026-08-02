@@ -200,6 +200,7 @@ export function createGitLabPage({
         removeProjection();
         revision = (Number(revision) + 1) as HostRevision;
         elements.clear();
+        pointerAnchor = undefined;
         projectionKey = '';
         shortcuts = [];
         emitRevision();
