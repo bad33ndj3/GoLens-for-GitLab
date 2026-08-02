@@ -346,6 +346,63 @@ test('host popover anchors to the recorded pointer when the token element has no
   controller.abort();
 });
 
+test('host popover renders a resolved hover outcome as structured semantic content', async () => {
+  const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
+  window.document.body.innerHTML = `
+    <div class="layout-page is-merge-request">
+      <div class="ai-panels"><nav><button>AI</button></nav></div>
+      <diff-file data-file-data='{"new_path":"pkg/main.go"}'>
+        <table>
+          <tr role="row">
+            <td data-line-number="12">12</td>
+            <td class="line_content" role="gridcell"><span class="token">Target</span></td>
+          </tr>
+        </table>
+      </diff-file>
+    </div>`;
+
+  const host = createGitLabHost({ origin: 'https://gitlab.example', window, fetch: async () => new Response() });
+  const controller = new AbortController();
+  const bound = host.connect(review, controller.signal);
+  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
+  const initial = await events.next();
+
+  bound.apply({
+    revision: initial.value.revision,
+    enabled: true,
+    surface: {
+      kind: 'popover',
+      title: 'Target',
+      symbol: {
+        kind: 'func',
+        signature: 'func Target(ctx context.Context) error',
+        documentation: 'Target performs the operation.',
+        location: 'pkg/main.go:12',
+      },
+      actions: [{ id: 'find-usages', label: 'Find usages' }],
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve));
+
+  const popoverHost = window.document.querySelector('[data-golens-active-surface]');
+  assert.ok(popoverHost, 'popover host element should be present');
+  const shadow = popoverHost.shadowRoot;
+
+  // A resolved hover shows the symbol kind, signature, documentation and source
+  // location as separate elements — not a single flattened string.
+  assert.equal(shadow.querySelector('.symbol-kind')?.textContent, 'func');
+  assert.equal(shadow.querySelector('.symbol-signature')?.textContent, 'func Target(ctx context.Context) error');
+  assert.equal(shadow.querySelector('.symbol-doc')?.textContent, 'Target performs the operation.');
+  assert.equal(shadow.querySelector('.symbol-location')?.textContent, 'pkg/main.go:12');
+  assert.match(shadow.querySelector('.symbol-hint')?.textContent ?? '', /click for definition/);
+  assert.equal(shadow.querySelector('.actions button')?.textContent, 'Find usages');
+  // The title stays the bare identifier so aria-labelledby keeps naming the symbol.
+  assert.equal(shadow.querySelector('#golens-surface-title')?.textContent, 'Target');
+
+  controller.abort();
+});
+
 test('host popover close button renders as an SVG icon that fits within the button, not as clipped text', async () => {
   const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
   window.document.body.innerHTML = `

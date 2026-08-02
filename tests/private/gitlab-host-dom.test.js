@@ -102,25 +102,6 @@ test('Rapid and legacy diffs produce normalized revision-bound targets and compl
   controller.abort();
 });
 
-test('a resolved hover surface renders a structured signature block and documentation in the shadow DOM', async () => {
-  fixture();
-  const { controller, bound } = boundHost();
-  const events = bound.events(controller.signal)[Symbol.asyncIterator]();
-  const { value: initial } = await events.next();
-  bound.apply({ revision: initial.revision, enabled: true, surface: {
-    kind: 'popover', title: 'Target',
-    symbol: { kind: 'func', signature: 'func Target(ctx context.Context) error', documentation: 'Target performs the operation.', location: 'pkg/main.go:12' },
-    actions: [{ id: 'find-usages', label: 'Find usages' }],
-  } });
-  await new Promise((resolve) => setTimeout(resolve));
-  const surface = window.document.querySelector('[data-golens-active-surface]');
-  assert.equal(surface.shadowRoot.querySelector('.symbol-kind')?.textContent, 'func');
-  assert.equal(surface.shadowRoot.querySelector('.symbol-signature')?.textContent, 'func Target(ctx context.Context) error');
-  assert.equal(surface.shadowRoot.querySelector('.symbol-doc')?.textContent, 'Target performs the operation.');
-  assert.equal(surface.shadowRoot.querySelector('.symbol-location')?.textContent, 'pkg/main.go:12');
-  controller.abort();
-});
-
 test('actions are idempotent and surfaces preserve modal focus, Escape, and teardown', async () => {
   fixture();
   const { controller, bound } = boundHost();
