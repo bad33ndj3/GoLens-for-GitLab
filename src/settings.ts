@@ -7,6 +7,14 @@ type Preferences = Readonly<{ enabled: boolean; hideGeneratedFiles: boolean; sho
 type PreferencePort = Readonly<{ get(): Promise<Preferences>; set(value: Partial<Preferences>): Promise<void>; subscribe(listener: (value: Preferences) => void): () => void }>;
 type AccessPort = Readonly<{ list(): Promise<readonly string[]>; add(origin: string): Promise<void>; remove(pattern: string): Promise<void> }>;
 
+const pageMeta: Record<string, [string, string]> = {
+  general:   ['General', 'Choose how GoLens behaves across GitLab reviews.'],
+  shortcuts: ['Keyboard shortcuts', 'Move through large diffs without leaving the keyboard.'],
+  access:    ['GitLab access', 'Control which self-hosted GitLab origins can run GoLens.'],
+  cache:     ['Source cache', 'Inspect and manage commit-pinned source stored in this browser.'],
+  help:      ['Help', 'Open the complete feature guide whenever you need a refresher.'],
+};
+
 function formatBytes(bytes: number): string {
   if (!bytes) return 'Empty';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -73,6 +81,13 @@ export async function startSettingsEntry({
   const showTab = (tab: HTMLButtonElement) => {
     for (const candidate of tabs) { const selected = candidate === tab; candidate.setAttribute('aria-selected', String(selected)); candidate.tabIndex = selected ? 0 : -1; }
     page.querySelectorAll<HTMLElement>('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== tab.dataset.settingsTab; });
+    const meta = pageMeta[tab.dataset.settingsTab!];
+    if (meta) {
+      const titleEl = page.querySelector('[data-page-title]');
+      const descEl = page.querySelector('[data-page-description]');
+      if (titleEl) titleEl.textContent = meta[0];
+      if (descEl) descEl.textContent = meta[1];
+    }
   };
   tabs.forEach((tab, index) => {
     tab.addEventListener('click', () => showTab(tab));

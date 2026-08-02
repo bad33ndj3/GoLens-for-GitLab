@@ -154,6 +154,7 @@ export type HostProjection = Readonly<{
   bookmarks?: readonly HostTargetToken[];
   bookmarkLocations?: readonly Readonly<{ source: SourceIdentity; path: RepositoryPath; line: number }>[];
   destination?: HostTargetToken;
+  selected?: DiffTarget;
   status?: string;
   announcement?: string;
   surface?: ActiveSurfaceProjection;
