@@ -569,7 +569,6 @@ export class GoSemanticIndex {
     // still matches this counter.
     this.mutationGeneration = 0;
     this._scopeCache = new Map();
-    this._implementationCache = new Map();
   }
 
   // Lazy: the parse tree is only ever needed to locate an identifier node at
@@ -787,7 +786,6 @@ export class GoSemanticIndex {
     this.files.clear();
     this.projects.clear();
     this._scopeCache.clear();
-    this._implementationCache.clear();
     this.mutationGeneration++;
   }
 
@@ -1348,7 +1346,6 @@ export class GoSemanticIndex {
     for (const key of this.files.keys()) if (key.startsWith(prefix)) this.files.delete(key);
     for (const key of this.projects) if (key.startsWith(prefix)) this.projects.delete(key);
     for (const key of this._scopeCache.keys()) if (key.startsWith(prefix)) this._scopeCache.delete(key);
-    for (const key of this._implementationCache.keys()) if (key.startsWith(prefix)) this._implementationCache.delete(key);
     return { status: 'disposed' };
   }
 }
