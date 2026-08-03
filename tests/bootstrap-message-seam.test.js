@@ -70,21 +70,25 @@ function loadBootstrap({ mountResult, failImport = false } = {}) {
   return { send, dispatched, finishMount: resolveImport, scope, window };
 }
 
-test('bootstrap answers the settings messages, and only those', () => {
+test('bootstrap answers the settings and onboarding messages, and only those', () => {
   const { scope } = loadBootstrap();
   const { RESPONDED_TYPES } = scope.globalThis.GoLensBootstrap.__test;
 
   // Every claimed type must be a real route to a feature page/main.js mounts.
   // Claiming a type content.js/go-navigation.js already answers synchronously
   // would put two responders on one message.
+  const answerableFeatures = ['settings-overlay', 'onboarding'];
   for (const type of RESPONDED_TYPES) {
     const route = routeMessage({ type });
     assert.equal(route.kind, 'routed', `${type} is answered by bootstrap but routes nowhere`);
-    assert.equal(route.feature, 'settings-overlay', `${type} routes to ${route.feature}, which bootstrap does not answer for`);
+    assert.ok(
+      answerableFeatures.includes(route.feature),
+      `${type} routes to ${route.feature}, which bootstrap does not answer for`,
+    );
   }
   assert.deepEqual(
     [...RESPONDED_TYPES].sort(),
-    ['golens-close-settings', 'golens-settings-ready', 'golens-show-settings'],
+    ['golens-close-settings', 'golens-settings-ready', 'golens-show-onboarding', 'golens-show-settings'],
   );
 });
 
@@ -137,6 +141,26 @@ test('golens-settings-ready mirrors content.js\'s old ok: Boolean(host) envelope
   shut.finishMount();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(shutCall.response, { ok: false, result: { ready: false } });
+});
+
+test('golens-show-onboarding mirrors content.js\'s old ok/error envelope', async () => {
+  const shown = loadBootstrap({ mountResult: () => ({ kind: 'shown' }) });
+  const shownCall = shown.send('golens-show-onboarding');
+  shown.finishMount();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(shownCall.response, { ok: true, result: { shown: true } });
+
+  const already = loadBootstrap({ mountResult: () => ({ kind: 'already-open' }) });
+  const alreadyCall = already.send('golens-show-onboarding');
+  already.finishMount();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(alreadyCall.response, { ok: true, result: { shown: true } });
+
+  const refused = loadBootstrap({ mountResult: () => ({ kind: 'not-gitlab' }) });
+  const refusedCall = refused.send('golens-show-onboarding');
+  refused.finishMount();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(refusedCall.response, { ok: false, error: 'Open a GitLab merge request first.' });
 });
 
 test('messages bootstrap does not answer still reach the module graph', async () => {

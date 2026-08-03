@@ -21,6 +21,7 @@ import { createOverlayRegistry } from './platform/overlay-registry.js';
 import { start as startLifecycle } from './lifecycle/index.js';
 import { mount as mountGeneratedFiles } from './features/generated-files.js';
 import { mount as mountSettingsOverlay } from './features/settings-overlay.js';
+import { mount as mountOnboarding } from './features/onboarding.js';
 import { mount as mountMrPreload } from './features/mr-preload.js';
 import { mount as mountCelebration } from './features/celebration.js';
 
@@ -41,6 +42,7 @@ export function mount(ctx = {}) {
     features: [
       { name: 'generated-files', mount: mountGeneratedFiles },
       { name: 'settings-overlay', mount: mountSettingsOverlay },
+      { name: 'onboarding', mount: mountOnboarding },
       { name: 'mr-preload', mount: mountMrPreload },
       { name: 'celebration', mount: mountCelebration },
     ],

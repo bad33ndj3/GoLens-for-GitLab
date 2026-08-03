@@ -133,7 +133,7 @@ De feature-carve-outs snijden uit twee hub-bestanden; max één agent per hubbes
 | ticket | `content.js` | `go-navigation.js` |
 |---|---|---|
 | ~~14 celebration~~ | ~~✔~~ | ~~✔~~ | *(klaar)* |
-| 15 onboarding | ✔ | |
+| ~~15 onboarding~~ | ~~✔~~ | | *(klaar)* |
 | ~~16 settings-overlay~~ | ~~✔~~ | | *(klaar)* |
 | 17 keyboard-nav | ✔ | ✔ |
 | 18 bookmarks | ✔ | ✔ |
@@ -141,7 +141,7 @@ De feature-carve-outs snijden uit twee hub-bestanden; max één agent per hubbes
 | 20 project-search | | ✔ |
 | 21 code-intel | | ✔ |
 
-Open: 15, 17, 18, 20, 21.
+Open: 17, 18, 20, 21.
 
 17 en 18 raken beide hubs en draaien dus solo. `page/main.js` (de `features`-array) is een
 gedeeld raakvlak van élk ticket — parallelle agents moeten hun entry met een eigen, unieke anchor

@@ -14,19 +14,19 @@
 // tab, so the ack and this module's actual DOM work happen in parallel, not
 // as a single synchronous call like content.js's former showSettingsOverlay.
 //
-// Mutual exclusion with onboarding (still content.js-owned, unmigrated):
-// content.js's own 'golens-show-settings' handler calls its closeOnboarding()
-// directly (legal: it owns onboarding). The reverse — closing settings when
-// onboarding opens — can't be a direct call the other way (no feature ->
-// feature calls, ticket 03 §3), so this module listens for the same
-// 'golens-show-onboarding' message itself and closes, applying the same
-// isGitLab()/isMergeRequest() guard content.js's own handler applies before
-// it shows onboarding, so the two stay in sync about when that message is
-// actually honored. Documented deviation: this reverse path used to be one
-// synchronous function call inside content.js's message handler; it is now
-// two independent chrome.runtime.onMessage listeners reacting to the same
-// delivered message, so relative ordering depends on listener registration
-// order rather than being guaranteed within one function body.
+// Mutual exclusion with onboarding (page/features/onboarding.js, ticket 15):
+// neither module calls the other directly (no feature -> feature calls,
+// ticket 03 §3). Each listens for the other's open message and closes
+// itself: this module listens for 'golens-show-onboarding' here, applying
+// the same isGitLab()/isMergeRequest() guard onboarding.js's own show()
+// applies, so the two stay in sync about when that message is actually
+// honored; onboarding.js listens for 'golens-show-settings' with its own
+// (looser, MR-independent) guard, mirroring what content.js's handler used
+// to apply before both overlays moved out. Documented deviation: this used
+// to be one synchronous function call inside content.js's message handler;
+// it is now two independent chrome.runtime.onMessage listeners reacting to
+// the same delivered message, so relative ordering depends on listener
+// registration order rather than being guaranteed within one function body.
 import { createOverlayRegistry } from '../platform/overlay-registry.js';
 import { isGitLabPage, isMergeRequestPath, overlayMarkup } from './settings-overlay.internal.js';
 

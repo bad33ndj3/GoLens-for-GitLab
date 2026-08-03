@@ -39,6 +39,7 @@
     'golens-show-settings',
     'golens-close-settings',
     'golens-settings-ready',
+    'golens-show-onboarding',
   ];
 
   let currentHandle = null;
@@ -94,6 +95,10 @@
       return { ok: true, result: { shown: true } };
     }
     if (type === 'golens-close-settings') return { ok: true, result: { closed: true } };
+    if (type === 'golens-show-onboarding') {
+      if (kind === 'not-gitlab') return { ok: false, error: 'Open a GitLab merge request first.' };
+      return { ok: true, result: { shown: true } };
+    }
     // golens-settings-ready: content.js answered `ok: Boolean(host)`.
     const isReady = kind === 'ready';
     return { ok: isReady, result: { ready: isReady } };
