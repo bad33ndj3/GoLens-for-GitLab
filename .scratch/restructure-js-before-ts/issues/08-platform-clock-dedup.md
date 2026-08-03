@@ -31,10 +31,11 @@ Tests die `setClock` gebruiken schakelen over op de clock-seam.
       (`createLegacyDebounceIdle`); de bestaande tests (`content-reconcile-debounce.test.js`,
       celebrations/full-file/friday/onboarding) bleven ongewijzigd en zijn 3x achtereen groen
       gedraaid zonder flakiness. `go-navigation.js`'s debounceIdle is niet aangeraakt.
-- [ ] `npm run check` — niet gedraaid. `npm run check` roept `test:browser` aan, en die gate is
-      machine-niveau kapot (zie map.md, "Correcties tijdens uitvoering"), los van deze operatie.
-      In plaats daarvan gedraaid: `node --test tests/*.test.js` (213 pass / 0 fail, gelijk aan
-      baseline) en `npm run check:syntax` (groen).
+- [x] Volledige `npm run check` groen — door de orchestrator gedraaid ná deze commit, exit 0.
+      Losse metingen: `node --test tests/*.test.js` **215 pass / 0 fail** (baseline was 213, dus
+      omhoog), `npm run check:syntax` groen, `npm run test:browser` 3/3 groen, `npm run bench`
+      exit 0. De agent kon `test:browser` zelf nog niet meetellen omdat ticket 23 op dat moment
+      nog liep; die gate is inmiddels gerepareerd (zie map.md).
 
 **Bevinding: de twee duplicaten waren NIET volledig identiek.** `debounceIdle`'s body was
 byte-voor-byte identiek tussen `go-navigation.js` en `content.js`. `defaultClock()`/`setClock()`

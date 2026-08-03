@@ -84,6 +84,18 @@ blijven staan zoals ze geschreven zijn; dit is de correctielijst.
   al bij scenario 1 op google_apis/gcm-ruis en is expliciet niet ondersteund.
   **`npm run test:browser` is vanaf hier weer een verplichte gate voor 13–21.**
 
+- **Ticket 08 is partieel en blijft dat tot `go-navigation.js` een ES module is.** Alleen
+  `content.js`'s `debounceIdle` is gecentraliseerd in `page/platform/clock.js`
+  (`createLegacyDebounceIdle`), via dezelfde async-`import()`-bridge als ticket 10. `go-navigation.js`
+  is bewust niet gemigreerd: zijn `init()` is synchroon en fire-and-forget, en tests asserten
+  synchrone bijwerkingen direct erna — een async import-bridge zou de eerste debounce-aanroep stil
+  kunnen laten no-oppen, en dat schendt de "timing exact ongewijzigd"-eis. Twee bevindingen die 03
+  niet had: de `debounceIdle`-duplicaten waren byte-identiek, maar de `defaultClock`-duplicaten
+  **niet** (`go-navigation.js` heeft een extra `requestFrame` voor `throttle()`/`sleep()`); en de
+  `setClock`-migratie naar de clock-seam is niet gedaan omdat zes tests fake-clock met eigen
+  echte-timer-wachters op hetzelfde global mengen. De rest van de clock-dedup hoort dus achter de
+  ES-module-conversie van `go-navigation.js`, niet vóór.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,
