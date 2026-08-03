@@ -12,19 +12,59 @@ profiel- en TCC-state, en of de DevTools-`Runtime.evaluate`-timeout te kort staa
 
 **Blocked by:** None — can start immediately.
 
-**Status:** open — diagnose-only, zie "Diagnose (2026-08-03)" hieronder. Geen fix committed.
+**Status:** resolved — fix gevonden en gecommit, zie "Fix (2026-08-03, vervolgsessie)" hieronder.
 
 - [x] Oorzaak van de `Runtime.evaluate`-timeout benoemd (omgeving, harness-timeout, of browserversie) —
       zie diagnose: **de gesanctioneerde hypothese (harness-timeout te kort) is getest en weerlegd**;
-      werkelijke oorzaak is machine-niveau (nondeterministische extension-messaging in deze
-      Chromium/Helium-build, headless). Buiten scope van dit ticket om op te lossen.
-- [ ] `npm run test:browser` 5/5 groen op een schone kopie van HEAD, zonder `CHROME_NO_SANDBOX`-hack
-      of met die hack expliciet in `package.json` vastgelegd i.p.v. als mondelinge overlevering —
-      niet gehaald; zie diagnose (2/8 bij verhoogde timeout, machine-niveau geacht)
-- [ ] Ticket 05's uitgeschakelde checkbox (mount + pushState-re-mount) alsnog groen afgevinkt —
-      niet aangeraakt; blijft uitgeschakeld tot de gate zelf betrouwbaar is
-- [x] Geen test verzwakt, overgeslagen of verwijderd om dit te halen — `tests/browser-smoke.mjs` staat
-      terug op de originele HEAD-versie (`git diff` leeg); alle diagnostische edits zijn teruggedraaid
+      werkelijke oorzaak bleek het ontbreken van een CI-achtige launch-flag-set (zie fix hieronder),
+      niet machine-niveau nondeterminisme zoals eerder verondersteld.
+- [x] `npm run test:browser` 5/5 groen — gehaald op Helium met `CHROME_NO_SANDBOX=1`, vastgelegd in
+      `package.json` (niet als mondelinge overlevering); Chrome haalt het niet, zie fix-notitie
+- [x] Ticket 05's uitgeschakelde checkbox (mount + pushState-re-mount) alsnog groen afgevinkt —
+      scenario 1 liep 10/10 groen, checkbox in `05-bootstrap-and-page-skeleton.md` aangevinkt
+- [x] Geen test verzwakt, overgeslagen of verwijderd om dit te halen — alleen launch-flags toegevoegd
+      aan `runBrowserAttempt`'s `args`, geen scenario/assertion aangeraakt
+
+## Fix (2026-08-03, vervolgsessie)
+
+**Root cause (herzien):** de vorige sessie's conclusie "machine-niveau nondeterminisme" was voorbarig.
+De browser-fixtures zijn timer-gedreven (`fullFileWatch` @20ms, `streamNext` @5ms; scenario 5's
+assertie is letterlijk `maxTimerDelay < 40`). Chrome/Helium headless kan renderers als
+"backgrounded/occluded" behandelen en hun timers throttlen, wat precies de intermitterende
+scenario 2/5-fails verklaart terwijl scenario 1 (één directe DOM-read, geen timer-keten) altijd
+groen bleef. De originele launch-flags (`--headless=new --disable-gpu --no-first-run
+--no-default-browser-check`) misten de CI-achtige set die Puppeteer/Playwright standaard gebruiken.
+
+**Wijziging:** in `tests/browser-smoke.mjs`, `runBrowserAttempt`'s `args`, toegevoegd:
+`--disable-background-networking --disable-sync --disable-default-apps
+--disable-component-update --disable-features=Translate,OptimizationHints,MediaRouter,
+CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows --disable-renderer-backgrounding
+--disable-ipc-flooding-protection --metrics-recording-only --mute-audio`. Geen scenario, assertion
+of timeout aangeraakt.
+
+**Metingen (empirisch, na de flag-wijziging):**
+- **Helium** (`/Applications/Helium.app/.../Helium`, 0.14.9.1, Chromium 150), met
+  `CHROME_NO_SANDBOX=1`: **10/10 groen** (5x directe invocatie + 5x via `npm run test:browser` met
+  de env var nu in `package.json`). Baseline vóór de fix was 2/8 (25%); kans dat 10 groene runs op
+  rij toeval is bij die baseline is verwaarloosbaar.
+- **Helium zonder `CHROME_NO_SANDBOX=1`:** 2/3 groen, 1/3 rood — de hack blijft dus nodig voor
+  betrouwbaarheid op deze machine; checkbox 2's "zonder de hack"-pad is niet haalbaar gebleken.
+- **Chrome** (`/Applications/Google Chrome.app/...`, met `CHROME_NO_SANDBOX=1`, zelfde flags):
+  **0/3 groen**, faalt steeds al bij scenario 1 met `Error: Browser scenario timed out` — dezelfde
+  plek als vóór de fix. De flags lossen Chrome's achtergronddienst-ruis (`PHONE_REGISTRATION_ERROR`
+  etc.) dus niet op binnen deze scope; Chrome is dus expliciet niet de gekozen browser.
+
+**Gekozen browser + env (vastgelegd, geen mondelinge overlevering):** Helium, via
+`npm run test:browser`, wat nu intern `CHROME_NO_SANDBOX=1 node tests/browser-smoke.mjs` uitvoert
+(zie `package.json`). Chrome wordt niet ondersteund door deze gate.
+
+**Gates:** `node --test tests/*.test.js` → 213 pass / 0 fail. `npm run check:syntax` → exit 0.
+`npm run bench` → exit 0. Alle drie bevestigd na de flag-wijziging.
+
+**Openstaand:** de eerdere sessie's punten 1 en 2 (SW→content-script messaging-race, trage
+full-file-injectie) zijn niet losgekoppeld onderzocht — de timer-throttling-hypothese verklaart de
+waarnemingen voldoende en de fix is empirisch bevestigd (10/10), dus verder graven viel buiten scope
+zodra de gate zelf weer betrouwbaar groen was.
 
 ## Diagnose (2026-08-03)
 

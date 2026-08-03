@@ -13,8 +13,11 @@ SPA-navigatie. Volg de bevindingen van het `proto/bootstrap-import`-prototype (t
 
 - [x] Manifest laadt bootstrap; `page/main.js` + `platform/clock` bestaan als ES modules en mounten
 - [x] Legacy-bestanden en bestaand gedrag onaangeraakt; unit tests (175/175) + `check:syntax` groen
-- [ ] Browser-smoke (of uitbreiding daarvan) toont mount + her-mount na pushState-navigatie —
-      geschreven, niet groen te krijgen: de smoke faalt óók op een schone HEAD-kopie (zie note)
+- [x] Browser-smoke (of uitbreiding daarvan) toont mount + her-mount na pushState-navigatie —
+      groen bevestigd door ticket 23: scenario 1 (mount + pushState-re-mount,
+      `data-golens-skeleton-mount-count` / `data-golens-page-skeleton-mounted` /
+      `data-golens-skeleton-remounted`) liep 10/10 groen op Helium met `CHROME_NO_SANDBOX=1`;
+      zie ticket 23 voor de volledige gate-status
 - [x] `createClock()`-interface conform ticket 04 §2 (now/setTimeout/debounceIdle)
 
 **Resolution notes:** `bootstrap.js` (new, repo root) does
