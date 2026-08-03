@@ -36,6 +36,32 @@ migration. This map produces the spec and its tickets; it does not execute the r
 - [03 — Define target module boundaries](issues/03-define-target-module-boundaries.md) — Feature-slices over een platformlaag: `page/lifecycle` (orchestrator) → 9 feature-modules → `page/platform` (rpc-client, settings-store, clock, overlay-registry); worker blijft `dispatch`/`index-core`/`source-cache`. Verboden: feature→feature, feature→lifecycle, elk `globalThis`-contract. Per module functional core / imperative shell; `mount(ctx)`→`unmount()` state-lifecycle; één eigenaar per `chrome.storage`-key. Page-modules worden echte ES modules via dynamic `import()` (bootstrap-contentscript, geen bundler). Breekpakket: DOM-backdoor → overlay-registry, RPC-status-roundtrip → resultaat in antwoord, dood `golens-go-status` event en lege `_implementationCache` verwijderd, clock/debounceIdle gededupliceerd, worker-dispatch routing/effect gesplitst.
 - [04 — Design module interfaces](issues/04-design-module-interfaces.md) — Uniform contract `mount(ctx) → { unmount, ≤±5 methods }` voor features, `createX(deps)` voor platform-services; rpc-client met drie namespaces (query/cache/index, 1:1 wire-mapping, framing/transport privé); domein-uitkomsten altijd `kind`-gediscrimineerde returnwaarden uit gesloten sets, exceptions alleen voor infra-falen; worker-klassen getrimd tot de dispatch-set (cache's ~10 IndexedDB-helpers worden privé). Eén prototype geflagd én uitgevoerd: de dynamic-`import()`-bootstrap — **PASS** (import onder strikte pagina-CSP werkt vanuit de isolated world; `web_accessible_resources` verplicht; mount in ~15–29ms; SPA-re-mount werkt via `location.href`-observatie). Wegwerpcode op branch `proto/bootstrap-import`.
 
+## Correcties tijdens uitvoering (2026-08-03)
+
+Analysefase-bevindingen die tijdens de executie feitelijk onjuist bleken. De tickets 02/03 hierboven
+blijven staan zoals ze geschreven zijn; dit is de correctielijst.
+
+- **`golens-go-status` is geen dood contract.** 02 en 03 §7 claimen "nergens een listener".
+  `tests/browser-smoke.mjs:268` registreert er wel degelijk één (zet `document.body.dataset.goStatus`)
+  en `:445` hangt de hele implementations-popover-smoke aan `dataset.goStatus === 'ready'`. Ticket 06
+  is daarop ingeperkt tot één dood contract (`_implementationCache`), de dispatch blijft staan.
+- **Er is geen "RPC-status-roundtrip" bij `restoreMergeRequest`.** 03 §7 noemt een extra
+  status-aanroep na `restoreMergeRequest` als breekpunt. Beide call-sites
+  (`go-navigation.js:1285` en `:1315`) voeren het resultaat direct door naar `relatedResultScope(...)`;
+  er is geen vervolgaanroep om weg te halen. Breekpakket-item vervalt.
+- **`createRpcClient` wijkt bewust af van 04 §2.** De geleverde module neemt ook een `onDisconnect`-dep
+  en `dispose({ reason })`, omdat het bestaande cache-clear- en annuleergedrag anders niet 1:1
+  behouden blijft. Gedocumenteerd in de module en in ticket 09.
+- **Ticket 10 is partieel.** `page/platform/settings-store.js` bestaat en `content.js` loopt er volledig
+  doorheen, maar onboarding-save en `settings.js`/`shortcut-settings.js` schrijven `shortcutBindings`
+  nog buiten de store om; "één eigenaar per `chrome.storage`-key" (03) is dus nog niet gehaald.
+- **De browser-smoke is niet bruikbaar als gate.** `tests/browser-smoke.mjs` faalt op deze machine ook
+  op een schone kopie van HEAD (3/3, plus 5/5 in een schone worktree) met
+  `DevTools Runtime.evaluate timed out`, mét `CHROME_NO_SANDBOX=1`. Vanaf ticket 05 draaien de tickets
+  dus op `node --test tests/*.test.js` + `check:syntax` als gate. Dat betekent geen end-to-end vangnet
+  voor de rest van deze operatie — de smoke-omgeving repareren verdient een eigen ticket vóór de
+  zwaardere feature-carve-outs (13–21).
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,
