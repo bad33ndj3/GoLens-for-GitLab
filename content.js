@@ -59,6 +59,22 @@
     }
   }
 
+  // Same dynamic-`import()` bridge as settings-store/clock above, for
+  // page/platform/overlay-registry.js (ticket 12 — breaks the ticket 02 §4
+  // near-cycle: go-navigation.js used to read `#golens-onboarding-root` /
+  // `#golens-settings-root` straight off this file's DOM). content.js owns
+  // both overlays, so it's the one that claims while they're open and
+  // releases when they close; go-navigation.js only ever reads
+  // `isAnyOpen()` through its own import of this same module.
+  let overlayRegistry = null;
+  async function loadOverlayRegistryModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/overlay-registry.js'));
+    } catch {
+      return await import('./page/platform/overlay-registry.js');
+    }
+  }
+
   const state = {
     settings: defaults,
     enabled: true,
@@ -75,6 +91,14 @@
     fullPreloadRunID: 0,
     onboardingReturnFocus: null,
     settingsReturnFocus: null,
+    // release() functions returned by overlayRegistry.claim(), held here so
+    // closeOnboarding()/closeSettingsOverlay() — the sole close paths for
+    // every close route (Esc, backdrop click, close button, SPA
+    // navigation) — can release exactly the claim their matching
+    // show*()/claim() made, and only if one was actually made (see
+    // loadOverlayRegistryModule's failure handling).
+    onboardingOverlayRelease: null,
+    settingsOverlayRelease: null,
     autoCollapsedGeneratedFolders: new Set(),
     celebrationStatus: null,
     celebrationRunID: 0,
@@ -837,6 +861,8 @@
     const host = document.getElementById('golens-onboarding-root');
     if (!host) return;
     host.remove();
+    state.onboardingOverlayRelease?.();
+    state.onboardingOverlayRelease = null;
     state.onboardingReturnFocus?.focus?.();
     state.onboardingReturnFocus = null;
     const queuedMoment = state.queuedMascotMoment;
@@ -850,6 +876,8 @@
     const host = document.getElementById('golens-settings-root');
     if (!host) return;
     host.remove();
+    state.settingsOverlayRelease?.();
+    state.settingsOverlayRelease = null;
     if (restoreFocus) state.settingsReturnFocus?.focus?.();
     state.settingsReturnFocus = null;
     const queuedMoment = state.queuedMascotMoment;
@@ -891,6 +919,7 @@
       frame.focus();
     }, { once: true });
     document.body.append(host);
+    state.settingsOverlayRelease = overlayRegistry?.claim('settings-overlay') ?? null;
   }
 
   function onboardingFeatureIcon(name) {
@@ -1145,6 +1174,7 @@
       focusable[next].focus();
     });
     document.body.append(host);
+    state.onboardingOverlayRelease = overlayRegistry?.claim('onboarding') ?? null;
     showPage(0);
   }
 
@@ -1367,6 +1397,7 @@
       focusable[next].focus();
     });
     document.body.append(host);
+    state.onboardingOverlayRelease = overlayRegistry?.claim('onboarding') ?? null;
     showPage(0);
     primaryButton.focus();
   }
@@ -2072,6 +2103,19 @@
     } catch {
       settingsStore = null;
       state.settings = defaults;
+    }
+    try {
+      const { createOverlayRegistry } = await loadOverlayRegistryModule();
+      overlayRegistry = createOverlayRegistry();
+    } catch {
+      // Both the chrome.runtime.getURL and relative import fallbacks
+      // failed (should not happen in production). Leave overlayRegistry
+      // null; claim() call sites below already guard on this, so onboarding
+      // and the settings overlay keep opening/closing normally, just
+      // without publishing to the registry — go-navigation.js's
+      // shortcutCoachBlocked() then degrades to "not blocked" from this
+      // check (see its own loadOverlayRegistryModule failure handling).
+      overlayRegistry = null;
     }
     state.enabled = state.settings.enabled;
     window.addEventListener('focus', refreshPreloadStatus);

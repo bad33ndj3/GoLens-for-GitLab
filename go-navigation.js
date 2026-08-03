@@ -84,6 +84,44 @@
       // loadClockModule failure handling).
     });
 
+  // Bridge onto page/platform/overlay-registry.js (ticket 12 — breaks the
+  // ticket 02 §4 near-cycle: `shortcutCoachBlocked` used to read
+  // content.js-owned `#golens-onboarding-root` / `#golens-settings-root`
+  // straight off the page DOM instead of asking through an API). Same
+  // dynamic-`import()` bridge and IIFE-top-level kickoff as the clock
+  // bridge above, for the same reason: `shortcutCoachBlocked` is called
+  // synchronously from `showShortcutCoachHint`/`offerShortcutCoach` and
+  // cannot itself await a module load.
+  //
+  // Unlike the clock bridge, no queue-until-ready placeholder is needed:
+  // before this resolves, `overlayRegistry` just stays null and
+  // `shortcutCoachBlocked` falls back to "not blocked" — exactly what the
+  // old DOM read would also have found, since content.js cannot have
+  // claimed (opened) an overlay before its own copy of this same module
+  // has finished loading either.
+  async function loadOverlayRegistryModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/overlay-registry.js'));
+    } catch {
+      return await import('./page/platform/overlay-registry.js');
+    }
+  }
+  let overlayRegistry = null;
+  // Exposed via __test.overlayRegistryReady so tests can deterministically
+  // await the load instead of racing it; production code never awaits this
+  // itself.
+  const overlayRegistryReady = loadOverlayRegistryModule()
+    .then(({ createOverlayRegistry }) => {
+      overlayRegistry = createOverlayRegistry();
+    })
+    .catch(() => {
+      // Both the chrome.runtime.getURL and relative import fallbacks failed
+      // (should not happen in production). Leave overlayRegistry null;
+      // shortcutCoachBlocked() then permanently falls back to "not
+      // blocked" from this check — degraded, not crashed (mirrors the
+      // clock bridge's failure handling above).
+    });
+
   const state = {
     enabled: false,
     packages: new Map(),
@@ -2221,8 +2259,7 @@
   function shortcutCoachBlocked() {
     const toastElement = state.ui?.shadowRoot.querySelector('.toast');
     return document.visibilityState === 'hidden'
-      || Boolean(document.getElementById('golens-onboarding-root'))
-      || Boolean(document.getElementById('golens-settings-root'))
+      || (overlayRegistry?.isAnyOpen() ?? false)
       || Boolean(toastElement?.classList.contains('show'));
   }
 
@@ -3126,7 +3163,7 @@
     clearBookmarks,
     recoverBookmark,
     registerBookmarkSurface,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, implementationSearchTerms, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked, setClock, clockReady: legacyDebounceIdleReady,
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, implementationSearchTerms, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked, setClock, clockReady: legacyDebounceIdleReady, overlayRegistryReady,
       // Live accessor (ticket 08): scheduleDiffReconciliation is reassigned
       // over time (null -> queue-until-ready placeholder -> real debounced
       // function), so tests need a getter rather than the value captured
