@@ -158,9 +158,14 @@ allebei buiten 16's eigen scope:
 2. **Liegende ack.** `page/lifecycle` roept per ontwerp nooit `sendResponse` aan, dus `content.js`
    blijft de responder en moet `ok: true` antwoorden zonder het werk gedaan te hebben.
 
-**Gevolg voor de planning:** tickets die een feature met een popup-/message-ingang uit een hub
-snijden (16 settings-overlay, 15 onboarding, en alles wat via `FEATURE_ROUTES` binnenkomt) zijn
-geblokkeerd tot er een ticket ligt dat (a) een synchroon geregistreerde, bufferende listener in
+**Gevolg voor de planning.** Bewezen: een feature waarvan de énige ingang een
+`FEATURE_ROUTES`-message is, kan niet gemigreerd worden — dat is 16, empirisch aangetoond.
+Afgeleid, niet bewezen: 15 (onboarding) is de eerstvolgende die hier tegenaan loopt, want
+`golens-show-onboarding` staat al in `FEATURE_ROUTES` zonder gemounte feature die hem beantwoordt,
+en `content.js` vangt hem nu synchroon. Dat geldt alleen als 15 op dezelfde manier gemigreerd
+wordt; het is een verwachting, geen meting.
+
+Beide gevallen zijn geblokkeerd tot er een ticket ligt dat (a) een synchroon geregistreerde, bufferende listener in
 `bootstrap.js` zet (queue-until-ready, zoals ticket 08's clock-bridge) en (b) beslist wie
 antwoordt. Puur DOM-/observer-gedreven features (13 generated-files) en RPC-features zonder
 message-ingang (19 mr-preload) hebben hier geen last van en zijn wél migreerbaar.
