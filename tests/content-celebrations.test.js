@@ -63,6 +63,11 @@ test('celebrates confirmed review milestones and cache completion', async (t) =>
   };
 
   await import('../content.js?content-celebrations-test');
+  globalThis.GoLensContent.__test.setClock({
+    setTimeout: (fn) => { fn(); return 0; },
+    clearTimeout: () => {},
+    requestIdle: (fn) => { fn(); return 0; },
+  });
   await wait(0);
 
   assert.ok(statusRequests >= 1, 'the initial MR status was not captured');

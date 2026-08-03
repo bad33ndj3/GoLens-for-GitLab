@@ -144,6 +144,30 @@ test('worker restores a commit-pinned package after its memory index is disposed
   assert.equal(resolved.result.status, 'resolved');
 });
 
+test('worker reports package cache status from the in-memory index without a storage round trip', async () => {
+  const ref = 'f'.repeat(40);
+  const file = sourceFile('sample/sample.go', 'package sample\nfunc Target() {}\n');
+  const params = {
+    origin: 'https://gitlab.example',
+    project: 'group/project',
+    ref,
+    packagePath: 'sample',
+    modulePath: 'example.com/project',
+    files: [file],
+  };
+  await request('cachePackage', params);
+
+  const warm = await request('packageCacheStatus', params);
+  assert.equal(warm.ok, true);
+  assert.equal(warm.result.status, 'complete');
+
+  await request('disposeProject', { origin: params.origin, project: params.project, ref });
+
+  const cold = await request('packageCacheStatus', params);
+  assert.equal(cold.ok, true);
+  assert.equal(cold.result.status, 'complete');
+});
+
 test('worker reports and clears durable cache contents', async () => {
   const ref = 'e'.repeat(40);
   const file = sourceFile('sample/sample.go', 'package sample\nfunc Target() {}\n');

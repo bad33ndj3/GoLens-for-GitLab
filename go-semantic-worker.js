@@ -72,6 +72,10 @@ async function performDispatch(method, params = {}) {
   }
   if (method === 'packageCacheStatus') {
     if (!isCommitSHA(params.ref)) return { status: 'missing' };
+    // Warm path: the package is already indexed in memory, so skip the
+    // storage round trip entirely. Only consult the index if it's already
+    // initialized — checking here must never force the WASM parser to load.
+    if (indexPromise && (await indexPromise).hasPackage(params)) return { status: 'complete' };
     return sourceCache.packageStatus(params);
   }
   if (method === 'clearCache') {

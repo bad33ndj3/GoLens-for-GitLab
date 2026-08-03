@@ -59,6 +59,11 @@ test('uses the Friday beer kart for MR creation, approval, and merge after 16:00
   };
 
   await import('../content.js?content-friday-test');
+  globalThis.GoLensContent.__test.setClock({
+    setTimeout: (fn) => { fn(); return 0; },
+    clearTimeout: () => {},
+    requestIdle: (fn) => { fn(); return 0; },
+  });
   await wait(0);
 
   window.document.getElementById('create').addEventListener('click', (event) => event.preventDefault());

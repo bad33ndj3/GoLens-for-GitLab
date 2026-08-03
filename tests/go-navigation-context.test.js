@@ -638,6 +638,87 @@ test('uses GitLab pagination headers and falls back when headers are omitted', (
   assert.equal(helpers.nextPageNumber(response(), 2, Array(12)), 0);
 });
 
+test('retries a retryable fetch response with backoff before giving up', async () => {
+  const originalFetch = globalThis.fetch;
+  const delays = [];
+  helpers.setClock({ setTimeout: (fn, ms) => { delays.push(ms); fn(); return 0; }, clearTimeout: () => {} });
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts++;
+    if (attempts < 3) return { ok: false, status: 503, async text() { return ''; } };
+    return { ok: true, status: 200, async text() { return 'package main'; } };
+  };
+  try {
+    const source = await helpers.fetchSource('go.mod', 'a'.repeat(40));
+    assert.equal(source, 'package main');
+    assert.equal(attempts, 3, 'retried twice before the third attempt succeeded');
+    assert.deepEqual(delays, [200, 800], 'backed off between retries');
+  } finally {
+    globalThis.fetch = originalFetch;
+    helpers.setClock();
+  }
+});
+
+test('remembers a permanently-absent source path for the session instead of re-requesting it', async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests++;
+    return { ok: false, status: 404, async text() { return ''; } };
+  };
+  try {
+    await assert.rejects(helpers.fetchSource('missing/file.go', 'a'.repeat(40)));
+    await assert.rejects(helpers.fetchSource('missing/file.go', 'a'.repeat(40)));
+    assert.equal(requests, 1, 'the second lookup was served from the remembered-absent set, not the network');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('parallelizes package file pagination once GitLab reports a total page count', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedPages = [];
+  globalThis.fetch = async (url) => {
+    const page = Number(new URL(url).searchParams.get('page'));
+    requestedPages.push(page);
+    const entries = page === 1
+      ? Array.from({ length: 100 }, (_value, index) => ({ type: 'blob', path: `pkg/file${index}.go`, id: 'a'.repeat(40) }))
+      : [{ type: 'blob', path: `pkg/extra${page}.go`, id: 'a'.repeat(40) }];
+    return {
+      ok: true,
+      headers: { get: (name) => (name.toLowerCase() === 'x-total-pages' ? '3' : '') },
+      async json() { return entries; },
+    };
+  };
+  try {
+    const files = await helpers.listPackageFiles('pkg', 'a'.repeat(40));
+    assert.equal(files.length, 102);
+    assert.deepEqual([...requestedPages].sort((a, b) => a - b), [1, 2, 3], 'all three known pages were requested');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('falls back to sequential pagination when GitLab omits a total page count', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedPages = [];
+  globalThis.fetch = async (url) => {
+    const page = Number(new URL(url).searchParams.get('page'));
+    requestedPages.push(page);
+    const entries = page === 1
+      ? Array.from({ length: 100 }, (_value, index) => ({ type: 'blob', path: `svc/file${index}.go` }))
+      : [{ type: 'blob', path: 'svc/final.go' }];
+    return { ok: true, headers: { get: () => '' }, async json() { return entries; } };
+  };
+  try {
+    const files = await helpers.listProjectFiles('a'.repeat(40));
+    assert.equal(files.length, 101);
+    assert.deepEqual(requestedPages, [1, 2], 'pages were requested one at a time in order');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('uses every required interface method to discover candidate implementation packages', () => {
   assert.deepEqual(
     helpers.implementationSearchTerms({
@@ -933,4 +1014,121 @@ test('recovers stale bookmarks only from one safe context match', async () => {
   const ambiguous = await helpers.bookmarkRecoveryCandidates([...moved, ...moved], record);
   assert.equal(ambiguous.length, 2);
   assert.equal((await helpers.bookmarkRecoveryCandidates(['before()', 'Other()', 'after()'], record)).length, 0, 'the stored symbol remains a required constraint');
+});
+
+test('throttles hover hit-tests to at most one per animation frame during a pointer burst', async () => {
+  const previousDocument = globalThis.document;
+  const previousNodeFilter = globalThis.NodeFilter;
+  const previousMutationObserver = globalThis.MutationObserver;
+  const previousEvent = globalThis.Event;
+  const previousCustomEvent = globalThis.CustomEvent;
+  const previousFetch = globalThis.fetch;
+  const window = new Window({ url: globalThis.location.href });
+  const sha = '1'.repeat(40);
+  window.document.body.innerHTML = `
+    <div id="diffs">
+      <diff-file data-testid="rd-diff-file" data-file-data='{"old_path":"pkg/throttle.go","new_path":"pkg/throttle.go"}'>
+        <a class="rd-diff-file-link" href="https://gitlab.example/group/project/-/blob/${sha}/pkg/throttle.go">pkg/throttle.go</a>
+        <table><tbody><tr><td class="new_line"><a aria-label="Added line 1">1</a></td>
+          <td data-testid="rd-diff-line-content"><span class="id">Target</span>()</td>
+        </tr></tbody></table>
+      </diff-file>
+    </div>`;
+  globalThis.document = window.document;
+  globalThis.NodeFilter = window.NodeFilter;
+  globalThis.MutationObserver = window.MutationObserver;
+  globalThis.Event = window.Event;
+  globalThis.CustomEvent = window.CustomEvent;
+  globalThis.fetch = async () => { throw new Error('offline in test'); };
+  let frameCallback = null;
+  helpers.setClock({ requestFrame: (fn) => { frameCallback = fn; return 1; } });
+  try {
+    globalThis.GoLensGoNavigation.init();
+    // Let init()'s unawaited bookmark-refresh chain (fetch rejects immediately,
+    // but still needs a microtask/macrotask turn to settle) finish while
+    // `document` is still the live test window, so it doesn't run after this
+    // test's `finally` block has restored globals.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // A prior test in this file pins the popover and never tears down
+    // module state (no init()/teardown() pairing there); clear it so this
+    // test's hit-test burst isn't short-circuited by leaked state.
+    helpers.hidePopover();
+    const span = window.document.querySelector('[data-testid="rd-diff-line-content"] .id');
+    let hitTests = 0;
+    // Only reachable through caretAtPoint, itself only reachable through the
+    // hit-test path — a clean counter without exporting the throttle itself.
+    window.document.caretPositionFromPoint = () => { hitTests++; return null; };
+    for (let index = 0; index < 5; index++) {
+      const event = new window.Event('mousemove', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: span });
+      Object.defineProperty(event, 'clientX', { value: 10 });
+      Object.defineProperty(event, 'clientY', { value: 10 });
+      helpers.onMouseMove(event);
+    }
+    assert.equal(hitTests, 0, 'no hit-test runs before the animation frame fires');
+    assert.equal(typeof frameCallback, 'function', 'expected a frame to be scheduled');
+    frameCallback();
+    assert.equal(hitTests, 1, 'a burst of pointer events over one frame produces exactly one hit-test');
+  } finally {
+    globalThis.GoLensGoNavigation.teardown();
+    helpers.setClock();
+    globalThis.document = previousDocument;
+    globalThis.NodeFilter = previousNodeFilter;
+    globalThis.MutationObserver = previousMutationObserver;
+    globalThis.Event = previousEvent;
+    globalThis.CustomEvent = previousCustomEvent;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('caches file context per diff-file root and invalidates it when the diff root mutates', async () => {
+  const previousDocument = globalThis.document;
+  const previousNodeFilter = globalThis.NodeFilter;
+  const previousMutationObserver = globalThis.MutationObserver;
+  const previousEvent = globalThis.Event;
+  const previousCustomEvent = globalThis.CustomEvent;
+  const previousFetch = globalThis.fetch;
+  const window = new Window({ url: globalThis.location.href });
+  const oldSha = 'a'.repeat(40);
+  const newSha = 'b'.repeat(40);
+  window.document.body.innerHTML = `
+    <div id="diffs">
+      <diff-file data-testid="rd-diff-file" data-file-data='{"old_path":"pkg/cache.go","new_path":"pkg/cache.go"}'>
+        <a class="rd-diff-file-link" href="https://gitlab.example/group/project/-/blob/${oldSha}/pkg/cache.go">pkg/cache.go</a>
+        <table><tbody><tr><td class="new_line"><a aria-label="Added line 1">1</a></td>
+          <td data-testid="rd-diff-line-content"><span class="id">Target</span>()</td>
+        </tr></tbody></table>
+      </diff-file>
+    </div>`;
+  globalThis.document = window.document;
+  globalThis.NodeFilter = window.NodeFilter;
+  globalThis.MutationObserver = window.MutationObserver;
+  globalThis.Event = window.Event;
+  globalThis.CustomEvent = window.CustomEvent;
+  globalThis.fetch = async () => { throw new Error('offline in test'); };
+  try {
+    globalThis.GoLensGoNavigation.init();
+    const root = window.document.querySelector('diff-file');
+    const cell = window.document.querySelector('[data-testid="rd-diff-line-content"]');
+    assert.equal(helpers.fileContextFor(cell).ref, oldSha);
+    assert.equal(helpers.fileContextFor(cell).ref, oldSha, 'a second read hits the cache without re-resolving');
+
+    // GitLab re-renders the diff file in place with a newer commit-pinned
+    // blob link, ahead of the old one; this is a childList mutation the
+    // existing diff observer already watches.
+    root.querySelector('a').insertAdjacentHTML('beforebegin', `<a class="rd-diff-file-link" href="https://gitlab.example/group/project/-/blob/${newSha}/pkg/cache.go">pkg/cache.go</a>`);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(helpers.fileContextFor(cell).ref, newSha, 'the cached file context is invalidated as soon as the diff root mutates');
+  } finally {
+    globalThis.GoLensGoNavigation.teardown();
+    globalThis.document = previousDocument;
+    globalThis.NodeFilter = previousNodeFilter;
+    globalThis.MutationObserver = previousMutationObserver;
+    globalThis.Event = previousEvent;
+    globalThis.CustomEvent = previousCustomEvent;
+    globalThis.fetch = previousFetch;
+  }
 });

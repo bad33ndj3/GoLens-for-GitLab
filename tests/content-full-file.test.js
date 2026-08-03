@@ -139,6 +139,11 @@ test('adds idempotent full-file controls for Rapid and legacy diffs', async () =
     await delay();
   };
   await import('../content.js?content-full-file-test');
+  globalThis.GoLensContent.__test.setClock({
+    setTimeout: (fn) => { fn(); return 0; },
+    clearTimeout: () => {},
+    requestIdle: (fn) => { fn(); return 0; },
+  });
   await settle();
 
   assert.ok(window.document.getElementById('tree-go-test').hasAttribute('data-golens-go-test-file-row'));

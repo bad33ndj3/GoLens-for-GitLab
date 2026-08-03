@@ -60,6 +60,11 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
 
   await import('../shortcut-settings.js?content-onboarding-test');
   await import('../content.js?content-onboarding-test');
+  globalThis.GoLensContent.__test.setClock({
+    setTimeout: (fn) => { fn(); return 0; },
+    clearTimeout: () => {},
+    requestIdle: (fn) => { fn(); return 0; },
+  });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const firstHost = window.document.getElementById('golens-onboarding-root');
@@ -269,6 +274,11 @@ test('setup preserves custom shortcuts and discards staged choices when dismisse
   await import('../shortcut-settings.js?content-onboarding-custom-shortcuts-test');
   customBindings = { ...globalThis.GoLensShortcuts.defaultBindings(), focusFileSearch: 'Alt+KeyP' };
   await import('../content.js?content-onboarding-custom-test');
+  globalThis.GoLensContent.__test.setClock({
+    setTimeout: (fn) => { fn(); return 0; },
+    clearTimeout: () => {},
+    requestIdle: (fn) => { fn(); return 0; },
+  });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const host = window.document.getElementById('golens-onboarding-root');

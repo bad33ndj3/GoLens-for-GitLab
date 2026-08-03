@@ -7,12 +7,46 @@
   const FULL_FILE_EXPANSION_TIMEOUT_MS = 15000;
   const FULL_FILE_EXPANSION_LIMIT = 500;
   const CELEBRATION_POLL_INTERVALS_MS = [250, 500, 750, 1000, 1500, 2000, 2500];
+  const RECONCILE_DEBOUNCE_MS = 50;
+  // Injectable time source (test-only) so debounce tests are deterministic
+  // and don't sleep. Mirrors the pattern in `go-navigation.js`.
+  function defaultClock() {
+    return {
+      setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
+      clearTimeout: (id) => globalThis.clearTimeout(id),
+      requestIdle: (fn) => (globalThis.requestIdleCallback ? globalThis.requestIdleCallback(fn) : globalThis.setTimeout(fn, 0)),
+    };
+  }
+  let clock = defaultClock();
+  function setClock(overrides) {
+    clock = overrides ? { ...defaultClock(), ...overrides } : defaultClock();
+  }
+
+  // Debounces `fn` by `delayMs` of quiet time, then runs it through
+  // `requestIdleCallback` (falling back to an immediate call when the
+  // browser doesn't support it) so a burst of page mutations doesn't
+  // compete with rendering.
+  function debounceIdle(fn, delayMs) {
+    let timer = null;
+    const debounced = (...args) => {
+      if (timer !== null) clock.clearTimeout(timer);
+      timer = clock.setTimeout(() => {
+        timer = null;
+        clock.requestIdle(() => fn(...args));
+      }, delayMs);
+    };
+    debounced.cancel = () => {
+      if (timer !== null) clock.clearTimeout(timer);
+      timer = null;
+    };
+    return debounced;
+  }
   const state = {
     settings: defaults,
     enabled: true,
     pageKey: '',
     pageActive: false,
-    reconcileTimer: null,
+    reconcileCount: 0,
     ownsFullscreen: false,
     controlsHost: null,
     controlsMounted: false,
@@ -1957,7 +1991,7 @@
   }
 
   async function reconcilePage() {
-    state.reconcileTimer = null;
+    state.reconcileCount++;
     if (!isGitLab() || !isMergeRequest()) {
       await leaveMergeRequestPage();
       return;
@@ -1984,10 +2018,9 @@
     reconcileOverviewDiscussionLineLinks();
   }
 
-  function schedulePageReconcile() {
-    if (state.reconcileTimer) return;
-    state.reconcileTimer = setTimeout(() => reconcilePage().catch(() => undefined), 0);
-  }
+  const schedulePageReconcile = debounceIdle(() => {
+    reconcilePage().catch(() => undefined);
+  }, RECONCILE_DEBOUNCE_MS);
 
   async function init() {
     if (!isGitLab()) return;
@@ -2078,6 +2111,8 @@
       sendResponse({ ok: Boolean(host), result: { ready: Boolean(host) } });
     }
   });
+
+  globalThis.GoLensContent = { __test: { setClock, schedulePageReconcile, reconcileCount: () => state.reconcileCount } };
 
   init();
 })();

@@ -91,6 +91,31 @@ async function codeCellForSetup() {
   return { helpers, span };
 }
 
+async function caretAtPointSetup() {
+  const helpers = await loadGoNavigation();
+  const html = buildDiffFixtureHTML({ fileCount: FULL_FILE_COUNT, rowsPerFile: FULL_ROWS_PER_FILE });
+  const window = mountFixture(html);
+  globalThis.document = window.document;
+  globalThis.NodeFilter = window.NodeFilter;
+  const cells = [...window.document.querySelectorAll('[data-testid="rd-diff-line-content"]')];
+  const cell = cells[cells.length - 1];
+  assert.ok(cell, 'expected at least one diff code cell');
+  const span = cell.querySelector('.id');
+  assert.ok(span, 'expected an identifier span inside the diff code cell');
+  const textNode = span.firstChild;
+  assert.ok(textNode?.nodeType === 3, 'expected a text node inside the identifier span');
+  // happy-dom implements neither `caretPositionFromPoint` nor
+  // `caretRangeFromPoint`; stub the former so caretAtPoint takes its normal
+  // path (Range walk to a character offset, identifierAtCharacter, boundary
+  // matching against the containing element) instead of returning null.
+  // The pointer coordinates below are therefore inert — the stub ignores
+  // them — and what's timed is caretAtPoint's own cost, not a browser hit-test.
+  window.document.caretPositionFromPoint = () => ({ offsetNode: textNode, offset: 0 });
+  const hit = helpers.caretAtPoint(cell, 0, 0);
+  assert.ok(hit, 'expected caretAtPoint to resolve an identifier at the stubbed caret position');
+  return { helpers, cell };
+}
+
 async function occurrenceRangesSetup() {
   const helpers = await loadGoNavigation();
   const html = buildDiffFixtureHTML({ fileCount: OCCURRENCE_FILE_COUNT, rowsPerFile: OCCURRENCE_ROWS_PER_FILE });
@@ -117,6 +142,14 @@ export const benchmarks = [
     setup: codeCellForSetup,
     run: ({ helpers, span }) => {
       for (let index = 0; index < 1000; index++) helpers.codeCellFor(span);
+    },
+  },
+  {
+    name: `caretAtPoint x1000 (uncached, ${FULL_FILE_COUNT}x${FULL_ROWS_PER_FILE} diff, hover hit-test path, stubbed browser caret hit-test)`,
+    category: 'diff-dom',
+    setup: caretAtPointSetup,
+    run: ({ helpers, cell }) => {
+      for (let index = 0; index < 1000; index++) helpers.caretAtPoint(cell, 0, 0);
     },
   },
   {

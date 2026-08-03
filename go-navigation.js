@@ -24,6 +24,26 @@
     builtin: { badge: 'F', label: 'Builtin function', className: 'function' },
     external: { badge: 'Go', label: 'External Go documentation', className: 'external' },
   };
+  // Injectable time source for throttle/debounce so tests are deterministic
+  // and don't sleep. `setClock` (test-only) swaps parts of it; `resetClock`
+  // restores the real implementations.
+  function defaultClock() {
+    return {
+      setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
+      clearTimeout: (id) => globalThis.clearTimeout(id),
+      requestFrame: (fn) => (globalThis.requestAnimationFrame ? globalThis.requestAnimationFrame(fn) : globalThis.setTimeout(fn, 16)),
+      requestIdle: (fn) => (globalThis.requestIdleCallback ? globalThis.requestIdleCallback(fn) : globalThis.setTimeout(fn, 0)),
+    };
+  }
+  let clock = defaultClock();
+  function setClock(overrides) {
+    clock = overrides ? { ...defaultClock(), ...overrides } : defaultClock();
+  }
+
+  // Debounced diff-reconciliation scheduler, (re)created per `init()`/torn
+  // down per `teardown()` alongside `state.diffObserver`.
+  let scheduleDiffReconciliation = null;
+
   const state = {
     enabled: false,
     port: null,
@@ -33,6 +53,7 @@
     projects: new Map(),
     projectProgressListeners: new Map(),
     modulePaths: new Map(),
+    absentSourcePaths: new Set(),
     refsPromise: null,
     refsKey: '',
     refsFetchedAt: 0,
@@ -148,9 +169,7 @@
     try { return JSON.parse(value); } catch { return {}; }
   }
 
-  function fileContextFor(node) {
-    const root = diffRootFor(node);
-    if (!root) return null;
+  function computeFileContext(root) {
     const fileData = rapidFileData(root);
     const title = root.querySelector('[data-testid="file-title"], .file-title-name, .diff-file-header a[href*="/-/blob/"], .rd-diff-file-link, [data-testid="rd-diff-file-header"] a[href*="/-/blob/"]');
     const dataPath = root.getAttribute('data-file-path')
@@ -169,6 +188,26 @@
     const parsed = parseBlobLink(link, newPath) || parseBlobLink(link, oldPath) || parseBlobLink(link, path);
     if (!parsed) return null;
     return { root, path: newPath, oldPath, newPath, packagePath: dirname(newPath), ref: parsed.ref };
+  }
+
+  // Cached per diff-file root: `fileContextFor` runs on every un-throttled
+  // mousemove target and its DOM work (title/blob-link queries) is the same
+  // for every cell in a file. `fileContextGeneration` is bumped synchronously
+  // (not debounced) by the diff observer whenever the diff DOM actually
+  // changes, so a hover right after an expansion/re-render never resolves a
+  // stale root/path/ref. Negative results (non-Go files) are cached too, so
+  // hovering unsupported files stays cheap.
+  let fileContextGeneration = 0;
+  const fileContextCache = new WeakMap();
+
+  function fileContextFor(node) {
+    const root = diffRootFor(node);
+    if (!root) return null;
+    const cached = fileContextCache.get(root);
+    if (cached && cached.generation === fileContextGeneration) return cached.context;
+    const context = computeFileContext(root);
+    fileContextCache.set(root, { generation: fileContextGeneration, context });
+    return context;
   }
 
   function bookmarkFileContextFor(node) {
@@ -565,10 +604,30 @@
     return entries.length === 100 ? currentPage + 1 : 0;
   }
 
+  const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+  const FETCH_RETRY_DELAYS_MS = [200, 800, 2000];
+
+  function sleep(ms) {
+    return new Promise((resolve) => clock.setTimeout(resolve, ms));
+  }
+
+  // Retries a retryable (rate-limited/transient-server-error) response with
+  // backoff before giving up, so a single blip can't abort a whole caching
+  // job. Never retries an aborted request.
+  async function fetchWithRetry(url, options = {}) {
+    for (let attempt = 0; ; attempt++) {
+      const response = await authenticatedFetch(url, options);
+      if (response.ok || !RETRYABLE_STATUS.has(response.status) || attempt >= FETCH_RETRY_DELAYS_MS.length) return response;
+      await sleep(FETCH_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+
   async function fetchSource(path, ref, signal = undefined) {
     const project = projectContext();
     const url = `${project.projectBase}/-/raw/${encodeURIComponent(ref)}/${path.split('/').map(encodeURIComponent).join('/')}`;
-    const response = await authenticatedFetch(url, { signal });
+    if (state.absentSourcePaths.has(url)) throw new Error(`GitLab returned 404 for ${path}`);
+    const response = await fetchWithRetry(url, { signal });
+    if (response.status === 404) state.absentSourcePaths.add(url);
     if (!response.ok) throw new Error(`GitLab returned ${response.status} for ${path}`);
     return response.text();
   }
@@ -579,7 +638,9 @@
     }
     const { project } = projectContext();
     const url = `${location.origin}/api/v4/projects/${encodeURIComponent(project)}/repository/blobs/${encodeURIComponent(blobId)}/raw`;
-    const response = await authenticatedFetch(url, { signal });
+    if (state.absentSourcePaths.has(url)) throw new Error(`GitLab returned 404 for ${path}`);
+    const response = await fetchWithRetry(url, { signal });
+    if (response.status === 404) state.absentSourcePaths.add(url);
     if (!response.ok) throw new Error(`GitLab returned ${response.status} for ${path}`);
     return { path, blobId, source: await response.text() };
   }
@@ -638,39 +699,60 @@
     return COMMIT_SHA.test(file.ref || '') ? file.ref : (refs.headSha || file.ref);
   }
 
-  async function listPackageFiles(packagePath, ref, signal = undefined) {
-    const { project } = projectContext();
-    const encodedProject = encodeURIComponent(project);
+  // Fetches a paginated repository-tree listing. When GitLab reports a total
+  // page count, the remaining pages are known upfront and fetched
+  // concurrently; GitLab.com is known to omit pagination headers, so when it
+  // doesn't the existing sequential `x-next-page`/page-size fallback is used.
+  async function fetchTreeEntries(urlFor, signal) {
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    const files = [];
-    for (let page = 1; page;) {
-      const url = `${location.origin}/api/v4/projects/${encodedProject}/repository/tree?path=${encodeURIComponent(packagePath)}&ref=${encodeURIComponent(ref)}&per_page=100&page=${page}`;
-      const response = await authenticatedFetch(url, { headers: csrf ? { 'X-CSRF-Token': csrf } : {}, signal });
+    const headers = csrf ? { 'X-CSRF-Token': csrf } : {};
+    const fetchPage = async (page) => {
+      const response = await authenticatedFetch(urlFor(page), { headers, signal });
       if (!response.ok) throw new Error(`GitLab source API returned ${response.status}`);
       const entries = await response.json();
       if (!Array.isArray(entries)) throw new Error('GitLab returned an invalid repository tree response');
-      files.push(...entries.filter((entry) => entry.type === 'blob' && GO_FILE.test(entry.path)).map((entry) => ({ path: entry.path, blobId: entry.id || '' })));
-      if (files.length > 200) throw new Error(`Package ${packagePath || '.'} contains too many Go files`);
-      page = nextPageNumber(response, page, entries);
+      return { response, entries };
+    };
+    const first = await fetchPage(1);
+    const totalPagesHeader = first.response.headers.get('x-total-pages');
+    const totalPages = /^\d+$/.test(totalPagesHeader || '') ? Number(totalPagesHeader) : 0;
+    if (totalPages > 1) {
+      const remainingPages = await mapLimit(
+        Array.from({ length: totalPages - 1 }, (_value, index) => index + 2),
+        6,
+        async (page) => (await fetchPage(page)).entries,
+      );
+      return [...first.entries, ...remainingPages.flat()];
     }
+    const entries = [...first.entries];
+    for (let page = nextPageNumber(first.response, 1, first.entries); page;) {
+      const next = await fetchPage(page);
+      entries.push(...next.entries);
+      page = nextPageNumber(next.response, page, next.entries);
+    }
+    return entries;
+  }
+
+  async function listPackageFiles(packagePath, ref, signal = undefined) {
+    const { project } = projectContext();
+    const encodedProject = encodeURIComponent(project);
+    const entries = await fetchTreeEntries(
+      (page) => `${location.origin}/api/v4/projects/${encodedProject}/repository/tree?path=${encodeURIComponent(packagePath)}&ref=${encodeURIComponent(ref)}&per_page=100&page=${page}`,
+      signal,
+    );
+    const files = entries.filter((entry) => entry.type === 'blob' && GO_FILE.test(entry.path)).map((entry) => ({ path: entry.path, blobId: entry.id || '' }));
+    if (files.length > 200) throw new Error(`Package ${packagePath || '.'} contains too many Go files`);
     return files;
   }
 
   async function listProjectFiles(ref) {
     const { project } = projectContext();
     const encodedProject = encodeURIComponent(project);
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    const files = [];
-    for (let page = 1; page;) {
-      const url = `${location.origin}/api/v4/projects/${encodedProject}/repository/tree?recursive=true&ref=${encodeURIComponent(ref)}&per_page=100&page=${page}`;
-      const response = await authenticatedFetch(url, { headers: csrf ? { 'X-CSRF-Token': csrf } : {} });
-      if (!response.ok) throw new Error(`GitLab source API returned ${response.status}`);
-      const entries = await response.json();
-      if (!Array.isArray(entries)) throw new Error('GitLab returned an invalid repository tree response');
-      files.push(...entries.filter((entry) => entry.type === 'blob' && isProjectGoPath(entry.path)).map((entry) => ({ path: entry.path, blobId: entry.id || '' })));
-      page = nextPageNumber(response, page, entries);
-    }
-    return files;
+    const entries = await fetchTreeEntries(
+      (page) => `${location.origin}/api/v4/projects/${encodedProject}/repository/tree?recursive=true&ref=${encodeURIComponent(ref)}&per_page=100&page=${page}`,
+      undefined,
+    );
+    return entries.filter((entry) => entry.type === 'blob' && isProjectGoPath(entry.path)).map((entry) => ({ path: entry.path, blobId: entry.id || '' }));
   }
 
   function mergeRequestIID() {
@@ -2155,14 +2237,12 @@
       if (!firstCell || !fileContextFor(firstCell)) continue;
       for (const cell of root.querySelectorAll(CODE_CELL_SELECTOR)) {
         const cellSource = cell.textContent || '';
+        if (!cellSource.includes(identifier)) continue;
         const walker = document.createTreeWalker(cell, globalThis.NodeFilter?.SHOW_TEXT || 4);
         let node;
+        let nodeOffset = 0;
         while ((node = walker.nextNode())) {
           const text = node.nodeValue || '';
-          const prefix = document.createRange();
-          prefix.selectNodeContents(cell);
-          try { prefix.setEnd(node, 0); } catch { continue; }
-          const nodeOffset = prefix.toString().length;
           let from = 0;
           while (from <= text.length - identifier.length) {
             const index = text.indexOf(identifier, from);
@@ -2177,6 +2257,7 @@
             }
             from = index + identifier.length;
           }
+          nodeOffset += text.length;
         }
       }
     }
@@ -2691,14 +2772,55 @@
     state.activeElement?.setAttribute('data-golens-go-target', '');
   }
 
-  function onMouseMove(event) {
+  // Throttles a per-pointer-move callback to at most once per animation
+  // frame: intermediate positions between frames are coalesced and only the
+  // latest is delivered. `.reset()` drops any pending frame reference on
+  // teardown; it doesn't cancel the browser's scheduled frame, so the
+  // callback still fires afterward — harmless, since it re-checks
+  // `state.enabled` itself.
+  function throttleToFrame(fn) {
+    let scheduled = false;
+    let latestArgs = null;
+    const throttled = (...args) => {
+      latestArgs = args;
+      if (scheduled) return;
+      scheduled = true;
+      clock.requestFrame(() => {
+        scheduled = false;
+        fn(...latestArgs);
+      });
+    };
+    throttled.reset = () => { scheduled = false; latestArgs = null; };
+    return throttled;
+  }
+
+  // Debounces `fn` by `delayMs` of quiet time, then runs it through
+  // `requestIdleCallback` (falling back to an immediate call when the
+  // browser doesn't support it) so a burst of diff mutations doesn't
+  // compete with rendering. `.cancel()` drops any pending timer.
+  function debounceIdle(fn, delayMs) {
+    let timer = null;
+    const debounced = (...args) => {
+      if (timer !== null) clock.clearTimeout(timer);
+      timer = clock.setTimeout(() => {
+        timer = null;
+        clock.requestIdle(() => fn(...args));
+      }, delayMs);
+    };
+    debounced.cancel = () => {
+      if (timer !== null) clock.clearTimeout(timer);
+      timer = null;
+    };
+    return debounced;
+  }
+
+  // The full hit-test — cell lookup, file-context resolution, caret-to-offset
+  // mapping — runs here, throttled to one call per animation frame. The
+  // 350ms `state.hoverTimer` delay below protects the semantic request, not
+  // this hit-test, and stays unchanged.
+  const handleMouseMovePoint = throttleToFrame((point) => {
     if (!state.enabled) return;
-    if (state.ui && event.composedPath().includes(state.ui)) {
-      pinPopover();
-      return;
-    }
-    if (state.pinnedPopover) return;
-    const target = targetAtEvent(event);
+    const target = targetAtEvent(point);
     const key = targetKey(target);
     if (key === state.activeTarget?.key) {
       cancelPopoverDismissal();
@@ -2737,6 +2859,16 @@
         }
       }
     }, 350);
+  });
+
+  function onMouseMove(event) {
+    if (!state.enabled) return;
+    if (state.ui && event.composedPath().includes(state.ui)) {
+      pinPopover();
+      return;
+    }
+    if (state.pinnedPopover) return;
+    handleMouseMovePoint({ target: event.target, clientX: event.clientX, clientY: event.clientY });
   }
 
   function onKeyDown(event) {
@@ -2852,12 +2984,20 @@
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('mouseup', reconcileBookmarkSelectionUI, true);
     document.addEventListener('visibilitychange', refreshMergeRequestRefs, true);
-    state.diffObserver = new MutationObserver((mutations) => {
-      if (mutations.length && mutations.every(bookmarkProjectionMutation)) return;
+    scheduleDiffReconciliation = debounceIdle(() => {
       scheduleOccurrenceRefresh();
       scheduleBookmarkRefresh();
+    }, 50);
+    state.diffObserver = new MutationObserver((mutations) => {
+      if (mutations.length && mutations.every(bookmarkProjectionMutation)) return;
+      // Invalidation is synchronous — a hover right after this fires must
+      // never resolve a stale cached file context. Only the (idempotent)
+      // occurrence/bookmark reconciliation work below is debounced.
+      fileContextGeneration++;
+      scheduleDiffReconciliation();
     });
-    state.diffObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    const diffObserverRoot = document.getElementById('diffs') || document.body;
+    state.diffObserver.observe(diffObserverRoot, { childList: true, subtree: true, characterData: true });
     void refreshBookmarks();
     status('idle', 'Go intelligence · hover code to start');
   }
@@ -2881,6 +3021,9 @@
     clearTimeout(state.hoverTimer);
     clearTimeout(state.toastTimer);
     state.toastTimer = null;
+    handleMouseMovePoint.reset();
+    scheduleDiffReconciliation?.cancel();
+    scheduleDiffReconciliation = null;
     state.diffObserver?.disconnect();
     state.diffObserver = null;
     clearSelectedSymbol();
@@ -2948,6 +3091,6 @@
     clearBookmarks,
     recoverBookmark,
     registerBookmarkSurface,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, implementationSearchTerms, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, implementationSearchTerms, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked, setClock },
   };
 })();
