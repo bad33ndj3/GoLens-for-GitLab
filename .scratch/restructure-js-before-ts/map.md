@@ -109,6 +109,42 @@ blijven staan zoals ze geschreven zijn; dit is de correctielijst.
   staat los van deze correctie. ES-module-conversie van `go-navigation.js` is dus geen
   precondition meer voor de rest van de clock-dedup.
 
+- **De browser-smoke is groen maar flaky onder machineload.** Scenario 5 asserteert `<40 ms`
+  timer-delay; draait er tegelijk ander zwaar werk op de machine (bench, een tweede testrun, een
+  agent), dan faalt hij daarop. Solo is hij betrouwbaar groen — waargenomen op HEAD vóór ticket 12
+  (eerst rood onder load, daarna solo groen) en bevestigd bij 12 en 13. **Gates altijd sequentieel
+  draaien; nooit twee agents die tegelijk `npm run check` doen.** Dit is geen reden om een rode
+  smoke weg te wuiven: twee keer solo falen is echt kapot.
+
+- **Ticket 13 verandert één timing die 03 "identiek" noemde.** De onboarding-save reconcilieerde de
+  generated-files-UI synchroon; `features/generated-files` reageert nu via zijn eigen
+  `chrome.storage.onChanged`-subscriptie, dus één macrotask later. Alleen tegen happy-dom
+  geverifieerd, niet tegen echte Chrome-storage-latency. Bewust geaccepteerd (de subscriptie ís het
+  ticket-04-contract), maar het is een gedragsverschil om bij ticket 22 opnieuw tegen te houden.
+
+- **`normalizeRepositoryPath` en `reconcileGoTestFileRows` blijven in `content.js`.** Geen enkel
+  ticket 13–21 claimt de go-test-file-rows-feature. Bij ticket 22 moet blijken of dat een gemiste
+  slice is of bewust legacy-restant.
+
+## Fan-out-regels voor 14–21 (file-ownership)
+
+De feature-carve-outs snijden uit twee hub-bestanden; max één agent per hubbestand tegelijk.
+
+| ticket | `content.js` | `go-navigation.js` |
+|---|---|---|
+| 14 celebration | ✔ | ✔ |
+| 15 onboarding | ✔ | |
+| 16 settings-overlay | ✔ | |
+| 17 keyboard-nav | ✔ | ✔ |
+| 18 bookmarks | ✔ | ✔ |
+| 19 mr-preload | | ✔ |
+| 20 project-search | | ✔ |
+| 21 code-intel | | ✔ |
+
+14, 17 en 18 raken beide hubs en draaien dus solo. `page/main.js` (de `features`-array) is een
+gedeeld raakvlak van élk ticket — parallelle agents moeten hun entry met een eigen, unieke anchor
+toevoegen.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,
