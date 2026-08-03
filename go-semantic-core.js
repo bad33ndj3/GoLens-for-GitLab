@@ -556,6 +556,15 @@ export class GoSemanticIndex {
     this.packages = new Map();
     this.files = new Map();
     this.projects = new Set();
+    // Single invalidation mechanism shared by every memoized, project-scoped
+    // derived structure (scope summary, implementation-search indexes).
+    // Bumped by every mutation (indexPackage, disposeProject, clear);
+    // indexProject mutates only through those two, so it needs no bump of
+    // its own. A cached entry is valid only while its stored generation
+    // still matches this counter.
+    this.mutationGeneration = 0;
+    this._scopeCache = new Map();
+    this._implementationCache = new Map();
   }
 
   hasPackage({ origin = '', project, ref, packagePath }) {
@@ -566,19 +575,45 @@ export class GoSemanticIndex {
     return this.projects.has(projectKey(origin, project, ref));
   }
 
-  searchScope({ origin = '', project, ref, packagePath = '', mode = 'project' }) {
+  // Memoized (entries, packagePaths) for a project scope; the expensive
+  // per-file packageCount is computed lazily on top of this via
+  // `_packageCount` so package-mode queries (which never use packageCount)
+  // never pay for it.
+  _scopeEntries(origin, project, ref) {
+    const key = projectKey(origin, project, ref);
+    const cached = this._scopeCache.get(key);
+    if (cached && cached.generation === this.mutationGeneration) return cached;
     const entries = [...this.packages.values()]
       .filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref);
-    const packageCount = new Set(entries.flatMap((entry) => [...entry.files.values()]
-      .map((file) => `${entry.packagePath}\u0000${file.packageName}`))).size;
-    if (mode === 'package') {
-      return { kind: 'currentPackage', packagePath, packageCount: entries.some((entry) => entry.packagePath === packagePath) ? 1 : 0, complete: true };
+    const scope = {
+      generation: this.mutationGeneration,
+      entries,
+      packagePaths: new Set(entries.map((entry) => entry.packagePath)),
+      packageCount: null,
+    };
+    this._scopeCache.set(key, scope);
+    return scope;
+  }
+
+  _packageCount(scope) {
+    if (scope.packageCount === null) {
+      scope.packageCount = new Set(scope.entries.flatMap((entry) => [...entry.files.values()]
+        .map((file) => `${entry.packagePath}\u0000${file.packageName}`))).size;
     }
+    return scope.packageCount;
+  }
+
+  searchScope({ origin = '', project, ref, packagePath = '', mode = 'project' }) {
+    const scope = this._scopeEntries(origin, project, ref);
+    if (mode === 'package') {
+      return { kind: 'currentPackage', packagePath, packageCount: scope.packagePaths.has(packagePath) ? 1 : 0, complete: true };
+    }
+    const packageCount = this._packageCount(scope);
     if (this.hasProject({ origin, project, ref })) {
       return { kind: 'fullProject', packageCount, complete: true, searchStatus: 'complete' };
     }
     if (packageCount <= 1) {
-      return { kind: 'currentPackage', packagePath: entries[0]?.packagePath || packagePath, packageCount, complete: false };
+      return { kind: 'currentPackage', packagePath: scope.entries[0]?.packagePath || packagePath, packageCount, complete: false };
     }
     return { kind: 'indexedPackages', packageCount, complete: false, searchStatus: 'limited' };
   }
@@ -587,9 +622,13 @@ export class GoSemanticIndex {
     this.packages.clear();
     this.files.clear();
     this.projects.clear();
+    this._scopeCache.clear();
+    this._implementationCache.clear();
+    this.mutationGeneration++;
   }
 
   indexPackage({ origin = '', project, ref, packagePath, modulePath = '', files }) {
+    this.mutationGeneration++;
     const key = packageKey(origin, project, ref, packagePath);
     const previous = this.packages.get(key);
     for (const path of previous?.files.keys() || []) this.files.delete(fileKey(origin, project, ref, path));
@@ -1139,10 +1178,13 @@ export class GoSemanticIndex {
   }
 
   disposeProject({ origin = '', project, ref = '' }) {
+    this.mutationGeneration++;
     const prefix = `${origin}\u0000${project}\u0000${ref}`;
     for (const key of this.packages.keys()) if (key.startsWith(prefix)) this.packages.delete(key);
     for (const key of this.files.keys()) if (key.startsWith(prefix)) this.files.delete(key);
     for (const key of this.projects) if (key.startsWith(prefix)) this.projects.delete(key);
+    for (const key of this._scopeCache.keys()) if (key.startsWith(prefix)) this._scopeCache.delete(key);
+    for (const key of this._implementationCache.keys()) if (key.startsWith(prefix)) this._implementationCache.delete(key);
     return { status: 'disposed' };
   }
 }
