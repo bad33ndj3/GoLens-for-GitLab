@@ -35,12 +35,18 @@
       "js": ["shortcut-settings.js", "bookmark-store.js", "go-navigation.js", "content.js"],
       "css": ["golens-theme.css", "gitlab-lens.css"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://gitlab.com/*"],
+      "js": ["bootstrap.js"],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": [
         "settings.html",
+        "page/*",
         "assets/icons/golens-32.png",
         "assets/icons/golens-128.png",
         "assets/celebrations/golens-approved.png",

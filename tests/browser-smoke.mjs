@@ -87,6 +87,7 @@ async function connectDevTools(url) {
 
 async function sendExtensionTabMessage(port, pageURL, messageType, deadline) {
   let connection;
+  let lastValue;
   try {
     while (Date.now() < deadline) {
       const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json()).catch(() => []);
@@ -99,8 +100,11 @@ async function sendExtensionTabMessage(port, pageURL, messageType, deadline) {
       const result = await connection.send('Runtime.evaluate', {
         expression: `(async () => {
           const tabs = await chrome.tabs.query({});
-          const tab = tabs.find((candidate) => candidate.active && candidate.url === ${JSON.stringify(pageURL)})
-            || tabs.find((candidate) => candidate.url === ${JSON.stringify(pageURL)});
+          // The fixture briefly pushState's a ?golens-spa-nav marker to exercise the
+          // page skeleton's SPA re-mount, so match on the URL without that marker.
+          const bare = (url) => (url || '').replace(/[?&]golens-spa-nav=1/, '');
+          const tab = tabs.find((candidate) => candidate.active && bare(candidate.url) === ${JSON.stringify(pageURL)})
+            || tabs.find((candidate) => bare(candidate.url) === ${JSON.stringify(pageURL)});
           if (!tab?.id) return { ok:false, error:'fixture tab unavailable' };
           try { return await chrome.tabs.sendMessage(tab.id, { type:${JSON.stringify(messageType)} }); }
           catch (error) { return { ok:false, error:error.message }; }
@@ -108,12 +112,13 @@ async function sendExtensionTabMessage(port, pageURL, messageType, deadline) {
         awaitPromise: true,
         returnByValue: true,
       });
+      lastValue = result.result.value;
       if (result.result.value?.ok) return result.result.value;
       connection.socket.close();
       connection = null;
       await delay(50);
     }
-    throw new Error(`Extension message ${messageType} did not reach ${pageURL}`);
+    throw new Error(`Extension message ${messageType} did not reach ${pageURL} (last: ${JSON.stringify(lastValue)})`);
   } finally {
     connection?.socket.close();
   }
@@ -511,6 +516,27 @@ const overviewHtml = `<!doctype html>
       </div>
     </div>
   </div>
+  <script>
+    // Ticket 05: proves the ES-module page skeleton (bootstrap.js -> page/main.js
+    // -> platform/clock.js) mounts, and re-mounts after SPA-style pushState
+    // navigation, without any bundler.
+    // The tab URL must end up back where it started: other scenarios locate this
+    // fixture tab by exact URL (chrome.tabs.query), so a lingering ?golens-spa-nav
+    // would make chrome.tabs.sendMessage unable to find it.
+    let pushed = false;
+    const skeletonOriginalURL = location.href;
+    const skeletonWatch = setInterval(() => {
+      const count = Number(document.documentElement.dataset.golensSkeletonMountCount || '0');
+      if (!pushed && count >= 1) {
+        pushed = true;
+        history.pushState({}, '', location.pathname + '?golens-spa-nav=1');
+      } else if (pushed && count >= 2) {
+        history.replaceState({}, '', skeletonOriginalURL);
+        document.body.dataset.golensSkeletonRemounted = 'true';
+        clearInterval(skeletonWatch);
+      }
+    }, 20);
+  </script>
 </body></html>`;
 
 const LARGE_DIFF_FILE_COUNT = 80;
@@ -663,18 +689,39 @@ await cp(root, extensionRoot, {
 const smokeManifestPath = resolve(extensionRoot, 'manifest.json');
 const smokeManifest = JSON.parse(await readFile(smokeManifestPath, 'utf8'));
 smokeManifest.host_permissions = [`http://127.0.0.1/*`];
-smokeManifest.content_scripts[0].matches = [`http://127.0.0.1/*`];
+for (const contentScript of smokeManifest.content_scripts) contentScript.matches = [`http://127.0.0.1/*`];
 await writeFile(smokeManifestPath, `${JSON.stringify(smokeManifest, null, 2)}\n`);
 
 try {
   const overviewURL = `http://127.0.0.1:${port}/group/project/-/merge_requests/44`;
   const overview = await runBrowser(overviewURL, `
     document.querySelector('[data-golens-discussion-line-link]')?.href.includes('#filehash_0_12')
+      && document.body?.dataset.golensSkeletonRemounted === 'true'
   `, profile);
   assert.match(
     overview.stdout,
     /data-golens-discussion-line-link=""[^>]+href="http:\/\/127\.0\.0\.1:\d+\/group\/project\/-\/merge_requests\/44\/diffs\?diff_id=77&amp;start_sha=abc#filehash_0_12"/,
     `overview discussion button did not preserve GitLab's exact line target\n${overview.stderr}`
+  );
+  assert.match(
+    overview.stdout,
+    /<html[^>]*data-golens-skeleton-mount-count="\d+"/,
+    `bootstrap.js did not import and mount page\\/main.js\n${overview.stderr}`
+  );
+  assert.match(
+    overview.stdout,
+    /<html[^>]*data-golens-page-skeleton-mounted="true"/,
+    `page\\/main.js did not mount (via createClock from platform\\/clock.js)\n${overview.stderr}`
+  );
+  assert.match(
+    overview.stdout,
+    /data-golens-skeleton-remounted="true"/,
+    `page skeleton did not re-mount after SPA-style pushState navigation\n${overview.stderr}`
+  );
+  assert.doesNotMatch(
+    overview.stdout,
+    /data-golens-skeleton-error/,
+    `page skeleton bootstrap import failed\n${overview.stderr}`
   );
 
   const settings = await runBrowser(overviewURL, `
