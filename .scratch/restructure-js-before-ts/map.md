@@ -68,6 +68,10 @@ blijven staan zoals ze geschreven zijn; dit is de correctielijst.
   breakdown door de user goedgekeurd). De spec = de antwoorden van tickets 03+04 (geen apart
   document, per user-besluit); de executievolgorde = de blocking-graph van 05–22. Uitvoering valt
   binnen deze map. Frontier bij start: 05 en 06.
+- Toegevoegd tijdens uitvoering (2026-08-03): **23** (browser-smoke weer groen) en **24** (benchmark
+  OOM) — beide gates zijn kapot los van deze operatie, en beide horen vóór 13–21 gefixt te zijn omdat
+  dat de tickets zijn die gedrag en performance uit de hub-bestanden snijden. **25** (README/AGENTS
+  hervalideren) hangt achter 22.
 
 ## Out of scope
 
