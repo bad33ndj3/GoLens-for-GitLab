@@ -41,6 +41,24 @@
     };
     return debounced;
   }
+
+  // The one seam onto `chrome.storage` (platform/settings-store, ticket 10).
+  // Loaded via dynamic `import()` since this file still runs as a classic
+  // content script (not an ES module) per manifest.json.
+  // `chrome.runtime.getURL` is the production-correct specifier, matching the
+  // validated bootstrap-import pattern (ticket 04 §7, `bootstrap.js`); the
+  // relative fallback lets `node --test` resolve the real module too, since
+  // test doubles for `chrome.runtime.getURL` return non-resolvable
+  // `chrome-extension://` URLs that Node can't fetch.
+  let settingsStore = null;
+  async function loadSettingsStoreModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/settings-store.js'));
+    } catch {
+      return await import('./page/platform/settings-store.js');
+    }
+  }
+
   const state = {
     settings: defaults,
     enabled: true,
@@ -1104,7 +1122,7 @@
       if (presetID !== 'custom') nextSettings.shortcutBindings = shortcuts.presetBindings(presetID);
       primaryButton.disabled = true;
       try {
-        await chrome.storage.sync.set(nextSettings);
+        await Promise.all(Object.entries(nextSettings).map(([key, value]) => settingsStore.set(key, value)));
         state.settings = { ...state.settings, ...nextSettings };
         reconcileGeneratedDiffFiles();
         close();
@@ -1354,10 +1372,10 @@
   }
 
   async function showFirstRunOnboarding() {
-    const stored = await chrome.storage.local.get({ [ONBOARDING_STORAGE_KEY]: 0 });
-    if (stored[ONBOARDING_STORAGE_KEY] >= ONBOARDING_VERSION) return;
+    if (!settingsStore) return;
+    if (settingsStore.get(ONBOARDING_STORAGE_KEY) >= ONBOARDING_VERSION) return;
     showSetupOnboarding();
-    await chrome.storage.local.set({ [ONBOARDING_STORAGE_KEY]: ONBOARDING_VERSION });
+    await settingsStore.set(ONBOARDING_STORAGE_KEY, ONBOARDING_VERSION);
   }
 
   function wireControls(shadow) {
@@ -1829,7 +1847,7 @@
       state.fullPreloadRunID++;
     }
     renderControlState();
-    const persisted = persist ? chrome.storage.sync.set({ enabled }) : Promise.resolve();
+    const persisted = persist && settingsStore ? settingsStore.set('enabled', enabled) : Promise.resolve();
     if (enabled && isMergeRequest()) {
       watchForRapidDiffs();
       globalThis.GoLensGoNavigation?.init();
@@ -2025,9 +2043,17 @@
   async function init() {
     if (!isGitLab()) return;
     try {
-      state.settings = await chrome.storage.sync.get(defaults);
-      state.settings = { ...state.settings, shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(state.settings.shortcutBindings) || state.settings.shortcutBindings };
+      const { createSettingsStore } = await loadSettingsStoreModule();
+      settingsStore = createSettingsStore();
+      await settingsStore.ready();
+      state.settings = {
+        enabled: settingsStore.get('enabled'),
+        hideGeneratedFiles: settingsStore.get('hideGeneratedFiles'),
+        shortcutCoachEnabled: settingsStore.get('shortcutCoachEnabled'),
+        shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(settingsStore.get('shortcutBindings')) || settingsStore.get('shortcutBindings'),
+      };
     } catch {
+      settingsStore = null;
       state.settings = defaults;
     }
     state.enabled = state.settings.enabled;
@@ -2047,19 +2073,15 @@
       schedulePageReconcile();
     });
     new MutationObserver(schedulePageReconcile).observe(document.body, { childList: true, subtree: true });
-    chrome.storage.onChanged?.addListener((changes, areaName) => {
-      if (areaName !== 'sync') return;
-      if (typeof changes.hideGeneratedFiles?.newValue === 'boolean') {
-        state.settings = { ...state.settings, hideGeneratedFiles: changes.hideGeneratedFiles.newValue };
-      }
-      if (changes.shortcutBindings) {
-        state.settings = { ...state.settings, shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(changes.shortcutBindings.newValue) || changes.shortcutBindings.newValue };
-      }
-      if (changes.enabled && changes.enabled.newValue !== state.enabled) {
-        setEnabled(changes.enabled.newValue).catch(() => undefined);
-      } else if (changes.hideGeneratedFiles) {
-        reconcileGeneratedDiffFiles();
-      }
+    settingsStore?.subscribe('hideGeneratedFiles', (value) => {
+      state.settings = { ...state.settings, hideGeneratedFiles: value };
+      reconcileGeneratedDiffFiles();
+    });
+    settingsStore?.subscribe('shortcutBindings', (value) => {
+      state.settings = { ...state.settings, shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(value) || value };
+    });
+    settingsStore?.subscribe('enabled', (value) => {
+      if (value !== state.enabled) setEnabled(value).catch(() => undefined);
     });
     await reconcilePage();
   }
