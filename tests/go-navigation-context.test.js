@@ -13,6 +13,11 @@ before(async () => {
   await import('../bookmark-store.js?go-navigation-context-test');
   await import('../go-navigation.js');
   helpers = globalThis.GoLensGoNavigation.__test;
+  // Ticket 08: go-navigation.js's debounceIdle is now installed behind an
+  // async import() bridge (queue-until-ready). Await it once here so every
+  // test below observes the real debounced scheduleDiffReconciliation
+  // rather than racing the load — production code never awaits this.
+  await helpers.clockReady;
 });
 
 test('normalizes GitLab file-title spacing and bidi markers', () => {
@@ -1153,6 +1158,102 @@ test('caches file context per diff-file root and invalidates it when the diff ro
     assert.equal(helpers.fileContextFor(cell).ref, newSha, 'the cached file context is invalidated as soon as the diff root mutates');
   } finally {
     globalThis.GoLensGoNavigation.teardown();
+    globalThis.document = previousDocument;
+    globalThis.NodeFilter = previousNodeFilter;
+    globalThis.MutationObserver = previousMutationObserver;
+    globalThis.Event = previousEvent;
+    globalThis.CustomEvent = previousCustomEvent;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+// Ticket 08: go-navigation.js's debounceIdle now comes from
+// page/platform/clock.js via a dynamic import() bridge, but init() must
+// stay synchronous. The two tests below exercise the queue-until-ready
+// placeholder that bridges that gap: each imports a *fresh* module
+// instance (unique query string) so its own clock-module import is
+// guaranteed not to have resolved yet when the test's synchronous setup
+// runs (the shared instance from `before()` already awaited its own
+// clockReady and would give these tests nothing to race).
+
+test('go-navigation.js: diff-reconciliation calls before the clock module import resolves queue instead of running immediately', async () => {
+  const previousDocument = globalThis.document;
+  const previousNodeFilter = globalThis.NodeFilter;
+  const previousMutationObserver = globalThis.MutationObserver;
+  const previousEvent = globalThis.Event;
+  const previousCustomEvent = globalThis.CustomEvent;
+  const previousFetch = globalThis.fetch;
+  const previousNav = globalThis.GoLensGoNavigation;
+  const window = new Window({ url: globalThis.location.href });
+  globalThis.document = window.document;
+  globalThis.NodeFilter = window.NodeFilter;
+  globalThis.MutationObserver = window.MutationObserver;
+  globalThis.Event = window.Event;
+  globalThis.CustomEvent = window.CustomEvent;
+  globalThis.fetch = async () => { throw new Error('offline in test'); };
+  try {
+    await import('../go-navigation.js?queue-until-ready-burst');
+    const nav = globalThis.GoLensGoNavigation;
+    let idleRuns = 0;
+    nav.__test.setClock({ requestIdle: (fn) => { idleRuns++; fn(); return 1; } });
+    nav.init();
+    const placeholder = nav.__test.getScheduleDiffReconciliation();
+    assert.equal(typeof placeholder, 'function', 'init() installs a placeholder synchronously');
+    assert.equal(typeof placeholder.cancel, 'function', 'the placeholder has a .cancel() so teardown never throws');
+    // Same synchronous turn as init() -- no microtask has run yet, so this
+    // is guaranteed to land before the clock-module import() can resolve.
+    placeholder();
+    placeholder();
+    placeholder();
+    assert.equal(idleRuns, 0, 'nothing runs before the debounced function is installed');
+    await nav.__test.clockReady;
+    await new Promise((resolve) => setTimeout(resolve, 80)); // let the 50ms debounce + idle callback settle
+    assert.equal(idleRuns, 1, 'a burst before ready collapses into exactly one call after ready');
+    assert.notEqual(nav.__test.getScheduleDiffReconciliation(), placeholder, 'the placeholder is swapped for the real debounced function once ready');
+  } finally {
+    globalThis.GoLensGoNavigation?.teardown();
+    globalThis.GoLensGoNavigation = previousNav;
+    globalThis.document = previousDocument;
+    globalThis.NodeFilter = previousNodeFilter;
+    globalThis.MutationObserver = previousMutationObserver;
+    globalThis.Event = previousEvent;
+    globalThis.CustomEvent = previousCustomEvent;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('go-navigation.js: tearing down before the clock module import resolves discards the queued reconcile', async () => {
+  const previousDocument = globalThis.document;
+  const previousNodeFilter = globalThis.NodeFilter;
+  const previousMutationObserver = globalThis.MutationObserver;
+  const previousEvent = globalThis.Event;
+  const previousCustomEvent = globalThis.CustomEvent;
+  const previousFetch = globalThis.fetch;
+  const previousNav = globalThis.GoLensGoNavigation;
+  const window = new Window({ url: globalThis.location.href });
+  globalThis.document = window.document;
+  globalThis.NodeFilter = window.NodeFilter;
+  globalThis.MutationObserver = window.MutationObserver;
+  globalThis.Event = window.Event;
+  globalThis.CustomEvent = window.CustomEvent;
+  globalThis.fetch = async () => { throw new Error('offline in test'); };
+  try {
+    await import('../go-navigation.js?queue-until-ready-teardown-race');
+    const nav = globalThis.GoLensGoNavigation;
+    let idleRuns = 0;
+    nav.__test.setClock({ requestIdle: (fn) => { idleRuns++; fn(); return 1; } });
+    nav.init();
+    const placeholder = nav.__test.getScheduleDiffReconciliation();
+    placeholder(); // queue a reconcile before the import resolves
+    nav.teardown(); // torn down before the import resolves -- must not throw
+    assert.equal(nav.__test.getScheduleDiffReconciliation(), null, 'teardown clears scheduleDiffReconciliation synchronously');
+    await nav.__test.clockReady;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(idleRuns, 0, 'a late-resolving import must not reinstall or fire a reconcile after teardown');
+    assert.equal(nav.__test.getScheduleDiffReconciliation(), null, 'the late resolution leaves scheduleDiffReconciliation torn down');
+  } finally {
+    globalThis.GoLensGoNavigation?.teardown();
+    globalThis.GoLensGoNavigation = previousNav;
     globalThis.document = previousDocument;
     globalThis.NodeFilter = previousNodeFilter;
     globalThis.MutationObserver = previousMutationObserver;

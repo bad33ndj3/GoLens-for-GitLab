@@ -76,16 +76,24 @@ export function createClock() {
 // swapped out from under an already-created debounced function, exactly as
 // the two duplicated copies did.
 //
-// go-navigation.js's `debounceIdle` is NOT migrated to this helper: its
-// `init()` is synchronous (called fire-and-forget, with tests asserting
-// synchronous side effects like attached listeners immediately after), and
-// this module can only be reached via `import()`, which is asynchronous.
-// Bridging it would mean either changing `init()`'s synchronous contract
-// (out of scope) or accepting a startup race where the first debounced
-// call could silently no-op before the import resolves — a real, if
-// small, behavior change the ticket's "exact timing" requirement rules
-// out. See `.scratch/restructure-js-before-ts/issues/08-platform-clock-dedup.md`
-// for the resulting partial-completion note.
+// go-navigation.js is now also migrated onto this helper, via the same
+// dynamic-`import()` bridge as content.js above. Its `init()` still has to
+// stay synchronous (called fire-and-forget, with tests asserting
+// synchronous side effects like attached listeners immediately after), so
+// it can't simply `await` this module the way content.js's `init()` does.
+// Instead it starts the import at IIFE-evaluation time (before `init()`
+// ever runs) and installs a queue-until-ready placeholder in place of the
+// debounced function: calls before the import resolves just set a pending
+// flag, and once ready the real `createLegacyDebounceIdle(...)`-made
+// function is installed and fired at most once to cover whatever was
+// queued — a burst before ready collapses into exactly one call after
+// ready, same as what the debounce itself already does for a burst after
+// ready. This avoids both changing `init()`'s synchronous contract and the
+// "first call silently no-ops before the import resolves" race a naive
+// bridge would introduce. See
+// `.scratch/restructure-js-before-ts/issues/08-platform-clock-dedup.md`
+// and the `scheduleDiffReconciliation` bridge in go-navigation.js's
+// `init()` for the implementation.
 export function createLegacyDebounceIdle(getClock) {
   return function debounceIdle(fn, delayMs) {
     let timer = null;

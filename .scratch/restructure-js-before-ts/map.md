@@ -96,6 +96,19 @@ blijven staan zoals ze geschreven zijn; dit is de correctielijst.
   echte-timer-wachters op hetzelfde global mengen. De rest van de clock-dedup hoort dus achter de
   ES-module-conversie van `go-navigation.js`, niet vóór.
 
+  **Correctie:** de "blijft partieel tot ES-module"-conclusie hierboven is overruled en ticket 08
+  is inmiddels volledig gedaan. De aanname klopte alleen voor een `await import()`-bridge binnen
+  `init()` zelf; een queue-until-ready-placeholder (import start op IIFE-top-level vóór `init()`
+  ooit draait, `init()` zet synchroon een placeholder met een `pending`-vlag neer, de late `.then()`
+  installeert de echte debounced functie en vuurt hem hooguit één keer af voor wat gequeued stond)
+  laat `init()` wél synchroon zonder de timing zichtbaar te veranderen — een burst vóór ready valt
+  samen tot precies één aanroep ná ready, wat de 50ms-debounce toch al doet voor een burst ná
+  ready. `go-navigation.js`'s `debounceIdle` is nu ook gecentraliseerd in
+  `page/platform/clock.js` (`createLegacyDebounceIdle`); zijn lokale kopie is verwijderd. De
+  `setClock`-migratie naar de clock-seam blijft wel bewust niet gedaan (zie boven) — dat besluit
+  staat los van deze correctie. ES-module-conversie van `go-navigation.js` is dus geen
+  precondition meer voor de rest van de clock-dedup.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,

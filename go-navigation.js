@@ -44,6 +44,46 @@
   // down per `teardown()` alongside `state.diffObserver`.
   let scheduleDiffReconciliation = null;
 
+  // Bridge onto page/platform/clock.js's `createLegacyDebounceIdle` (ticket
+  // 08 dedup — this used to be a local `debounceIdle(fn, delayMs)` here,
+  // byte-identical to content.js's copy). Same dynamic-`import()` bridge as
+  // content.js's `loadClockModule` (`chrome.runtime.getURL` in production;
+  // a relative fallback so `node --test` — where test doubles for
+  // `chrome.runtime.getURL` return non-resolvable `chrome-extension://`
+  // URLs — can still resolve the real module).
+  //
+  // go-navigation.js's `init()` must stay synchronous: it's called
+  // fire-and-forget, and tests assert synchronous side effects (attached
+  // listeners, etc.) immediately after calling it. So this load is kicked
+  // off here, at IIFE-evaluation time (not inside `init()`), giving it as
+  // much of a head start as possible, with its own `.catch()` attached
+  // directly to the promise below — an unhandled rejection during script
+  // evaluation is worse than one inside a fire-and-forget `init()` call.
+  // `init()` installs a queue-until-ready placeholder in place of the real
+  // debounced function; see the comment at its call site for the handoff.
+  async function loadClockModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/clock.js'));
+    } catch {
+      return await import('./page/platform/clock.js');
+    }
+  }
+  let legacyDebounceIdleFactory = null;
+  // Exposed via __test.clockReady so tests can deterministically await the
+  // load instead of racing it; production code never awaits this itself.
+  const legacyDebounceIdleReady = loadClockModule()
+    .then(({ createLegacyDebounceIdle }) => {
+      legacyDebounceIdleFactory = createLegacyDebounceIdle(() => clock);
+    })
+    .catch(() => {
+      // Both the chrome.runtime.getURL and relative import fallbacks failed
+      // (should not happen in production). Leave legacyDebounceIdleFactory
+      // null; init()'s placeholder then stays installed forever instead of
+      // ever being swapped for a real debounced function — no debounce
+      // loop, but also no crash. Deliberately silent (mirrors content.js's
+      // loadClockModule failure handling).
+    });
+
   const state = {
     enabled: false,
     packages: new Map(),
@@ -2793,26 +2833,6 @@
     return throttled;
   }
 
-  // Debounces `fn` by `delayMs` of quiet time, then runs it through
-  // `requestIdleCallback` (falling back to an immediate call when the
-  // browser doesn't support it) so a burst of diff mutations doesn't
-  // compete with rendering. `.cancel()` drops any pending timer.
-  function debounceIdle(fn, delayMs) {
-    let timer = null;
-    const debounced = (...args) => {
-      if (timer !== null) clock.clearTimeout(timer);
-      timer = clock.setTimeout(() => {
-        timer = null;
-        clock.requestIdle(() => fn(...args));
-      }, delayMs);
-    };
-    debounced.cancel = () => {
-      if (timer !== null) clock.clearTimeout(timer);
-      timer = null;
-    };
-    return debounced;
-  }
-
   // The full hit-test — cell lookup, file-context resolution, caret-to-offset
   // mapping — runs here, throttled to one call per animation frame. The
   // 350ms `state.hoverTimer` delay below protects the semantic request, not
@@ -2983,10 +3003,33 @@
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('mouseup', reconcileBookmarkSelectionUI, true);
     document.addEventListener('visibilitychange', refreshMergeRequestRefs, true);
-    scheduleDiffReconciliation = debounceIdle(() => {
-      scheduleOccurrenceRefresh();
-      scheduleBookmarkRefresh();
-    }, 50);
+    // Queue-until-ready placeholder (ticket 08): the real debounced
+    // function can only be created once legacyDebounceIdleReady resolves
+    // (async), but init() itself must stay synchronous. Any call before
+    // that just records that a reconcile is owed; once ready, the real
+    // debounced function is installed and fired at most once to cover
+    // whatever was queued — a burst before ready collapses into exactly
+    // one call after ready, same as what the 50ms debounce itself already
+    // does for a burst after ready.
+    let diffReconcilePending = false;
+    function diffReconcilePlaceholder() { diffReconcilePending = true; }
+    diffReconcilePlaceholder.cancel = () => { diffReconcilePending = false; };
+    scheduleDiffReconciliation = diffReconcilePlaceholder;
+    legacyDebounceIdleReady.then(() => {
+      // If teardown() ran (or a later init() re-ran) before this resolved,
+      // scheduleDiffReconciliation no longer points at this placeholder —
+      // don't reinstall a debounced function or fire anything belated.
+      if (scheduleDiffReconciliation !== diffReconcilePlaceholder) return;
+      // Import failed permanently (see loadClockModule's .catch above);
+      // leave the placeholder in place rather than crash or loop.
+      if (!legacyDebounceIdleFactory) return;
+      const debounced = legacyDebounceIdleFactory(() => {
+        scheduleOccurrenceRefresh();
+        scheduleBookmarkRefresh();
+      }, 50);
+      scheduleDiffReconciliation = debounced;
+      if (diffReconcilePending) debounced();
+    });
     state.diffObserver = new MutationObserver((mutations) => {
       if (mutations.length && mutations.every(bookmarkProjectionMutation)) return;
       // Invalidation is synchronous — a hover right after this fires must
@@ -3083,6 +3126,11 @@
     clearBookmarks,
     recoverBookmark,
     registerBookmarkSurface,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, implementationSearchTerms, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked, setClock },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, implementationSearchTerms, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked, setClock, clockReady: legacyDebounceIdleReady,
+      // Live accessor (ticket 08): scheduleDiffReconciliation is reassigned
+      // over time (null -> queue-until-ready placeholder -> real debounced
+      // function), so tests need a getter rather than the value captured
+      // once at module-eval time.
+      getScheduleDiffReconciliation: () => scheduleDiffReconciliation },
   };
 })();
