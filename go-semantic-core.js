@@ -9,6 +9,11 @@ const PREDECLARED_TYPES = new Set([
   'uint64', 'uintptr',
 ]);
 const COMPACT_SIGNATURE_LIMIT = 160;
+// Format of GoSemanticIndex.serializeProject's output. Independent of the
+// source-cache's CACHE_FORMAT_VERSION (go-semantic-cache.js) — this one
+// versions derived index data, not raw source blobs, and the two must never
+// be conflated: bumping one must not discard the other.
+export const INDEX_FORMAT_VERSION = 1;
 
 function packageKey(origin, project, ref, packagePath) {
   return `${origin}\u0000${project}\u0000${ref}\u0000${packagePath}`;
@@ -567,8 +572,167 @@ export class GoSemanticIndex {
     this._implementationCache = new Map();
   }
 
+  // Lazy: the parse tree is only ever needed to locate an identifier node at
+  // an arbitrary (line, character) — a per-file cost paid at most once, on
+  // first query touching that file. Freshly indexed files already carry a
+  // tree (indexPackage needs it to build definitions) so this is a no-op for
+  // them; restored files carry none, and pay the parse here instead of at
+  // restore time, which is the whole point of restoring.
+  _treeFor(file) {
+    if (!file.tree) file.tree = this.parser.parse(file.source);
+    return file.tree;
+  }
+
+  // Plain-data snapshot of the packages indexed under (origin, project, ref),
+  // suitable for durable storage and for `restoreIndex` on a fresh instance
+  // without re-parsing. Deliberately excludes anything that lives only as a
+  // tree-sitter node: parse trees, and any `node` reference held by
+  // identifierCandidates is reduced to the bare position it exposes to
+  // callers (see `_serializePackage`).
+  //
+  // Pass `packagePath` to snapshot a single package rather than every package
+  // indexed for the scope — the caller's persistence cost should match the
+  // amount of work it just did (one package cached should write one
+  // package's worth of data, not the whole project's), so a package-scoped
+  // snapshot never claims `isProject`.
+  serializeProject({ origin = '', project, ref, packagePath = '' }) {
+    const entries = [...this.packages.values()]
+      .filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref
+        && (!packagePath || entry.packagePath === packagePath));
+    if (!entries.length) return null;
+    return {
+      version: INDEX_FORMAT_VERSION,
+      origin,
+      project,
+      ref,
+      isProject: !packagePath && this.hasProject({ origin, project, ref }),
+      packages: entries.map((entry) => this._serializePackage(entry)),
+    };
+  }
+
+  _serializePackage(entry) {
+    const files = [...entry.files.values()].map((file) => ({
+      path: file.path,
+      source: file.source,
+      blobId: file.blobId || '',
+      packageName: file.packageName,
+      buildConstrained: file.buildConstrained,
+      generated: file.generated,
+      imports: [...file.imports.entries()],
+      importPaths: [...file.importPaths],
+    }));
+    return {
+      packagePath: entry.packagePath,
+      modulePath: entry.modulePath,
+      packageName: entry.packageName,
+      files,
+      definitions: [...entry.definitions.entries()],
+      members: [...entry.members.entries()],
+      types: [...entry.types.entries()].map(([name, type]) => [name, {
+        fields: [...type.fields.entries()],
+        embedded: type.embedded,
+        alias: type.alias,
+      }]),
+      typeRecords: entry.typeRecords.map((record) => ({ ...record, file: undefined, filePath: record.file.path })),
+      methods: entry.methods.map((method) => ({ ...method, file: undefined, filePath: method.file.path })),
+      assertions: entry.assertions.map((assertion) => ({ ...assertion })),
+      identifierCandidates: [...entry.identifierCandidates.entries()].map(([name, candidates]) => [
+        name,
+        candidates.map((candidate) => ({
+          filePath: candidate.file.path,
+          row: candidate.node.startPosition.row,
+          column: candidate.node.startPosition.column,
+        })),
+      ]),
+    };
+  }
+
+  // Restores every package in a `serializeProject` blob into this index
+  // without touching the parser. Returns null (leaving this index untouched)
+  // on a format-version mismatch or an empty/malformed blob, so the caller's
+  // existing reparse path is the correctness backstop.
+  restoreIndex(blob) {
+    if (!blob || blob.version !== INDEX_FORMAT_VERSION || !Array.isArray(blob.packages) || !blob.packages.length) return null;
+    const { origin = '', project, ref } = blob;
+    let files = 0;
+    let definitions = 0;
+    for (const snapshot of blob.packages) {
+      const entry = this._restorePackageEntry({ origin, project, ref }, snapshot);
+      this.packages.set(packageKey(origin, project, ref, entry.packagePath), entry);
+      for (const file of entry.files.values()) this.files.set(fileKey(origin, project, ref, file.path), file);
+      files += entry.files.size;
+      definitions += entry.definitionsByLocation.size;
+    }
+    if (blob.isProject) this.projects.add(projectKey(origin, project, ref));
+    this.mutationGeneration++;
+    return { packages: blob.packages.length, files, definitions };
+  }
+
+  _restorePackageEntry({ origin, project, ref }, snapshot) {
+    const files = new Map();
+    for (const file of snapshot.files) {
+      files.set(file.path, {
+        path: file.path,
+        source: file.source,
+        blobId: file.blobId,
+        origin,
+        ref,
+        project,
+        packagePath: snapshot.packagePath,
+        modulePath: snapshot.modulePath,
+        packageName: file.packageName,
+        tree: null,
+        imports: new Map(file.imports),
+        importPaths: new Set(file.importPaths),
+        lines: null,
+        buildConstrained: file.buildConstrained,
+        generated: file.generated,
+      });
+    }
+    const resolveFile = (filePath) => files.get(filePath);
+
+    const definitions = new Map(snapshot.definitions);
+    const members = new Map(snapshot.members);
+    const definitionsByLocation = new Map();
+    for (const list of [...definitions.values(), ...members.values()]) {
+      for (const definition of list) definitionsByLocation.set(definitionLocationKey(definition), definition);
+    }
+
+    return {
+      origin,
+      project,
+      ref,
+      packagePath: snapshot.packagePath,
+      modulePath: snapshot.modulePath,
+      packageName: snapshot.packageName,
+      definitions,
+      members,
+      definitionsByLocation,
+      types: new Map(snapshot.types.map(([name, type]) => [name, {
+        fields: new Map(type.fields),
+        embedded: type.embedded,
+        alias: type.alias,
+      }])),
+      typeRecords: snapshot.typeRecords.map((record) => ({ ...record, file: resolveFile(record.filePath), filePath: undefined })),
+      methods: snapshot.methods.map((method) => ({ ...method, file: resolveFile(method.filePath), filePath: undefined })),
+      assertions: snapshot.assertions.map((assertion) => ({ ...assertion })),
+      identifierCandidates: new Map(snapshot.identifierCandidates.map(([name, positions]) => [
+        name,
+        positions.map((position) => ({
+          file: resolveFile(position.filePath),
+          node: { startPosition: { row: position.row, column: position.column } },
+        })),
+      ])),
+      files,
+    };
+  }
+
   hasPackage({ origin = '', project, ref, packagePath }) {
     return this.packages.has(packageKey(origin, project, ref, packagePath));
+  }
+
+  packageDefinitionCount({ origin = '', project, ref, packagePath }) {
+    return this.packages.get(packageKey(origin, project, ref, packagePath))?.definitionsByLocation.size || 0;
   }
 
   hasProject({ origin = '', project, ref }) {
@@ -860,7 +1024,7 @@ export class GoSemanticIndex {
         const importedPackagePath = this.importToPackagePath(entry.modulePath, importPath);
         if (importedPackagePath !== null) imports.add(importedPackagePath);
       }
-      walk(file.tree.rootNode, (node) => {
+      walk(this._treeFor(file).rootNode, (node) => {
         let qualifierNode;
         let nameNode;
         if (node.type === 'selector_expression') {
@@ -1024,7 +1188,7 @@ export class GoSemanticIndex {
     const file = this.files.get(fileKey(origin, project, ref, path));
     if (!entry || !file) return { status: 'notFound', reason: 'packageNotIndexed' };
 
-    const identifierNode = findIdentifierNode(file.tree.rootNode, file.source, line, character, identifier, occurrence, fileLines(file));
+    const identifierNode = findIdentifierNode(this._treeFor(file).rootNode, file.source, line, character, identifier, occurrence, fileLines(file));
     if (!identifierNode) return { status: 'notFound', reason: 'identifierNotFound' };
     const symbol = textOf(file.source, identifierNode);
     const parent = identifierNode.parent;

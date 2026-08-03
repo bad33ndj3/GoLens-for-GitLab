@@ -1157,3 +1157,102 @@ func Start(value contracts.Runner) error { return value.Run() }
   });
   assert.deepEqual(references.locations.map(({ path, line }) => ({ path, line })), [{ path: 'service/start.go', line: 5 }]);
 });
+
+function countingParser(parser) {
+  let calls = 0;
+  return {
+    get calls() { return calls; },
+    parse(...args) {
+      calls++;
+      return parser.parse(...args);
+    },
+  };
+}
+
+test('restores a serialized project index without re-parsing, resolving lazily per touched file', () => {
+  const contracts = `package contracts
+
+type Runner interface { Run() error }
+`;
+  const service = `package service
+
+import "example.com/project/contracts"
+
+// Service implements Runner.
+type Service struct{}
+func (*Service) Run() error { return nil }
+func Start(value contracts.Runner) error { return value.Run() }
+`;
+  const scope = { project: 'group/project', ref: 'restore-ref' };
+  const original = new GoSemanticIndex(index.parser);
+  const indexed = original.indexProject({
+    ...scope,
+    modulePath: 'example.com/project',
+    files: [
+      { path: 'contracts/runner.go', source: contracts },
+      { path: 'service/start.go', source: service },
+    ],
+  });
+  assert.equal(indexed.status, 'projectIndexed');
+
+  const blob = original.serializeProject(scope);
+  assert.equal(blob.version, 1);
+  assert.equal(blob.isProject, true);
+  assert.equal(blob.packages.length, 2);
+  // A serialized package snapshot is plain, JSON-safe data — no tree-sitter
+  // node survives the round trip.
+  assert.equal(JSON.stringify(blob).includes('startIndex'), false);
+
+  const parser = countingParser(index.parser);
+  const restored = new GoSemanticIndex(parser);
+  const summary = restored.restoreIndex(blob);
+  assert.deepEqual(summary, { packages: 2, files: 2, definitions: indexed.definitions });
+  assert.equal(parser.calls, 0, 'restoring must not parse any file');
+  assert.equal(restored.hasProject(scope), true);
+
+  const interfaceResolved = original.resolve({
+    ...scope, packagePath: 'contracts', path: 'contracts/runner.go', ...position(contracts, 3, 'Runner'),
+  });
+  const restoredInterfaceResolved = restored.resolve({
+    ...scope, packagePath: 'contracts', path: 'contracts/runner.go', ...position(contracts, 3, 'Runner'),
+  });
+  assert.deepEqual(restoredInterfaceResolved.definition, interfaceResolved.definition);
+  assert.equal(parser.calls, 1, 'resolving in one file lazily parses only that file');
+
+  // Resolving again in the same file must not re-parse it.
+  restored.resolve({
+    ...scope, packagePath: 'contracts', path: 'contracts/runner.go', ...position(contracts, 3, 'Runner'),
+  });
+  assert.equal(parser.calls, 1);
+
+  const originalImplementations = original.findImplementations({ ...scope, interfaceDefinition: interfaceResolved.definition });
+  const restoredImplementations = restored.findImplementations({ ...scope, interfaceDefinition: restoredInterfaceResolved.definition });
+  assert.deepEqual(
+    restoredImplementations.candidates.map(({ displayName }) => displayName),
+    originalImplementations.candidates.map(({ displayName }) => displayName),
+  );
+  // findImplementations never needs a live tree — the untouched service.go
+  // file must still be unparsed.
+  assert.equal(parser.calls, 1);
+
+  const originalReferences = original.findReferences({ ...scope, packagePath: 'contracts', definition: interfaceResolved.definition });
+  const restoredReferences = restored.findReferences({ ...scope, packagePath: 'contracts', definition: restoredInterfaceResolved.definition });
+  assert.deepEqual(restoredReferences.locations, originalReferences.locations);
+  // Confirming the reference in service.go lazily parses that file too, but
+  // only once, and only because this query actually touched it.
+  assert.equal(parser.calls, 2);
+});
+
+test('restoreIndex rejects a format-version mismatch and leaves the index untouched', () => {
+  const scope = { project: 'group/project', ref: 'version-mismatch' };
+  const source = 'package sample\nfunc Target() {}\n';
+  const original = new GoSemanticIndex(index.parser);
+  original.indexPackage({ ...scope, packagePath: 'sample', files: [{ path: 'sample/sample.go', source }] });
+  const blob = original.serializeProject(scope);
+
+  const restored = new GoSemanticIndex(index.parser);
+  assert.equal(restored.restoreIndex({ ...blob, version: blob.version + 1 }), null);
+  assert.equal(restored.hasPackage({ ...scope, packagePath: 'sample' }), false);
+  assert.equal(restored.restoreIndex(null), null);
+  assert.equal(restored.restoreIndex({ version: 1, packages: [] }), null);
+});

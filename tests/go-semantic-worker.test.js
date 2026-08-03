@@ -214,7 +214,7 @@ test('worker reports durable project cache completion', async () => {
   };
   assert.deepEqual((await request('projectCacheStatus', params)).result, { status: 'missing' });
   await request('cacheProject', params);
-  assert.deepEqual((await request('projectCacheStatus', params)).result, { status: 'complete', format: 3 });
+  assert.deepEqual((await request('projectCacheStatus', params)).result, { status: 'complete', format: 4 });
   await request('clearCache', {});
   assert.deepEqual((await request('projectCacheStatus', params)).result, { status: 'missing' });
 });
@@ -259,7 +259,7 @@ test('worker indexes a new commit from shared and newly downloaded blobs', async
   });
   assert.equal(indexed.ok, true);
   assert.equal(indexed.result.packages, 2);
-  assert.deepEqual((await request('projectCacheStatus', { origin, project, ref: secondRef })).result, { status: 'complete', format: 3 });
+  assert.deepEqual((await request('projectCacheStatus', { origin, project, ref: secondRef })).result, { status: 'complete', format: 4 });
 });
 
 test('worker exposes package relations and durable related MR status', async () => {
@@ -290,10 +290,73 @@ func Use(value contracts.Runner) { _ = value }
   assert.deepEqual((await request('mergeRequestCacheStatus', scope)).result, { status: 'missing' });
   await request('cacheMergeRequest', { ...scope, packagePaths: ['service'], searchStatus: 'unavailable' });
   assert.deepEqual((await request('mergeRequestCacheStatus', scope)).result, {
-    status: 'complete', format: 3, coverage: 'related', searchStatus: 'unavailable', packages: 1,
+    status: 'complete', format: 4, coverage: 'related', searchStatus: 'unavailable', packages: 1,
   });
   await request('disposeProject', { origin: scope.origin, project: scope.project, ref: scope.ref });
   assert.deepEqual((await request('restoreMergeRequest', scope)).result, {
     status: 'cacheHit', coverage: 'related', searchStatus: 'unavailable', packages: 1, definitions: 3,
   });
+});
+
+test('worker counts definitions consistently in restoreMergeRequest when some packages are already resident and others are restored from the durable index', async () => {
+  const scope = { origin: 'https://gitlab.example', project: 'group/mixed-restore', mergeRequest: '42', ref: 'd'.repeat(40) };
+  const alpha = sourceFile('alpha/alpha.go', 'package alpha\nfunc AlphaOne() {}\nfunc AlphaTwo() {}\n');
+  const beta = sourceFile('beta/beta.go', 'package beta\nfunc Beta() {}\n');
+
+  await request('cachePackage', { ...scope, packagePath: 'alpha', modulePath: 'example.com/project', files: [alpha] });
+  await request('cachePackage', { ...scope, packagePath: 'beta', modulePath: 'example.com/project', files: [beta] });
+  await request('cacheMergeRequest', { ...scope, packagePaths: ['alpha', 'beta'], searchStatus: 'unavailable' });
+
+  await request('disposeProject', { origin: scope.origin, project: scope.project, ref: scope.ref });
+  // Bring only alpha back into memory (package-scoped durable restore), so
+  // beta must still be restored from the durable store inside the
+  // restoreMergeRequest call itself — a mix of already-resident and
+  // freshly-restored packages in the same call.
+  await request('restorePackage', { ...scope, packagePath: 'alpha' });
+
+  const restored = await request('restoreMergeRequest', scope);
+  assert.deepEqual(restored.result, {
+    status: 'cacheHit', coverage: 'related', searchStatus: 'unavailable', packages: 2, definitions: 3,
+  });
+});
+
+test('a storage-only cache-status request is not blocked by an in-flight caching job', async () => {
+  const ref = '9'.repeat(40);
+  const project = {
+    origin: 'https://gitlab.example',
+    project: 'group/queue-test',
+    ref,
+    files: Array.from({ length: 25 }, (_, index) => sourceFile(`pkg${index}/file.go`, `package pkg${index}\nfunc F${index}() {}\n`)),
+  };
+  const order = [];
+  const caching = request('cacheProject', project).then((result) => { order.push('caching'); return result; });
+  const statusDuring = request('projectCacheStatus', { origin: project.origin, project: project.project, ref })
+    .then((result) => { order.push('status'); return result; });
+  await Promise.all([caching, statusDuring]);
+  assert.deepEqual(order, ['status', 'caching']);
+});
+
+test('worker answers a query from a durably persisted index after the in-memory index is disposed, without a fresh reparse leaving results stale', async () => {
+  const origin = 'https://gitlab.example';
+  const project = 'group/durable-index';
+  const ref = 'a'.repeat(40);
+  const contracts = sourceFile('contracts/runner.go', 'package contracts\ntype Runner interface { Run() error }\n');
+  const service = sourceFile('service/start.go', 'package service\n\nimport "example.com/project/contracts"\n\nfunc Start(value contracts.Runner) error { return value.Run() }\n');
+
+  await request('cacheProject', { origin, project, ref, modulePath: 'example.com/project', files: [contracts, service] });
+  const resolvedBefore = await request('resolveDefinition', {
+    origin, project, ref, packagePath: 'contracts', path: 'contracts/runner.go', line: 2, character: 5, identifier: 'Runner',
+  });
+  assert.equal(resolvedBefore.result.status, 'resolved');
+
+  await request('disposeProject', { origin, project, ref });
+
+  const restored = await request('restoreProject', { origin, project, ref });
+  assert.equal(restored.result.status, 'cacheHit');
+
+  const references = await request('findReferences', {
+    origin, project, ref, packagePath: 'contracts', definition: resolvedBefore.result.definition,
+  });
+  assert.equal(references.ok, true);
+  assert.deepEqual(references.result.locations.map(({ path, line }) => ({ path, line })), [{ path: 'service/start.go', line: 5 }]);
 });
