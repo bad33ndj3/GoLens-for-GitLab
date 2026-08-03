@@ -69,14 +69,20 @@ blijven staan zoals ze geschreven zijn; dit is de correctielijst.
   vóór de grote `semantic-core`-cases. Na een `teardown`-hook in `runCase` draait `npm run bench`
   `EXIT:0` op de **standaard** heap — peak RSS 1.95 GB, plateau 302 MB. Geen `package.json`-wijziging
   nodig. Baseline voor 13–21 staat in ticket 24.
-- **De browser-smoke blijft kapot en is machine-niveau.** Ticket 23 heeft de gesanctioneerde
-  hypothese (te korte `Runtime.evaluate`-timeout) gemeten en verworpen: met 30s→90s is het resultaat
-  2/8 groen en intermitterend, zonder "net niet genoeg tijd"-patroon. Scenario 1 faalt nooit;
-  scenario 2 (SW→content-script messaging) en 5 (full-file-injectie na streaming) falen wisselend.
-  Profiel-lock/teardown niet bevestigd. Diagnose: nondeterminisme in headless
-  Chromium 150 / Helium 0.14.9.1 op deze machine. `tests/browser-smoke.mjs` is onveranderd
-  teruggezet. **Gevolg: 13–21 hebben géén end-to-end vangnet.** Dat is een beslissing voor de user,
-  niet iets om stil te absorberen.
+- **De browser-smoke was niet machine-niveau maar een harness-tekort — en is gerepareerd.** Twee
+  eerdere conclusies waren fout: niet de `Runtime.evaluate`-timeout (30s→90s hielp niet: 2/8 groen),
+  en ook niet "nondeterminisme in headless Chromium, buiten scope". De echte oorzaak was een
+  ontbrekende CI-launch-flag-set: headless throttlet timers van backgrounded renderers, terwijl de
+  fixtures op 5–20 ms pollen en scenario 5 `<40 ms` asserteert. Met de standaard
+  Puppeteer/Playwright-flags (`--disable-renderer-backgrounding`,
+  `--disable-backgrounding-occluded-windows`, `--disable-background-networking`, `--disable-sync`,
+  `--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion`, e.a.)
+  is de smoke **5/5 groen op een schone kopie van HEAD**, inclusief koude eerste run — door de
+  orchestrator geverifieerd in een geïsoleerde worktree, los van de agent die dit opleverde.
+  Geen scenario of assertie aangeraakt. `CHROME_NO_SANDBOX=1` staat nu vast in `package.json`
+  in plaats van mondelinge overlevering. Helium is de ondersteunde browser; echte Chrome faalt 3/3
+  al bij scenario 1 op google_apis/gcm-ruis en is expliciet niet ondersteund.
+  **`npm run test:browser` is vanaf hier weer een verplichte gate voor 13–21.**
 
 ## Not yet specified
 
