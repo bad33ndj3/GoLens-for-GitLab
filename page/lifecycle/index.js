@@ -88,24 +88,39 @@ export function start({ platform = {}, features = [], runtime, location: loc } =
     cancelPoll = platform.clock.setTimeout(poll, NAV_POLL_MS);
   }
 
-  // chrome.runtime.onMessage dispatch. The listener never calls
-  // `sendResponse` and never `return`s a value, so it never holds the
-  // message channel open and never races content.js's own listener for the
-  // same message (both listeners run; content.js's remains the one that
-  // responds, unchanged). Once a routed feature is actually mounted its
-  // handle receives the call; today `mounted` never contains a migrated
-  // feature, so dispatch is a no-op beyond `golens-enabled`'s (also inert,
-  // no-op) `applyEnabled` forward.
+  // dispatch(message) -> the routed feature handle's own return value, or
+  // `undefined` when nothing handled it. Exposed on the returned object so a
+  // caller that registered its own `chrome.runtime.onMessage` listener
+  // *synchronously* can feed messages in (bootstrap.js does exactly this —
+  // see the "message seam" comment there). That indirection exists because
+  // this module graph is only reachable through an async `import()`: a
+  // listener registered in here does not exist yet during the first ~15-30ms
+  // after page load, nor during the unmount/mount gap of an SPA re-mount, and
+  // every message arriving in those windows was silently lost (found by
+  // ticket 16's browser-smoke failure).
+  function dispatch(message) {
+    const route = routeMessage(message);
+    if (route.kind === 'lifecycle' && route.action === 'setEnabled') {
+      applyEnabled(message.enabled);
+      return undefined;
+    }
+    if (route.kind === 'routed') {
+      const target = mounted.find((m) => m.name === route.feature);
+      return target?.handle[route.action]?.(message);
+    }
+    return undefined;
+  }
+
+  // Self-registration stays for callers that pass a `runtime` (tests, and any
+  // embedding that has no synchronous seam of its own). page/main.js passes
+  // `runtime: null` precisely to opt out: bootstrap.js owns the one real
+  // registration, so registering here too would dispatch every message twice.
+  // The listener never calls `sendResponse` and never returns a value, so it
+  // never holds the message channel open.
   let removeMessageListener = null;
   if (resolvedRuntime?.onMessage) {
     const listener = (message) => {
-      const route = routeMessage(message);
-      if (route.kind === 'lifecycle' && route.action === 'setEnabled') {
-        applyEnabled(message.enabled);
-      } else if (route.kind === 'routed') {
-        const target = mounted.find((m) => m.name === route.feature);
-        target?.handle[route.action]?.(message);
-      }
+      dispatch(message);
       return undefined;
     };
     resolvedRuntime.onMessage.addListener(listener);
@@ -129,5 +144,5 @@ export function start({ platform = {}, features = [], runtime, location: loc } =
     unmountAll();
   }
 
-  return { stop };
+  return { stop, dispatch };
 }

@@ -17,13 +17,16 @@
 // mounted feature's `ctx` includes it.
 import { createClock } from './platform/clock.js';
 import { createSettingsStore } from './platform/settings-store.js';
+import { createOverlayRegistry } from './platform/overlay-registry.js';
 import { start as startLifecycle } from './lifecycle/index.js';
 import { mount as mountGeneratedFiles } from './features/generated-files.js';
+import { mount as mountSettingsOverlay } from './features/settings-overlay.js';
 import { mount as mountMrPreload } from './features/mr-preload.js';
 
 export function mount(ctx = {}) {
   const clock = ctx.clock || createClock();
   const settings = ctx.settings || createSettingsStore();
+  const overlays = ctx.overlays || createOverlayRegistry();
   const root = document.documentElement;
 
   // Test/observability hook only — no user-visible behavior. Proves the
@@ -33,15 +36,22 @@ export function mount(ctx = {}) {
   root.dataset.golensPageSkeletonMountedAt = String(clock.now());
 
   const lifecycle = startLifecycle({
-    platform: { clock, settings },
+    platform: { clock, settings, overlays },
     features: [
       { name: 'generated-files', mount: mountGeneratedFiles },
+      { name: 'settings-overlay', mount: mountSettingsOverlay },
       { name: 'mr-preload', mount: mountMrPreload },
     ],
+    // Opt out of lifecycle's own chrome.runtime.onMessage registration:
+    // bootstrap.js registers synchronously, before this module graph even
+    // finishes importing, and feeds messages in through `dispatch` below.
+    // Registering here as well would dispatch every message twice.
+    runtime: null,
   });
 
   let unmounted = false;
   return {
+    dispatch: lifecycle.dispatch,
     unmount() {
       if (unmounted) return;
       unmounted = true;

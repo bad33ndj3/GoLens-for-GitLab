@@ -88,15 +88,14 @@
     fullPreload: { status: 'idle', message: '', progress: null },
     fullPreloadRunID: 0,
     onboardingReturnFocus: null,
-    settingsReturnFocus: null,
-    // release() functions returned by overlayRegistry.claim(), held here so
-    // closeOnboarding()/closeSettingsOverlay() — the sole close paths for
-    // every close route (Esc, backdrop click, close button, SPA
-    // navigation) — can release exactly the claim their matching
-    // show*()/claim() made, and only if one was actually made (see
-    // loadOverlayRegistryModule's failure handling).
+    // release() function returned by overlayRegistry.claim(), held here so
+    // closeOnboarding() — the sole close path for every onboarding close
+    // route (Esc, backdrop click, close button, SPA navigation) — can
+    // release exactly the claim showOnboarding() made, and only if one was
+    // actually made (see loadOverlayRegistryModule's failure handling). The
+    // settings overlay holds its own claim inside
+    // page/features/settings-overlay.js (ticket 16).
     onboardingOverlayRelease: null,
-    settingsOverlayRelease: null,
     celebrationStatus: null,
     celebrationRunID: 0,
     celebrationPollTimer: null,
@@ -560,55 +559,14 @@
     }
   }
 
-  function closeSettingsOverlay({ restoreFocus = true } = {}) {
-    const host = document.getElementById('golens-settings-root');
-    if (!host) return;
-    host.remove();
-    state.settingsOverlayRelease?.();
-    state.settingsOverlayRelease = null;
-    if (restoreFocus) state.settingsReturnFocus?.focus?.();
-    state.settingsReturnFocus = null;
-    const queuedMoment = state.queuedMascotMoment;
-    state.queuedMascotMoment = '';
-    if (queuedMoment && state.enabled && state.pageActive) setTimeout(() => showMascotMoment(queuedMoment), 0);
-  }
-
-  function showSettingsOverlay() {
-    const existing = document.getElementById('golens-settings-root');
-    if (existing) {
-      existing.shadowRoot?.querySelector('iframe')?.focus();
-      return;
-    }
-    closeOnboarding();
-    state.settingsReturnFocus = document.activeElement;
-    const host = document.createElement('div');
-    host.id = 'golens-settings-root';
-    const shadow = host.attachShadow({ mode: 'open' });
-    shadow.innerHTML = `
-      <style>
-        :host { all:initial; position:fixed; inset:0; z-index:var(--golens-z-modal); color-scheme:dark; }
-        * { box-sizing:border-box; }
-        .backdrop { position:absolute; inset:0; display:grid; place-items:center; overflow:auto; padding:32px; background:rgba(7,10,14,.76); backdrop-filter:blur(3px); }
-        iframe { display:block; width:min(1080px,calc(100vw - 64px)); height:min(690px,calc(100dvh - 64px)); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-overlay); background:var(--golens-surface-canvas); box-shadow:var(--golens-shadow-overlay); }
-        iframe:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:3px; }
-        @media (max-width:760px) { .backdrop { padding:12px; } iframe { width:calc(100vw - 24px); height:calc(100dvh - 24px); } }
-        @media (prefers-reduced-motion:reduce) { .backdrop { backdrop-filter:none; } }
-      </style>
-      <div class="backdrop" data-action="close-settings-backdrop" role="dialog" aria-modal="true" aria-label="GoLens settings">
-        <iframe src="${chrome.runtime.getURL('settings.html')}" title="GoLens settings"></iframe>
-      </div>
-    `;
-    shadow.querySelector('[data-action="close-settings-backdrop"]').addEventListener('click', (event) => {
-      if (event.target === event.currentTarget) closeSettingsOverlay();
-    });
-    const frame = shadow.querySelector('iframe');
-    frame.addEventListener('load', () => {
-      host.dataset.loaded = 'true';
-      frame.focus();
-    }, { once: true });
-    document.body.append(host);
-    state.settingsOverlayRelease = overlayRegistry?.claim('settings-overlay') ?? null;
-  }
+  // The settings overlay's DOM, its settings.html embedding, its
+  // ready-handshake and its overlay-registry claim now live in
+  // page/features/settings-overlay.js (ticket 16), mounted through
+  // page/main.js. This file no longer creates or removes
+  // `#golens-settings-root`, and no longer answers the three
+  // golens-*-settings messages: bootstrap.js is the responder for those
+  // (it can answer truthfully, since it awaits the feature's own outcome).
+  // What stays here is onboarding's side of the mutual exclusion, below.
 
   function onboardingFeatureIcon(name) {
     if (name === 'brand') {
@@ -1709,7 +1667,11 @@
     state.fullPreloadRunID++;
     cancelCelebrationActivity({ resetStatus: true });
     closeOnboarding();
-    closeSettingsOverlay({ restoreFocus: false });
+    // The settings overlay is no longer closed from here: bootstrap.js
+    // unmounts and re-mounts the whole page module graph on every
+    // location.href change (this one included), and that unmount closes it.
+    // Deviation worth knowing: that re-mount fires on *any* href change,
+    // where this call site only fired on actually leaving the merge request.
     closeBookmarkDrawer({ restoreFocus: false });
     restoreGoTestFileRows();
     removeOverviewDiscussionLineLinks();
@@ -1788,6 +1750,19 @@
     try {
       const { createOverlayRegistry } = await loadOverlayRegistryModule();
       overlayRegistry = createOverlayRegistry();
+      // closeSettingsOverlay() used to flush a queued mascot moment on its
+      // way out. That close path lives in page/features/settings-overlay.js
+      // now, which has no business knowing about this file's celebration
+      // state, so this file watches the registry's open->closed transition
+      // instead. closeOnboarding() still flushes inline for its own path;
+      // release() notifies synchronously, so this subscriber simply gets
+      // there first and leaves that one a harmless no-op.
+      overlayRegistry.subscribe((open) => {
+        if (open) return;
+        const queuedMoment = state.queuedMascotMoment;
+        state.queuedMascotMoment = '';
+        if (queuedMoment && state.enabled && state.pageActive) setTimeout(() => showMascotMoment(queuedMoment), 0);
+      });
     } catch {
       // Both the chrome.runtime.getURL and relative import fallbacks
       // failed (should not happen in production). Leave overlayRegistry
@@ -1856,26 +1831,20 @@
         sendResponse({ ok: false, error: 'Open a GitLab merge request first.' });
         return;
       }
-      closeSettingsOverlay({ restoreFocus: false });
+      // Settings closes itself in response to this same message — it listens
+      // for it in page/features/settings-overlay.js and applies the identical
+      // isGitLab()/isMergeRequest() guard, since a direct feature call from
+      // here is a feature->feature dependency (ticket 03 §3).
       showOnboarding();
       sendResponse({ ok: true, result: { shown: true } });
     }
-    if (message?.type === 'golens-show-settings') {
-      if (!isGitLab()) {
-        sendResponse({ ok: false, error: 'Open a supported GitLab page first.' });
-        return;
-      }
-      showSettingsOverlay();
-      sendResponse({ ok: true, result: { shown: true } });
-    }
-    if (message?.type === 'golens-close-settings') {
-      closeSettingsOverlay();
-      sendResponse({ ok: true, result: { closed: true } });
-    }
-    if (message?.type === 'golens-settings-ready') {
-      const host = document.getElementById('golens-settings-root');
-      if (host) host.dataset.ready = 'true';
-      sendResponse({ ok: Boolean(host), result: { ready: Boolean(host) } });
+    // golens-show-settings: the overlay itself is opened by
+    // page/features/settings-overlay.js and answered by bootstrap.js. The one
+    // part that stays here is onboarding's side of the mutual exclusion:
+    // onboarding is still this file's, so this file closes it. Deliberately
+    // no sendResponse — two responders on one message means one of them loses.
+    if (message?.type === 'golens-show-settings' && isGitLab()) {
+      closeOnboarding();
     }
   });
 

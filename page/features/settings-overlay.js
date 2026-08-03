@@ -49,22 +49,32 @@ export function mount(ctx = {}) {
   let release = null;
   let returnFocus = null;
 
+  // close(opts) -> { kind: 'closed' | 'not-open' }
   function close({ restoreFocus = true } = {}) {
-    if (!host) return;
+    if (!host) return { kind: 'not-open' };
     host.remove();
     host = null;
     release?.();
     release = null;
     if (restoreFocus) returnFocus?.focus?.();
     returnFocus = null;
+    return { kind: 'closed' };
   }
 
+  // show() -> { kind: 'shown' | 'already-open' | 'not-gitlab' }
+  //
+  // The outcome is a value, not a silent return, because bootstrap.js answers
+  // popup.js's `chrome.tabs.sendMessage` with it and popup.js *shows the user*
+  // the error on failure (its `activeTabRequest` throws on `!ok`). A silent
+  // early return would leave bootstrap unable to tell "opened" from "this is
+  // not a GitLab page", which is exactly the lying-ack defect that got this
+  // ticket parked the first time.
   function show() {
     if (host) {
       host.shadowRoot?.querySelector('iframe')?.focus();
-      return;
+      return { kind: 'already-open' };
     }
-    if (!detectGitLabPage(doc, win)) return;
+    if (!detectGitLabPage(doc, win)) return { kind: 'not-gitlab' };
     returnFocus = doc.activeElement;
     host = doc.createElement('div');
     host.id = 'golens-settings-root';
@@ -80,11 +90,15 @@ export function mount(ctx = {}) {
     }, { once: true });
     doc.body.append(host);
     release = overlays.claim('settings-overlay');
+    return { kind: 'shown' };
   }
 
+  // ready() -> { kind: 'ready' | 'not-open' } — settings.js's handshake once
+  // its iframe document has initialised.
   function ready() {
-    if (host) host.dataset.ready = 'true';
-    return Boolean(host);
+    if (!host) return { kind: 'not-open' };
+    host.dataset.ready = 'true';
+    return { kind: 'ready' };
   }
 
   // Mirrors content.js's own 'golens-show-onboarding' guard exactly, so this

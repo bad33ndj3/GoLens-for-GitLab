@@ -145,32 +145,35 @@ De feature-carve-outs snijden uit twee hub-bestanden; max één agent per hubbes
 gedeeld raakvlak van élk ticket — parallelle agents moeten hun entry met een eigen, unieke anchor
 toevoegen.
 
-## BLOKKADE: message-gestuurde features kunnen nog niet gemigreerd worden (2026-08-03, uit 16)
+## Message-seam: opgelost in ticket 16 (2026-08-03)
 
-Ticket 16 is geschreven, gefaald op de browser-smoke en teruggedraaid; zie
-`issues/16-feature-settings-overlay.md` voor het volledige bewijs. Twee structurele oorzaken,
-allebei buiten 16's eigen scope:
+Ticket 16 faalde eerst en is daarna in tweede instantie opgelost door éérst de oorzaak weg te
+nemen. Wat er nu ligt, erft elke volgende message-gestuurde carve-out:
 
-1. **Load-race.** `bootstrap.js` laadt de page-modules via een asynchrone `import()`; hun
-   `chrome.runtime.onMessage`-listener bestaat pas ~15–30 ms na page-load. `content.js` en
-   `go-navigation.js` registreren synchroon. Elke message die in dat gat valt is voor de module
-   verloren — in productie: een popup-klik tijdens het laden doet stil niets.
-2. **Liegende ack.** `page/lifecycle` roept per ontwerp nooit `sendResponse` aan, dus `content.js`
-   blijft de responder en moet `ok: true` antwoorden zonder het werk gedaan te hebben.
+- **`bootstrap.js` is de enige `chrome.runtime.onMessage`-registratie voor de page-modules.** Het
+  is een klassiek content script, dus die listener bestaat vanaf script-evaluatie. Binnenkomende
+  messages worden vastgehouden tot er een handle is (`withHandle()`) — dat dekt zowel de eerste
+  page-load als élk unmount/import/mount-gat van een SPA-remount. Vóór deze fix ging elke message
+  in die vensters stil verloren; in productie deed een popup-klik tijdens het laden niets.
+- **`page/lifecycle`'s `start()` geeft `dispatch(message)` terug.** `page/main.js` geeft
+  `runtime: null` mee om zelfregistratie uit te zetten, anders dispatcht elke message twee keer.
+  Zelfregistratie blijft voor aanroepers die wél een `runtime` meegeven (de tests).
+- **Wie antwoordt: bootstrap, en alleen voor types die het waar kan maken.** Het houdt een lijst
+  van geclaimde message-types (nu de drie settings-types), doet `return true`, wacht de handle af,
+  dispatcht, en mapt de kind naar dezelfde envelope die `content.js` produceerde. Niet-geclaimde
+  types worden wél doorgegeven maar niet beantwoord — `content.js`/`go-navigation.js` antwoorden
+  daar synchroon op, en twee responders op één message betekent dat er één verliest.
 
-**Gevolg voor de planning.** Bewezen: een feature waarvan de énige ingang een
-`FEATURE_ROUTES`-message is, kan niet gemigreerd worden — dat is 16, empirisch aangetoond.
-Afgeleid, niet bewezen: 15 (onboarding) is de eerstvolgende die hier tegenaan loopt, want
-`golens-show-onboarding` staat al in `FEATURE_ROUTES` zonder gemounte feature die hem beantwoordt,
-en `content.js` vangt hem nu synchroon. Dat geldt alleen als 15 op dezelfde manier gemigreerd
-wordt; het is een verwachting, geen meting.
+**Regel voor de volgende carve-outs:** een feature-handle geeft een **kind uit een gesloten
+verzameling** terug, nooit een stille early return. Bootstrap moet het verschil tussen "gelukt" en
+"kon niet" kunnen zien, want `popup.js` toont die fouttekst aan de gebruiker. Claim je een nieuw
+message-type in bootstrap, haal het dan weg bij de oude responder in dezelfde wijziging;
+`tests/bootstrap-message-seam.test.js` bewaakt dat de lijst een deelverzameling van
+`FEATURE_ROUTES` blijft die naar een gemounte feature wijst.
 
-Beide gevallen zijn geblokkeerd tot er een ticket ligt dat (a) een synchroon geregistreerde, bufferende listener in
-`bootstrap.js` zet (queue-until-ready, zoals ticket 08's clock-bridge) en (b) beslist wie
-antwoordt. Puur DOM-/observer-gedreven features (13 generated-files) en RPC-features zonder
-message-ingang (19 mr-preload) hebben hier geen last van en zijn wél migreerbaar.
-
-De browser-smoke is bewust **niet** verzwakt om dit te laten passeren.
+De browser-smoke is hierbij nooit verzwakt: die ving deze race, en zijn settings-scenario is het
+bewijs dat de migratie klopt — het slaagt terwijl `content.js` `#golens-settings-root` niet meer
+aanmaakt.
 
 ## Not yet specified
 

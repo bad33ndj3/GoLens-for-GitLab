@@ -149,11 +149,40 @@ test('ready() marks the host as ready and reports whether the overlay is open', 
   buildFixture();
   const handle = mount({ overlays: fakeOverlayRegistry(), runtime: fakeRuntime() });
 
-  assert.equal(handle.ready(), false, 'ready() before show() reports not open');
+  assert.deepEqual(handle.ready(), { kind: 'not-open' }, 'ready() before show() reports not open');
 
   handle.show();
-  assert.equal(handle.ready(), true);
+  assert.deepEqual(handle.ready(), { kind: 'ready' });
   assert.equal(document.getElementById('golens-settings-root').dataset.ready, 'true');
+
+  handle.unmount();
+});
+
+// Ticket 16: bootstrap.js turns these outcomes into the response popup.js and
+// settings.js read, and popup.js shows the user the error text on `!ok`. A
+// silent early return here is what made the first attempt's ack lie.
+test('show()/close() report kind-discriminated outcomes, never a silent return', () => {
+  buildFixture();
+  const handle = mount({ overlays: fakeOverlayRegistry(), runtime: fakeRuntime() });
+
+  assert.deepEqual(handle.close(), { kind: 'not-open' }, 'closing what is not open says so');
+  assert.deepEqual(handle.show(), { kind: 'shown' });
+  assert.deepEqual(handle.show(), { kind: 'already-open' }, 'a second show is not a new overlay');
+  assert.deepEqual(handle.close(), { kind: 'closed' });
+
+  handle.unmount();
+});
+
+test('show() on a non-GitLab page reports not-gitlab instead of opening', () => {
+  const window = new Window({ url: 'https://example.com/whatever' });
+  window.document.write('<!doctype html><html><head></head><body></body></html>');
+  globalThis.window = window;
+  globalThis.document = window.document;
+  globalThis.location = window.location;
+
+  const handle = mount({ overlays: fakeOverlayRegistry(), runtime: fakeRuntime() });
+  assert.deepEqual(handle.show(), { kind: 'not-gitlab' });
+  assert.equal(window.document.getElementById('golens-settings-root'), null);
 
   handle.unmount();
 });

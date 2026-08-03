@@ -182,19 +182,22 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   replayHost.shadowRoot.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(window.document.getElementById('golens-onboarding-root'), null);
 
+  // Ticket 16: the settings overlay's DOM, iframe and handshake moved to
+  // page/features/settings-overlay.js (covered by
+  // tests/features-settings-overlay.test.js) and bootstrap.js answers the
+  // message. content.js must no longer build the overlay, and must no longer
+  // respond — two responders on one message means one of them loses.
+  response = null;
   messageListener({ type: 'golens-show-settings' }, {}, (value) => { response = value; });
-  assert.equal(response.ok, true);
-  const settingsHost = window.document.getElementById('golens-settings-root');
-  assert.ok(settingsHost, 'the compact popup did not open the page-level settings overlay');
-  const settingsFrame = settingsHost.shadowRoot.querySelector('iframe');
-  const settingsDialog = settingsHost.shadowRoot.querySelector('[role="dialog"]');
-  assert.equal(settingsDialog.getAttribute('aria-modal'), 'true');
-  assert.equal(settingsFrame.title, 'GoLens settings');
-  assert.match(settingsFrame.src, /settings\.html$/);
-  assert.match(settingsHost.shadowRoot.querySelector('style').textContent, /width:min\(1080px/);
+  assert.equal(response, null, 'content.js must not answer golens-show-settings any more');
+  assert.equal(
+    window.document.getElementById('golens-settings-root'),
+    null,
+    'content.js must not build the settings overlay any more',
+  );
+  response = null;
   messageListener({ type: 'golens-close-settings' }, {}, (value) => { response = value; });
-  assert.equal(response.ok, true);
-  assert.equal(window.document.getElementById('golens-settings-root'), null);
+  assert.equal(response, null, 'content.js must not answer golens-close-settings any more');
   assert.equal(onboardingVersion, 11);
 
   let fullscreenElement = null;

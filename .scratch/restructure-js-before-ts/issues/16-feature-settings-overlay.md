@@ -6,10 +6,73 @@ ready-handshake privé; overlay-registry-claim zolang open. Lifecycle routeert
 `golens-show-settings`/`golens-close-settings`/`golens-settings-ready` naar de handle.
 Legacy-code direct verwijderd.
 
-**Blocked by:** 11 — lifecycle-orchestrator; 12 — overlay-registry; **NIEUW: een nog te
-schrijven ticket voor de message-seam (zie Status).**
+**Blocked by:** 11 — lifecycle-orchestrator; 12 — overlay-registry.
 
-## Status: GEPARKEERD, niet gemigreerd
+## Status: OPGELOST (tweede poging)
+
+De eerste poging is gefaald en teruggedraaid; de tweede heeft eerst de twee oorzaken weggenomen
+en daarna pas de feature verplaatst. Wat er nu staat:
+
+- `page/features/settings-overlay.js` — shell, `mount(ctx) → { unmount, show, close, ready }`.
+  `show`/`close`/`ready` geven een **kind uit een gesloten verzameling** terug
+  (`'shown' | 'already-open' | 'not-gitlab'`, `'closed' | 'not-open'`, `'ready' | 'not-open'`),
+  geen stille early return: de aanroeper moet kunnen zien wat er echt gebeurd is.
+- `page/features/settings-overlay.internal.js` — pure core (GitLab-detectie, MR-pad, markup).
+- `bootstrap.js` — de **message-seam**. Registreert synchroon een
+  `chrome.runtime.onMessage`-listener, houdt binnenkomende messages vast tot er een handle is
+  (`withHandle()`, dekt zowel de eerste page-load als elk unmount/mount-gat van een SPA-remount),
+  en is de **responder** voor de drie settings-messages: `return true`, wachten op de handle,
+  dispatchen, en de kind naar exact dezelfde `{ ok, result }` / `{ ok, error }`-envelope mappen
+  die `content.js` produceerde.
+- `page/lifecycle/index.js` — `start()` geeft nu ook `dispatch(message)` terug. Zelfregistratie
+  blijft bestaan voor aanroepers die een `runtime` meegeven (de tests); `page/main.js` geeft
+  bewust `runtime: null` mee, zodat bootstrap de énige registratie is en geen message twee keer
+  gedispatcht wordt.
+- `content.js` — 1885 → 1854 regels (−75/+44). Bouwt `#golens-settings-root` niet meer en
+  **antwoordt niet meer** op de drie messages. Wat blijft: onboarding's kant van de wederzijdse
+  uitsluiting (deze file bezit onboarding, dus sluit hem bij `golens-show-settings` — zonder
+  `sendResponse`, want twee responders op één message betekent dat er één verliest), en een
+  `overlayRegistry.subscribe` die de queued mascot-moment doorspoelt op de open→dicht-overgang,
+  wat voorheen in `closeSettingsOverlay` zat.
+
+**Waarom de eerste poging faalde** (bewaard, want het is de reden dat dit ticket deze vorm heeft):
+
+1. **Load-race.** De page-module registreerde zijn listener pas nadat bootstrap's dynamische
+   `import()` resolvete (~15–30 ms). `content.js` is een klassiek content script en registreert
+   synchroon. Een `golens-show-settings` vlak na page-load was voor de module verloren.
+   Geïnstrumenteerd gemeten: `mount` draaide wél, de listener was wél geregistreerd, en er kwam
+   nóóit een message binnen. In productie: een popup-klik tijdens het laden deed stil niets.
+2. **Liegende ack.** `page/lifecycle` antwoordt per ontwerp nooit, dus `content.js` hield een
+   shim die `ok: true` antwoordde zonder het werk te doen. `popup.js` consumeert dat antwoord
+   wél (`activeTabRequest` gooit bij `!ok` en toont `error.message`), dus dat was een echte leugen
+   tegen de gebruiker.
+
+Beide zijn nu structureel weg, niet alleen voor deze feature: elke volgende message-gestuurde
+carve-out erft de seam.
+
+**Tests:** 20 over drie files. `tests/bootstrap-message-seam.test.js` (6, nieuw) pint de seam vast
+— message vóór mount wordt vastgehouden en alsnog beantwoord, envelope volgt de echte uitkomst,
+mislukte import wordt als mislukking gemeld, niet-geclaimde types houden geen kanaal open maar
+bereiken wél de module, en de geclaimde typelijst moet een deelverzameling van `FEATURE_ROUTES`
+zijn die naar een gemounte feature wijst (anders lopen ze stil uit elkaar).
+`tests/features-settings-overlay.test.js` (14) dekt DOM, claim/release, handshake en de kinds.
+
+**Gates:** `check:syntax` 0 · 293/293 · browser-smoke groen — en dat laatste is het bewijs dat
+telt: het settings-scenario van de smoke slaagt terwijl `content.js` `#golens-settings-root` niet
+meer aanmaakt, dus er is maar één ding dat het nog kan bouwen. De smoke is niet aangepast.
+
+**Gedragsafwijkingen die blijven:**
+
+1. SPA-teardown is breder: bootstrap remount op élke `location.href`-wijziging sluit de overlay,
+   waar het oude aanroeppunt alleen vuurde bij het écht verlaten van de MR (in-MR tab-switches
+   deden niets).
+2. Onboarding→settings wederzijds sluiten is niet langer één synchrone aanroep: de module
+   luistert zelf naar `golens-show-onboarding` (feature→feature is verboden, ticket 03 §3) en past
+   dezelfde `isGitLab()`/`isMergeRequest()`-guard toe.
+3. Nieuw geval dat `content.js` niet kón produceren: als de module-graph niet laadt, antwoordt
+   bootstrap `{ ok: false, error: 'GoLens could not load on this page.' }` in plaats van te zwijgen.
+
+## Eerste poging (historie)
 
 De migratie is geschreven, gefaald op de browser-smoke en teruggedraaid. `content.js` staat
 weer op de HEAD-versie; de geschreven modules staan ongewijzigd geparkeerd in
