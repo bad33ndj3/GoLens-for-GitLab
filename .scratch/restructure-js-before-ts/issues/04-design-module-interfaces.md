@@ -183,3 +183,24 @@ the isolated world. Throwaway per `/prototype`; its answer lands here. If it fai
 (module mechanism) reopens — interfaces above are unaffected except the bootstrap entry.
 
 Handles, `ctx`, and `kind`-results are conventional enough to specify on paper; no other prototype.
+
+**Prototype verdict (2026-08-03): PASS — the bootstrap works; the spec is unblocked.** Built by a
+sonnet subagent, independently re-run and reviewed. Throwaway code lives on branch
+`proto/bootstrap-import` (`experiments/proto-bootstrap-import/`, one command:
+`node experiments/proto-bootstrap-import/run.mjs`). Findings, on Chromium 150 (Helium, headless):
+
+1. `import(chrome.runtime.getURL('page/main.js'))` from the isolated world succeeds against a
+   strict GitLab-like page CSP (`default-src 'self'; script-src 'self' 'nonce-…'; object-src
+   'none'; base-uri 'self'`) — page CSP does not apply to extension-origin module loads.
+2. `web_accessible_resources` is **required**: without it the import rejects
+   (`TypeError: Failed to fetch dynamically imported module`, `net::ERR_FAILED`). The manifest
+   must list `page/*` with the gitlab.com match pattern.
+3. Timing: bootstrap-start → completed `mount()` in ~15–29ms at `document_end` — no user-visible
+   delay.
+4. SPA `pushState` navigation: module graph stays alive; re-mount per navigation works (3/3).
+   Caveat: the isolated world does not observe page-world `pushState` directly — lifecycle must
+   poll/observe `location.href` (matching today's reconcile approach), not hook `history`.
+5. Transitive imports (`page/main.js` → `./platform/clock.js`) resolve correctly.
+
+Not covered (accepted): real gitlab.com login/https and non-Chromium browsers; behavior is
+Chromium-level, not page-content-dependent.
