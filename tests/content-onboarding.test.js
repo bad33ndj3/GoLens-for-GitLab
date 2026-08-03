@@ -128,7 +128,6 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   completePreload();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(preload.dataset.state, 'complete');
-  assert.equal(window.document.getElementById('golens-celebration-root'), null, 'the pitstop waits until onboarding closes');
 
   nextButton.click();
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -136,11 +135,13 @@ test('onboarding opens once, is accessible, and can be replayed from settings', 
   assert.equal(savedSettings.length, 1);
   assert.equal(savedSettings[0].hideGeneratedFiles, true);
   assert.equal(savedSettings[0].shortcutBindings.nextOccurrence, 'F3');
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const pitstopHost = window.document.getElementById('golens-celebration-root');
-  assert.equal(pitstopHost?.dataset.celebration, 'pitstop');
-  assert.match(pitstopHost.shadowRoot.querySelector('img').src, /assets\/celebrations\/golens-pitstop\.png$/);
 
+  // Ticket 14: the pitstop mascot moment on preload completion moved to
+  // page/features/celebration.js, reached from here only through
+  // triggerPitstopMoment()'s dynamic-import bridge. This test loads
+  // content.js standalone (no page/main.js, so celebration.js is never
+  // mounted), so the bridge silently no-ops here — covered instead by
+  // tests/features-celebration.test.js, which mounts the real feature.
   let response;
   messageListener({ type: 'golens-show-onboarding' }, {}, (value) => { response = value; });
   assert.equal(response.ok, true);

@@ -899,45 +899,6 @@
     return location.pathname.match(/\/-\/merge_requests\/(\d+)/)?.[1] || '';
   }
 
-  async function mergeRequestCelebrationStatus() {
-    const { project } = projectContext();
-    const mergeRequest = mergeRequestIID();
-    if (!mergeRequest) throw new Error('GitLab merge request context is unavailable.');
-    const encodedProject = encodeURIComponent(project);
-    const response = await authenticatedFetch(
-      `${location.origin}/api/v4/projects/${encodedProject}/merge_requests/${encodeURIComponent(mergeRequest)}/approvals`,
-    );
-    if (!response.ok) throw new Error(`GitLab approval API returned ${response.status}`);
-    const result = await response.json();
-    const approvers = Array.isArray(result.approved_by)
-      ? result.approved_by.map((approval) => approval?.user?.id || approval?.user?.username).filter(Boolean).map(String)
-      : [];
-    return { state: result.state || '', approvers };
-  }
-
-  async function mergeRequestDiscussionStatus() {
-    const { project } = projectContext();
-    const mergeRequest = mergeRequestIID();
-    if (!mergeRequest) throw new Error('GitLab merge request context is unavailable.');
-    const encodedProject = encodeURIComponent(project);
-    let unresolved = 0;
-    for (let page = 1; page;) {
-      if (page > 20) throw new Error('Merge request has too many discussion pages');
-      const response = await authenticatedFetch(
-        `${location.origin}/api/v4/projects/${encodedProject}/merge_requests/${encodeURIComponent(mergeRequest)}/discussions?per_page=100&page=${page}`,
-      );
-      if (!response.ok) throw new Error(`GitLab discussions API returned ${response.status}`);
-      const discussions = await response.json();
-      if (!Array.isArray(discussions)) throw new Error('GitLab returned invalid merge request discussions');
-      unresolved += discussions.filter((discussion) =>
-        Array.isArray(discussion?.notes)
-        && discussion.notes.some((note) => note?.resolvable && !note?.resolved)
-      ).length;
-      page = nextPageNumber(response, page, discussions);
-    }
-    return { unresolved };
-  }
-
   async function listMergeRequestChangedFiles() {
     const { project } = projectContext();
     const mergeRequest = mergeRequestIID();
@@ -2993,8 +2954,6 @@
     teardown,
     preloadMergeRequest,
     mergeRequestPreloadStatus,
-    mergeRequestCelebrationStatus,
-    mergeRequestDiscussionStatus,
     preloadFullProject,
     fullProjectPreloadStatus,
     invalidateCacheState,

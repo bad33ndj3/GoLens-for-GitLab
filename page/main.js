@@ -22,6 +22,7 @@ import { start as startLifecycle } from './lifecycle/index.js';
 import { mount as mountGeneratedFiles } from './features/generated-files.js';
 import { mount as mountSettingsOverlay } from './features/settings-overlay.js';
 import { mount as mountMrPreload } from './features/mr-preload.js';
+import { mount as mountCelebration } from './features/celebration.js';
 
 export function mount(ctx = {}) {
   const clock = ctx.clock || createClock();
@@ -41,6 +42,7 @@ export function mount(ctx = {}) {
       { name: 'generated-files', mount: mountGeneratedFiles },
       { name: 'settings-overlay', mount: mountSettingsOverlay },
       { name: 'mr-preload', mount: mountMrPreload },
+      { name: 'celebration', mount: mountCelebration },
     ],
     // Opt out of lifecycle's own chrome.runtime.onMessage registration:
     // bootstrap.js registers synchronously, before this module graph even

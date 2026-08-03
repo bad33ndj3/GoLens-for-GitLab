@@ -3,8 +3,6 @@
   const defaults = { enabled: true, hideGeneratedFiles: false, shortcutCoachEnabled: true, shortcutBindings: shortcutDefaults };
   const ONBOARDING_VERSION = 11;
   const ONBOARDING_STORAGE_KEY = 'golensOnboardingVersion';
-  const FRIDAY_MR_CREATE_STORAGE_KEY = 'golensFridayMergeRequestCreation';
-  const CELEBRATION_POLL_INTERVALS_MS = [250, 500, 750, 1000, 1500, 2000, 2500];
   const RECONCILE_DEBOUNCE_MS = 50;
   // Injectable time source (test-only) so debounce tests are deterministic
   // and don't sleep. Mirrors the pattern in `go-navigation.js`.
@@ -73,6 +71,29 @@
     }
   }
 
+  // Same dynamic-`import()` bridge as settings-store/clock/overlay-registry
+  // above, reaching page/features/celebration.js's module-scope
+  // requestMoment() export (ticket 14 — the "pitstop" mascot moment used to
+  // fire straight from this file's own showMascotMoment(); that whole
+  // feature now lives in its own module, and this is the one remaining
+  // trigger content.js still owns). A failed import or a moment requested
+  // before/after that module is mounted is a silent no-op, same as every
+  // other bridge here.
+  async function triggerPitstopMoment() {
+    try {
+      const { requestMoment } = await (async () => {
+        try {
+          return await import(chrome.runtime.getURL('page/features/celebration.js'));
+        } catch {
+          return await import('./page/features/celebration.js');
+        }
+      })();
+      requestMoment('pitstop');
+    } catch {
+      // See header comment: a dropped pitstop moment is not a failure.
+    }
+  }
+
   const state = {
     settings: defaults,
     enabled: true,
@@ -96,14 +117,6 @@
     // settings overlay holds its own claim inside
     // page/features/settings-overlay.js (ticket 16).
     onboardingOverlayRelease: null,
-    celebrationStatus: null,
-    celebrationRunID: 0,
-    celebrationPollTimer: null,
-    celebrationRemoveTimer: null,
-    discussionStatus: null,
-    discussionRunID: 0,
-    discussionPollTimer: null,
-    queuedMascotMoment: '',
     bookmarkSnapshot: { scope: null, current: [], stale: [] },
     bookmarkUnsubscribe: null,
     bookmarkDrawerReturnFocus: null,
@@ -281,7 +294,6 @@
   }
 
   async function disableGoLens() {
-    cancelCelebrationActivity({ resetStatus: true });
     globalThis.GoLensGoNavigation?.teardown();
     if (inReviewFocus()) await toggleReviewFocus();
   }
@@ -552,11 +564,6 @@
     state.onboardingOverlayRelease = null;
     state.onboardingReturnFocus?.focus?.();
     state.onboardingReturnFocus = null;
-    const queuedMoment = state.queuedMascotMoment;
-    state.queuedMascotMoment = '';
-    if (queuedMoment && state.enabled && state.pageActive) {
-      setTimeout(() => showMascotMoment(queuedMoment), 0);
-    }
   }
 
   // The settings overlay's DOM, its settings.html embedding, its
@@ -1149,7 +1156,7 @@
         ? 'Related cache ready · candidate search limited'
         : result.coverage === 'full' ? 'Full project cached' : 'Related MR cache ready';
       setPreloadState('complete', { message, progress: { percentage: 100 } });
-      requestMascotMoment('pitstop');
+      triggerPitstopMoment();
     } catch (error) {
       if (runID !== state.preloadRunID) return;
       setPreloadState('error', { message: error.message || 'Preload failed' });
@@ -1181,340 +1188,6 @@
     }
   }
 
-  function normalizeCelebrationStatus(result) {
-    return {
-      state: String(result?.state || '').toLowerCase(),
-      approvers: [...new Set((result?.approvers || []).map(String))],
-    };
-  }
-
-  async function refreshCelebrationBaseline() {
-    const navigation = globalThis.GoLensGoNavigation;
-    if (!state.enabled || !state.pageActive || !navigation?.mergeRequestCelebrationStatus) {
-      state.celebrationStatus = null;
-      return null;
-    }
-    const pageKey = state.pageKey;
-    try {
-      const result = normalizeCelebrationStatus(await navigation.mergeRequestCelebrationStatus());
-      if (!state.enabled || state.pageKey !== pageKey) return null;
-      state.celebrationStatus = result;
-      return result;
-    } catch {
-      if (state.pageKey === pageKey) state.celebrationStatus = null;
-      return null;
-    }
-  }
-
-  function normalizeDiscussionStatus(result) {
-    return { unresolved: Math.max(0, Number(result?.unresolved) || 0) };
-  }
-
-  async function refreshDiscussionBaseline() {
-    const navigation = globalThis.GoLensGoNavigation;
-    if (!state.enabled || !state.pageActive || !navigation?.mergeRequestDiscussionStatus) {
-      state.discussionStatus = null;
-      return null;
-    }
-    const pageKey = state.pageKey;
-    try {
-      const result = normalizeDiscussionStatus(await navigation.mergeRequestDiscussionStatus());
-      if (!state.enabled || state.pageKey !== pageKey) return null;
-      state.discussionStatus = result;
-      return result;
-    } catch {
-      if (state.pageKey === pageKey) state.discussionStatus = null;
-      return null;
-    }
-  }
-
-  function removeCelebrationOverlay() {
-    clearTimeout(state.celebrationRemoveTimer);
-    state.celebrationRemoveTimer = null;
-    document.getElementById('golens-celebration-root')?.remove();
-  }
-
-  function cancelCelebrationActivity({ resetStatus = false } = {}) {
-    state.celebrationRunID++;
-    state.discussionRunID++;
-    clearTimeout(state.celebrationPollTimer);
-    clearTimeout(state.discussionPollTimer);
-    state.celebrationPollTimer = null;
-    state.discussionPollTimer = null;
-    removeCelebrationOverlay();
-    if (resetStatus) {
-      state.celebrationStatus = null;
-      state.discussionStatus = null;
-      state.queuedMascotMoment = '';
-    }
-  }
-
-  function isFridayAfterFour(date = new Date()) {
-    return date.getDay() === 5 && date.getHours() >= 16;
-  }
-
-  function requestMascotMoment(kind) {
-    if (!state.enabled || !state.pageActive) return;
-    if (document.getElementById('golens-onboarding-root') || document.getElementById('golens-settings-root')) {
-      state.queuedMascotMoment = kind;
-      return;
-    }
-    showMascotMoment(kind);
-  }
-
-  function showMascotMoment(kind) {
-    const moments = {
-      approved: { asset: 'golens-approved.png', message: 'Approval confirmed', duration: 1700 },
-      merged: { asset: 'golens-merged.png', message: 'Merge confirmed', duration: 2000 },
-      pitstop: { asset: 'golens-pitstop.png', message: 'Source cache ready', duration: 2100 },
-      resolved: { asset: 'golens-discussions-resolved.png', message: 'All discussions resolved', duration: 1900 },
-      friday: { asset: 'golens-friday-beer.png', message: 'Friday review complete. Cheers!', duration: 5800 },
-    };
-    const moment = moments[kind];
-    if (!moment) return;
-    removeCelebrationOverlay();
-    const host = document.createElement('div');
-    host.id = 'golens-celebration-root';
-    host.dataset.celebration = kind;
-    const controlsRect = state.controlsHost?.getBoundingClientRect();
-    if (controlsRect) {
-      const approvalWidth = Math.min(144, Math.max(104, window.innerWidth * .1));
-      const left = Math.max(12, Math.min(window.innerWidth - approvalWidth - 12, controlsRect.left - approvalWidth + 18));
-      const top = Math.max(12, Math.min(window.innerHeight - approvalWidth - 12, controlsRect.top + controlsRect.height / 2 - approvalWidth / 2));
-      host.style.setProperty('--golens-celebration-x', `${left}px`);
-      host.style.setProperty('--golens-celebration-y', `${top}px`);
-    }
-    const confetti = kind === 'friday'
-      ? `<div class="confetti-field" aria-hidden="true">${Array.from({ length: 48 }, (_, index) => {
-          const x = (index * 37 + 11) % 101;
-          const drift = (index * 53) % 141 - 70;
-          const delay = (index * 89) % 1400;
-          const fall = 3000 + (index * 137) % 1000;
-          const turn = 360 + (index * 47) % 540;
-          return `<i class="confetti" style="--x:${x}vw;--drift:${drift}px;--delay:${delay}ms;--fall:${fall}ms;--turn:${turn}deg"></i>`;
-        }).join('')}</div>`
-      : '';
-    const shadow = host.attachShadow({ mode: 'open' });
-    shadow.innerHTML = `
-      <style>
-        :host { all:initial; position:fixed; inset:0; z-index:var(--golens-z-overlay); pointer-events:none; contain:layout style; }
-        * { box-sizing:border-box; }
-        .status { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
-        .sprite { position:fixed; display:block; object-fit:contain; will-change:transform,opacity; }
-        .approved,.resolved { left:var(--golens-celebration-x,calc(100vw - 168px)); top:var(--golens-celebration-y,24px); }
-        .approved { width:clamp(104px,10vw,144px); animation:golens-approved 1600ms var(--golens-ease-out) both; }
-        .resolved { width:clamp(120px,11vw,156px); animation:golens-resolved 1800ms var(--golens-ease-out) both; }
-        .merged,.friday { left:0; bottom:max(12px,env(safe-area-inset-bottom)); width:clamp(240px,30vw,360px); animation:golens-lap 1900ms cubic-bezier(.18,.72,.25,1) both; }
-        .friday { width:clamp(260px,32vw,380px); animation:golens-friday-lap 5500ms cubic-bezier(.18,.72,.25,1) both; }
-        .pitstop { right:12px; bottom:max(12px,env(safe-area-inset-bottom)); width:clamp(280px,34vw,420px); animation:golens-pitstop 2000ms var(--golens-ease-out) both; }
-        .confetti-field { position:fixed; inset:0; overflow:hidden; }
-        .confetti { position:absolute; top:-18px; left:var(--x); width:10px; height:6px; border-radius:2px; opacity:0; background:#f39c3d; animation:golens-confetti var(--fall) cubic-bezier(.2,.65,.35,1) var(--delay) both; }
-        .confetti:nth-child(5n+2) { background:#77cce5; }
-        .confetti:nth-child(5n+3) { background:#f4d35e; }
-        .confetti:nth-child(5n+4) { background:#f47c7c; }
-        .confetti:nth-child(5n) { background:#9ae6b4; }
-        @keyframes golens-approved {
-          0% { opacity:0; transform:translate3d(30px,12px,0) scale(.72); }
-          18% { opacity:1; transform:translate3d(0,0,0) scale(1); }
-          38% { opacity:1; transform:translate3d(-2px,4px,0) rotate(-3deg) scale(1); }
-          58% { opacity:1; transform:translate3d(0,0,0) rotate(0) scale(1); }
-          78% { opacity:1; transform:translate3d(0,0,0) scale(1); }
-          100% { opacity:0; transform:translate3d(24px,10px,0) scale(.85); }
-        }
-        @keyframes golens-resolved {
-          0% { opacity:0; transform:translate3d(28px,8px,0) scale(.78); }
-          20% { opacity:1; transform:translate3d(0,0,0) scale(1); }
-          42% { opacity:1; transform:translate3d(0,5px,0) rotate(-2deg) scale(.98); }
-          60%,80% { opacity:1; transform:translate3d(0,0,0) rotate(0) scale(1); }
-          100% { opacity:0; transform:translate3d(20px,8px,0) scale(.86); }
-        }
-        @keyframes golens-lap {
-          0% { opacity:0; transform:translate3d(-110%,0,0) scale(.92); }
-          12% { opacity:1; }
-          82% { opacity:1; }
-          100% { opacity:0; transform:translate3d(calc(100vw + 10%),0,0) scale(1); }
-        }
-        @keyframes golens-friday-lap {
-          0% { opacity:0; transform:translate3d(-110%,0,0) rotate(0) scale(.92); }
-          10% { opacity:1; transform:translate3d(10vw,0,0) rotate(-1deg) scale(1); }
-          30% { opacity:1; transform:translate3d(34vw,-6px,0) rotate(1deg) scale(1); }
-          58% { opacity:1; transform:translate3d(48vw,0,0) rotate(-1deg) scale(1.02); }
-          72% { opacity:1; transform:translate3d(61vw,-4px,0) rotate(1deg) scale(1); }
-          88% { opacity:1; }
-          100% { opacity:0; transform:translate3d(calc(100vw + 10%),0,0) rotate(0) scale(1); }
-        }
-        @keyframes golens-confetti {
-          0% { opacity:0; transform:translate3d(0,-24px,0) rotate(0); }
-          10%,86% { opacity:1; }
-          100% { opacity:0; transform:translate3d(var(--drift),calc(100vh + 42px),0) rotate(var(--turn)); }
-        }
-        @keyframes golens-pitstop {
-          0% { opacity:0; transform:translate3d(110%,0,0) scale(.94); }
-          24% { opacity:1; transform:translate3d(-8px,0,0) scale(1); }
-          38%,78% { opacity:1; transform:translate3d(0,0,0) scale(1); }
-          100% { opacity:0; transform:translate3d(0,10px,0) scale(.96); }
-        }
-        @media (max-width:640px) { .approved { width:110px; } .resolved { width:124px; } .merged,.friday { width:260px; } .pitstop { width:300px; } }
-        @media (prefers-reduced-motion:reduce) {
-          .sprite { will-change:auto; }
-          .confetti-field { display:none; }
-          .approved,.resolved { animation:golens-celebration-still 900ms ease-out both; }
-          .merged { right:12px; left:auto; animation:golens-celebration-still 1200ms ease-out both; }
-          .friday { right:12px; left:auto; animation:golens-celebration-still 2200ms ease-out both; }
-          .pitstop { animation:golens-celebration-still 1200ms ease-out both; }
-          @keyframes golens-celebration-still { 0%,100% { opacity:0; } 12%,82% { opacity:1; } }
-        }
-      </style>
-      <div class="status" role="status" aria-live="polite">${moment.message}</div>
-      ${confetti}
-      <img class="sprite ${kind}" src="${chrome.runtime.getURL(`assets/celebrations/${moment.asset}`)}" alt="">
-    `;
-    document.body.append(host);
-    state.celebrationRemoveTimer = setTimeout(removeCelebrationOverlay, moment.duration);
-  }
-
-  function buttonDetailsForTarget(target) {
-    const button = target?.closest?.('button,[role="button"],a[data-testid]');
-    if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return null;
-    return {
-      button,
-      testID: String(button.getAttribute('data-testid') || '').toLowerCase(),
-      label: [button.textContent, button.getAttribute('aria-label'), button.title]
-        .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase(),
-    };
-  }
-
-  function mergeRequestActionForTarget(target) {
-    const details = buttonDetailsForTarget(target);
-    if (!details) return '';
-    const { testID, label } = details;
-    if (/unapprove|revoke(?: my)? approval/.test(`${testID} ${label}`)) return '';
-    if (/(?:^|[-_])approve(?:[-_]|$)/.test(testID) || /^(?:approve|submit approval)(?:\s|$)/.test(label)) return 'approved';
-    if (/(?:^|[-_])merge(?:[-_]|$)/.test(testID) || /^(?:merge|merge immediately|merge when pipeline succeeds|set to auto-merge)(?:\s|$)/.test(label)) return 'merged';
-    return '';
-  }
-
-  function discussionResolveActionForTarget(target) {
-    const details = buttonDetailsForTarget(target);
-    if (!details) return false;
-    const { testID, label } = details;
-    if (/reopen|unresolve/.test(`${testID} ${label}`)) return false;
-    return /resolve[-_](?:discussion|thread)/.test(testID)
-      || /^(?:resolve discussion|resolve thread)(?:\s|$)/.test(label);
-  }
-
-  function createMergeRequestActionForTarget(target) {
-    const details = buttonDetailsForTarget(target);
-    if (!details) return false;
-    return /create[-_]merge[-_]request/.test(details.testID)
-      || /^create merge request(?:\s|$)/.test(details.label);
-  }
-
-  function rememberFridayMergeRequestCreation() {
-    if (!state.enabled || !isGitLab() || !isFridayAfterFour()) return;
-    try {
-      window.sessionStorage.setItem(FRIDAY_MR_CREATE_STORAGE_KEY, JSON.stringify({
-        at: Date.now(),
-        projectPath: location.pathname.split('/-/')[0],
-      }));
-    } catch {
-      // A disabled session store only skips this optional Easter egg.
-    }
-  }
-
-  function consumeFridayMergeRequestCreation() {
-    if (!state.enabled || !isFridayAfterFour() || !isMergeRequest()) return false;
-    try {
-      const raw = window.sessionStorage.getItem(FRIDAY_MR_CREATE_STORAGE_KEY);
-      if (!raw) return false;
-      window.sessionStorage.removeItem(FRIDAY_MR_CREATE_STORAGE_KEY);
-      const pending = JSON.parse(raw);
-      const recent = Number.isFinite(pending?.at) && Date.now() - pending.at >= 0 && Date.now() - pending.at < 120000;
-      const sameProject = pending?.projectPath && location.pathname.startsWith(`${pending.projectPath}/-/merge_requests/`);
-      if (!recent || !sameProject) return false;
-      requestMascotMoment('friday');
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function celebrationReached(action, baseline, current) {
-    if (action === 'merged') return baseline.state !== 'merged' && current.state === 'merged';
-    const previousApprovers = new Set(baseline.approvers);
-    return current.approvers.some((approver) => !previousApprovers.has(approver));
-  }
-
-  function scheduleCelebrationPoll(action, baseline, attempt, runID) {
-    const delay = CELEBRATION_POLL_INTERVALS_MS[attempt];
-    if (delay == null) return;
-    state.celebrationPollTimer = setTimeout(async () => {
-      if (runID !== state.celebrationRunID || !state.enabled || !state.pageActive) return;
-      const navigation = globalThis.GoLensGoNavigation;
-      try {
-        const current = normalizeCelebrationStatus(await navigation.mergeRequestCelebrationStatus());
-        if (runID !== state.celebrationRunID || !state.enabled || !state.pageActive) return;
-        state.celebrationStatus = current;
-        if (celebrationReached(action, baseline, current)) {
-          state.celebrationPollTimer = null;
-          requestMascotMoment(isFridayAfterFour() ? 'friday' : action);
-          return;
-        }
-      } catch {
-        // GitLab may rerender or briefly reject requests while completing the action.
-      }
-      scheduleCelebrationPoll(action, baseline, attempt + 1, runID);
-    }, delay);
-  }
-
-  function armMergeRequestCelebration(action) {
-    if (!state.enabled || !state.pageActive || !state.celebrationStatus) return;
-    if (!globalThis.GoLensGoNavigation?.mergeRequestCelebrationStatus) return;
-    clearTimeout(state.celebrationPollTimer);
-    const runID = ++state.celebrationRunID;
-    scheduleCelebrationPoll(action, state.celebrationStatus, 0, runID);
-  }
-
-  function scheduleDiscussionPoll(baseline, attempt, runID) {
-    const delay = CELEBRATION_POLL_INTERVALS_MS[attempt];
-    if (delay == null) return;
-    state.discussionPollTimer = setTimeout(async () => {
-      if (runID !== state.discussionRunID || !state.enabled || !state.pageActive) return;
-      const navigation = globalThis.GoLensGoNavigation;
-      try {
-        const current = normalizeDiscussionStatus(await navigation.mergeRequestDiscussionStatus());
-        if (runID !== state.discussionRunID || !state.enabled || !state.pageActive) return;
-        state.discussionStatus = current;
-        if (baseline.unresolved > 0 && current.unresolved === 0) {
-          state.discussionPollTimer = null;
-          requestMascotMoment('resolved');
-          return;
-        }
-      } catch {
-        // GitLab may briefly rerender a thread while its resolved state is saved.
-      }
-      scheduleDiscussionPoll(baseline, attempt + 1, runID);
-    }, delay);
-  }
-
-  function armDiscussionCelebration() {
-    if (!state.enabled || !state.pageActive || !state.discussionStatus?.unresolved) return;
-    if (!globalThis.GoLensGoNavigation?.mergeRequestDiscussionStatus) return;
-    clearTimeout(state.discussionPollTimer);
-    const runID = ++state.discussionRunID;
-    scheduleDiscussionPoll(state.discussionStatus, 0, runID);
-  }
-
-  function onNativeMergeRequestActionClick(event) {
-    if (createMergeRequestActionForTarget(event.target)) {
-      rememberFridayMergeRequestCreation();
-      return;
-    }
-    if (discussionResolveActionForTarget(event.target)) armDiscussionCelebration();
-    const action = mergeRequestActionForTarget(event.target);
-    if (action) armMergeRequestCelebration(action);
-  }
-
   async function setEnabled(enabled, { persist = false } = {}) {
     state.enabled = enabled;
     state.settings = { ...state.settings, enabled };
@@ -1527,7 +1200,6 @@
     if (enabled && isMergeRequest()) {
       watchForRapidDiffs();
       globalThis.GoLensGoNavigation?.init();
-      await Promise.all([refreshCelebrationBaseline(), refreshDiscussionBaseline()]);
     } else {
       await disableGoLens();
     }
@@ -1557,7 +1229,7 @@
       if (runID !== state.fullPreloadRunID) return;
       state.fullPreload = { status: 'complete', message: 'Full project cached', progress: { phase: 'ready', percentage: 100 } };
       refreshPreloadStatus();
-      requestMascotMoment('pitstop');
+      triggerPitstopMoment();
     }).catch((error) => {
       if (runID !== state.fullPreloadRunID) return;
       state.fullPreload = { status: 'error', message: error.message || 'Full project cache failed', progress: null };
@@ -1640,7 +1312,6 @@
       void globalThis.GoLensShortcutCoach?.markShortcutUsed?.(action);
     }
   }, true);
-  document.addEventListener('click', onNativeMergeRequestActionClick, true);
   document.addEventListener('click', onShortcutCoachManualClick, true);
 
   async function toggleReviewFocus() {
@@ -1665,7 +1336,6 @@
     state.preloadCheckID++;
     state.preloadRunID++;
     state.fullPreloadRunID++;
-    cancelCelebrationActivity({ resetStatus: true });
     closeOnboarding();
     // The settings overlay is no longer closed from here: bootstrap.js
     // unmounts and re-mounts the whole page module graph on every
@@ -1701,7 +1371,6 @@
       await setEnabled(state.settings.enabled);
       await refreshPreloadStatus();
       await showFirstRunOnboarding();
-      consumeFridayMergeRequestCreation();
       return;
     }
 
@@ -1750,19 +1419,6 @@
     try {
       const { createOverlayRegistry } = await loadOverlayRegistryModule();
       overlayRegistry = createOverlayRegistry();
-      // closeSettingsOverlay() used to flush a queued mascot moment on its
-      // way out. That close path lives in page/features/settings-overlay.js
-      // now, which has no business knowing about this file's celebration
-      // state, so this file watches the registry's open->closed transition
-      // instead. closeOnboarding() still flushes inline for its own path;
-      // release() notifies synchronously, so this subscriber simply gets
-      // there first and leaves that one a harmless no-op.
-      overlayRegistry.subscribe((open) => {
-        if (open) return;
-        const queuedMoment = state.queuedMascotMoment;
-        state.queuedMascotMoment = '';
-        if (queuedMoment && state.enabled && state.pageActive) setTimeout(() => showMascotMoment(queuedMoment), 0);
-      });
     } catch {
       // Both the chrome.runtime.getURL and relative import fallbacks
       // failed (should not happen in production). Leave overlayRegistry

@@ -36,81 +36,13 @@ test('builds version-pinned Go documentation URLs for root and nested standard p
   }
 });
 
-test('reads merge and approval state from the authenticated GitLab endpoint', async () => {
-  const originalFetch = globalThis.fetch;
-  let request;
-  globalThis.fetch = async (input, options) => {
-    request = { input, options };
-    return {
-      ok: true,
-      async json() {
-        return {
-          state: 'merged',
-          approved_by: [
-            { user: { id: 17, username: 'reviewer' } },
-            { user: { username: 'fallback-reviewer' } },
-          ],
-        };
-      },
-    };
-  };
-  try {
-    assert.deepEqual(
-      await globalThis.GoLensGoNavigation.mergeRequestCelebrationStatus(),
-      { state: 'merged', approvers: ['17', 'fallback-reviewer'] },
-    );
-    assert.equal(
-      request.input,
-      'https://gitlab.example/api/v4/projects/group%2Fproject/merge_requests/42/approvals',
-    );
-    assert.equal(request.options.credentials, 'include');
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('counts unresolved merge request discussions across GitLab API pages', async () => {
-  const originalFetch = globalThis.fetch;
-  const requests = [];
-  const pages = [
-    {
-      next: '2',
-      discussions: [
-        { notes: [{ resolvable: true, resolved: false }] },
-        { notes: [{ resolvable: true, resolved: true }] },
-      ],
-    },
-    {
-      next: '',
-      discussions: [
-        { notes: [{ resolvable: false, resolved: false }] },
-        { notes: [{ resolvable: true, resolved: false }, { resolvable: true, resolved: true }] },
-      ],
-    },
-  ];
-  globalThis.fetch = async (input, options) => {
-    requests.push({ input, options });
-    const page = pages[requests.length - 1];
-    return {
-      ok: true,
-      headers: { get(name) { return name === 'x-next-page' ? page.next : ''; } },
-      async json() { return page.discussions; },
-    };
-  };
-  try {
-    assert.deepEqual(
-      await globalThis.GoLensGoNavigation.mergeRequestDiscussionStatus(),
-      { unresolved: 2 },
-    );
-    assert.deepEqual(requests.map((request) => request.input), [
-      'https://gitlab.example/api/v4/projects/group%2Fproject/merge_requests/42/discussions?per_page=100&page=1',
-      'https://gitlab.example/api/v4/projects/group%2Fproject/merge_requests/42/discussions?per_page=100&page=2',
-    ]);
-    assert.ok(requests.every((request) => request.options.credentials === 'include'));
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
+// Ticket 14: mergeRequestCelebrationStatus()/mergeRequestDiscussionStatus()
+// moved off go-navigation.js's globalThis contract into
+// page/features/celebration.js's own fetchCelebrationStatus/
+// fetchDiscussionStatus (duplicated, not bridged — see that module's header
+// comment). Their pagination/normalization logic is covered by
+// tests/celebration-internal.test.js; the fetch integration is covered by
+// tests/features-celebration.test.js.
 
 test('builds a Go documentation URL for versioned third-party modules', () => {
   assert.equal(helpers.packageDocumentationURL('github.com/gofrs/uuid/v5'), 'https://pkg.go.dev/github.com/gofrs/uuid/v5');
