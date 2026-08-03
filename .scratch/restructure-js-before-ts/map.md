@@ -38,17 +38,10 @@ migration. This map produces the spec and its tickets; it does not execute the r
 
 ## Not yet specified
 
-- Capability-by-capability migration tickets (steps 6–14 of the source plan: introduce interfaces
-  around existing code, refactor one capability at a time, move complexity behind deeper modules,
-  delete replaced code immediately after each migration, reassess abstractions after several
-  migrations). These can't be ticketed until target module boundaries, dependency rules, and public
-  interfaces (see frontier tickets below) are decided — the boundaries determine what the capabilities
-  and their migration order even are.
-- Whether this map's scope extends to actually sequencing/executing those capability migrations, or
-  stops once the spec is approved and hands off to a fresh execution effort. Revisit once the interface
-  design ticket resolves.
-- Follow-up test coverage, if the audit ticket finds gaps in characterisation coverage for critical
-  functionality that must be closed before refactoring can safely begin.
+- Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,
+  breakdown door de user goedgekeurd). De spec = de antwoorden van tickets 03+04 (geen apart
+  document, per user-besluit); de executievolgorde = de blocking-graph van 05–22. Uitvoering valt
+  binnen deze map. Frontier bij start: 05 en 06.
 
 ## Out of scope
 
