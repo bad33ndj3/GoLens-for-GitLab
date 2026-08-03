@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "proto-bootstrap-import (PROTOTYPE - throwaway)",
+  "version": "0.0.1",
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*"],
+      "js": ["bootstrap.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page/*"],
+      "matches": ["http://127.0.0.1/*"]
+    }
+  ]
+}
