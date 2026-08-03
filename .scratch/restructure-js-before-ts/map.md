@@ -32,6 +32,7 @@ migration. This map produces the spec and its tickets; it does not execute the r
 ## Decisions so far
 
 - [01 — Audit tests and docs against current features](issues/01-audit-tests-and-docs-against-current-features.md) — Docs mostly matched; fixed `domain.md`'s inaccurate `src/` layout and `AGENTS.md`'s missing `bench`/`package`/`release` commands. No coverage gaps found; nothing added to fog.
+- [02 — Model current dependency structure](issues/02-model-current-dependency-structure.md) — Full map in [02-dependency-map.md](issues/02-dependency-map.md). `go-navigation.js`/`content.js` are hub files carrying many unrelated features through one `state` object each; `go-semantic-core.js`/`go-semantic-cache.js` are clean leaf ES modules; `go-semantic-worker.js` is the sole bridge between them via one port-RPC channel. No true cycles; one near-cycle (`go-navigation.js` reads `content.js`'s DOM directly for one check); one dead contract (`golens-go-status` event, never listened to); policy/infra interleaving found in all five files.
 
 ## Not yet specified
 
