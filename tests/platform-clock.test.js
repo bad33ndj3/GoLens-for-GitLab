@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createClock } from '../page/platform/clock.js';
+import { createClock, createLegacyDebounceIdle } from '../page/platform/clock.js';
 
 // Deterministic control over global timers/idle callback so debounce
 // behavior can be asserted without sleeping.
@@ -121,4 +121,78 @@ test('debounceIdle(...).cancel() prevents a pending call from running', () => {
     fireOnlyTimeout();
     assert.equal(idleScheduled(), true);
   });
+});
+
+// createLegacyDebounceIdle(getClock) is the ticket-08 bridge for
+// go-navigation.js/content.js's own (test-swappable) `clock` object, which
+// has a different shape than createClock()'s instance above: raw
+// setTimeout/clearTimeout ids, no `now`. Its whole reason to exist is that
+// it re-reads `getClock()` on every invocation rather than binding to one
+// clock at creation time — a debounced function created against one clock
+// must still observe a later swap to a different clock (this is exactly
+// what content.js's `setClock()` relies on: it's called *after*
+// `schedulePageReconcile` already exists).
+function fakeLegacyClock() {
+  let nextId = 1;
+  const timeoutCallbacks = new Map();
+  let idleCallback = null;
+  return {
+    clock: {
+      setTimeout: (fn) => { const id = nextId++; timeoutCallbacks.set(id, fn); return id; },
+      clearTimeout: (id) => { timeoutCallbacks.delete(id); },
+      requestIdle: (fn) => { idleCallback = fn; return nextId++; },
+    },
+    pendingTimeoutCount: () => timeoutCallbacks.size,
+    fireOnlyTimeout: () => {
+      const [id, fn] = [...timeoutCallbacks.entries()][0];
+      timeoutCallbacks.delete(id);
+      fn();
+    },
+    idleScheduled: () => idleCallback !== null,
+    fireIdle: () => {
+      const fn = idleCallback;
+      idleCallback = null;
+      fn();
+    },
+  };
+}
+
+test('createLegacyDebounceIdle: debounces through the injected clock, same shape as go-navigation/content.js', () => {
+  const legacy = fakeLegacyClock();
+  const debounceIdle = createLegacyDebounceIdle(() => legacy.clock);
+  const calls = [];
+  const debounced = debounceIdle((...args) => calls.push(args), 20);
+
+  debounced('a');
+  debounced('b');
+  assert.equal(legacy.pendingTimeoutCount(), 1, 'a burst settles onto one pending timer');
+
+  legacy.fireOnlyTimeout();
+  assert.equal(legacy.idleScheduled(), true, 'the settled debounce defers through requestIdle');
+  assert.equal(calls.length, 0);
+
+  legacy.fireIdle();
+  assert.deepEqual(calls, [['b']], 'only the last call in the burst runs');
+});
+
+test('createLegacyDebounceIdle: a debounced function re-reads getClock() on every call, so a later clock swap is observed', () => {
+  const clockA = fakeLegacyClock();
+  const clockB = fakeLegacyClock();
+  let current = clockA.clock;
+  const debounceIdle = createLegacyDebounceIdle(() => current);
+  const calls = [];
+  // Created while clockA is current — mirrors content.js creating
+  // `schedulePageReconcile` at init() time, before any test calls setClock().
+  const debounced = debounceIdle((...args) => calls.push(args), 10);
+
+  // Swap the clock out from under the already-created debounced function.
+  current = clockB.clock;
+
+  debounced('x');
+  assert.equal(clockA.pendingTimeoutCount(), 0, 'the old clock never sees a call made after the swap');
+  assert.equal(clockB.pendingTimeoutCount(), 1, 'the new clock is used instead, without recreating the debounced function');
+
+  clockB.fireOnlyTimeout();
+  clockB.fireIdle();
+  assert.deepEqual(calls, [['x']]);
 });

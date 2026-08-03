@@ -22,25 +22,15 @@
     clock = overrides ? { ...defaultClock(), ...overrides } : defaultClock();
   }
 
-  // Debounces `fn` by `delayMs` of quiet time, then runs it through
-  // `requestIdleCallback` (falling back to an immediate call when the
-  // browser doesn't support it) so a burst of page mutations doesn't
-  // compete with rendering.
-  function debounceIdle(fn, delayMs) {
-    let timer = null;
-    const debounced = (...args) => {
-      if (timer !== null) clock.clearTimeout(timer);
-      timer = clock.setTimeout(() => {
-        timer = null;
-        clock.requestIdle(() => fn(...args));
-      }, delayMs);
-    };
-    debounced.cancel = () => {
-      if (timer !== null) clock.clearTimeout(timer);
-      timer = null;
-    };
-    return debounced;
-  }
+  // debounceIdle's implementation now lives in page/platform/clock.js
+  // (ticket 08 dedup — this body was byte-identical to go-navigation.js's
+  // copy). It's populated inside init() via loadClockModule() below since
+  // `import()` can't resolve synchronously at module top level; `clock`
+  // above stays local (test-swappable via setClock, unchanged) and is read
+  // dynamically on every debounced call via the getter passed to
+  // createLegacyDebounceIdle, so setClock() still affects an
+  // already-created debounced function exactly as before.
+  let debounceIdle = null;
 
   // The one seam onto `chrome.storage` (platform/settings-store, ticket 10).
   // Loaded via dynamic `import()` since this file still runs as a classic
@@ -56,6 +46,16 @@
       return await import(chrome.runtime.getURL('page/platform/settings-store.js'));
     } catch {
       return await import('./page/platform/settings-store.js');
+    }
+  }
+
+  // Same dynamic-`import()` bridge as settings-store above, for the
+  // debounceIdle algorithm centralized in page/platform/clock.js (ticket 08).
+  async function loadClockModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/clock.js'));
+    } catch {
+      return await import('./page/platform/clock.js');
     }
   }
 
@@ -2036,12 +2036,29 @@
     reconcileOverviewDiscussionLineLinks();
   }
 
-  const schedulePageReconcile = debounceIdle(() => {
-    reconcilePage().catch(() => undefined);
-  }, RECONCILE_DEBOUNCE_MS);
+  // Populated at the top of init() below, once loadClockModule() resolves —
+  // `import()` can't resolve synchronously here at module top level (see
+  // debounceIdle comment above). __test exports a thunk (further down) so
+  // the current value is always used, even though it's read before init()
+  // finishes.
+  let schedulePageReconcile = null;
 
   async function init() {
     if (!isGitLab()) return;
+    try {
+      const { createLegacyDebounceIdle } = await loadClockModule();
+      debounceIdle = createLegacyDebounceIdle(() => clock);
+      schedulePageReconcile = debounceIdle(() => {
+        reconcilePage().catch(() => undefined);
+      }, RECONCILE_DEBOUNCE_MS);
+    } catch {
+      // Both the chrome.runtime.getURL and relative import fallbacks failed
+      // (should not happen in production, but init() is fire-and-forget —
+      // an unhandled rejection here would leave the whole content script
+      // inert). Degrade to an undebounced scheduler rather than never
+      // reconciling at all.
+      schedulePageReconcile = () => { reconcilePage().catch(() => undefined); };
+    }
     try {
       const { createSettingsStore } = await loadSettingsStoreModule();
       settingsStore = createSettingsStore();
@@ -2134,7 +2151,7 @@
     }
   });
 
-  globalThis.GoLensContent = { __test: { setClock, schedulePageReconcile, reconcileCount: () => state.reconcileCount } };
+  globalThis.GoLensContent = { __test: { setClock, schedulePageReconcile: (...args) => schedulePageReconcile(...args), reconcileCount: () => state.reconcileCount } };
 
   init();
 })();
