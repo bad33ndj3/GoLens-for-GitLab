@@ -1,9 +1,19 @@
 const DATABASE_NAME = 'golens-go-semantic-cache';
 const DATABASE_VERSION = 3;
-const CACHE_FORMAT_VERSION = 3;
+// Bumped from 3 to 4: source records now carry a `verified` marker written
+// once at write time (see `stageSnapshotSources`) instead of being
+// re-hashed against their Git blob ID on every read/status check. The
+// format version is embedded in every store key (`sourceID`/`packageID`/
+// `projectID`/`mergeRequestID`), so records written under the previous
+// version simply live under different keys and fall through the existing
+// format-mismatch path as "absent" — no migration code, no lazy upgrade.
+const CACHE_FORMAT_VERSION = 4;
 const SOURCES = 'sources';
 const PACKAGES = 'packages';
 const PROJECTS = 'projects';
+// Shared across snapshot construction and statistics instead of a fresh
+// `TextEncoder` per file/record.
+const ENCODER = new TextEncoder();
 
 function key(...parts) {
   return JSON.stringify(parts);
@@ -76,15 +86,14 @@ function normalizeEntries(entries) {
 function snapshotFiles(files) {
   return files.map(({ path, blobId = '', source }) => {
     const entry = normalizeEntry({ path, blobId });
-    return { ...entry, source, bytes: new TextEncoder().encode(source).byteLength };
+    return { ...entry, source, bytes: ENCODER.encode(source).byteLength };
   });
 }
 
 async function gitBlobID(source, blobId) {
   if (typeof source !== 'string' || !validBlobID(blobId) || !globalThis.crypto?.subtle) return '';
-  const encoder = new TextEncoder();
-  const content = encoder.encode(source);
-  const header = encoder.encode(`blob ${content.byteLength}\0`);
+  const content = ENCODER.encode(source);
+  const header = ENCODER.encode(`blob ${content.byteLength}\0`);
   const object = new Uint8Array(header.byteLength + content.byteLength);
   object.set(header);
   object.set(content, header.byteLength);
@@ -98,6 +107,21 @@ async function validSourceRecord(entry, record) {
   return await gitBlobID(record.source, entry.blobId) === entry.blobId;
 }
 
+// A source record is trusted on the read/status path purely by its stored
+// `verified` marker (written once, at write time, by `stageSnapshotSources`)
+// and format version — no re-hashing against the Git blob ID on every read.
+function verifiedRecord(record) {
+  return !!record && record.format === CACHE_FORMAT_VERSION && record.verified === true;
+}
+
+function isCurrentManifest(manifest) {
+  return !!manifest && manifest.complete === true && manifest.format === CACHE_FORMAT_VERSION;
+}
+
+function entriesComplete(entries, records) {
+  return entries.every((_entry, index) => verifiedRecord(records[index]));
+}
+
 function sourceStats(store) {
   return new Promise((resolve, reject) => {
     let sources = 0;
@@ -107,7 +131,7 @@ function sourceStats(store) {
       const cursor = request.result;
       if (!cursor) return resolve({ sources, bytes });
       sources++;
-      bytes += cursor.value.bytes || new TextEncoder().encode(cursor.value.source || '').byteLength;
+      bytes += cursor.value.bytes || ENCODER.encode(cursor.value.source || '').byteLength;
       cursor.continue();
     };
     request.onerror = () => reject(request.error || new Error('Unable to read semantic cache statistics'));
@@ -184,10 +208,9 @@ export class GoSemanticSourceCache {
 
   async writeMergeRequest({ origin, project, mergeRequest, ref, packagePaths, searchStatus = 'complete' }) {
     const paths = [...new Set(packagePaths || [])].sort();
-    for (const packagePath of paths) {
-      const status = await this.packageStatus({ origin, project, ref, packagePath });
-      if (status.status !== 'complete') throw new Error(`Cannot complete MR cache with missing package ${packagePath || '.'}`);
-    }
+    const statuses = await this.packageStatusesFor({ origin, project, ref, packagePaths: paths });
+    const incomplete = paths.find((packagePath) => statuses.get(packagePath)?.status !== 'complete');
+    if (incomplete !== undefined) throw new Error(`Cannot complete MR cache with missing package ${incomplete || '.'}`);
     const manifest = {
       id: mergeRequestID({ origin, project, mergeRequest, ref }),
       origin,
@@ -236,17 +259,20 @@ export class GoSemanticSourceCache {
     }
     const id = mergeRequestID({ origin, project, mergeRequest, ref });
     const manifest = await this.readManifest(PROJECTS, id);
-    if (!manifest?.complete || manifest.format !== CACHE_FORMAT_VERSION) return { status: 'missing' };
-    for (const packagePath of manifest.packagePaths || []) {
-      const status = await this.packageStatus({ origin, project, ref, packagePath });
-      if (status.status !== 'complete') return { status: 'missing' };
+    if (!isCurrentManifest(manifest)) return { status: 'missing' };
+    const packagePaths = manifest.packagePaths || [];
+    // One batched status check across every package the MR touches instead
+    // of a sequential `packageStatus` round trip per package.
+    const statuses = await this.packageStatusesFor({ origin, project, ref, packagePaths });
+    if (packagePaths.some((packagePath) => statuses.get(packagePath)?.status !== 'complete')) {
+      return { status: 'missing' };
     }
     return {
       status: 'complete',
       format: manifest.format,
       coverage: 'related',
       searchStatus: manifest.searchStatus || 'complete',
-      packages: manifest.packagePaths?.length || 0,
+      packages: packagePaths.length || 0,
     };
   }
 
@@ -263,14 +289,52 @@ export class GoSemanticSourceCache {
   }
 
   async packageStatus({ origin, project, ref, packagePath }) {
-    const scope = { origin, project, ref, packagePath };
-    if (await this.hasSnapshot(PACKAGES, packageID(scope))) return { status: 'complete', format: CACHE_FORMAT_VERSION };
+    const statuses = await this.packageStatusesFor({ origin, project, ref, packagePaths: [packagePath] });
+    return statuses.get(packagePath);
+  }
+
+  // Batched status check for any number of packages against the same
+  // (origin, project, ref) scope. Reads each package's own manifest in one
+  // transaction; only the packages whose own manifest is missing or stale
+  // fall back to the project manifest, and that manifest is read at most
+  // once for the whole batch rather than once per package. All source
+  // records referenced by any package are then read in a single further
+  // transaction. Used by `packageStatus` (batch of one), `mergeRequestStatus`
+  // and `writeMergeRequest` so none of them pay a storage round trip per
+  // package.
+  async packageStatusesFor({ origin, project, ref, packagePaths }) {
+    const paths = [...new Set(packagePaths || [])];
     const projectScope = { origin, project, ref };
-    const matchesPackage = (entry) => dirname(entry.path) === packagePath;
-    if (await this.hasSnapshot(PROJECTS, projectID(projectScope), matchesPackage, true)) {
-      return { status: 'complete', format: CACHE_FORMAT_VERSION };
+    const packageManifests = await this.readManifests(
+      PACKAGES,
+      paths.map((packagePath) => packageID({ ...projectScope, packagePath })),
+    );
+
+    const needsProjectFallback = packageManifests.some((manifest) => !isCurrentManifest(manifest));
+    const [projectManifest] = needsProjectFallback ? await this.readManifests(PROJECTS, [projectID(projectScope)]) : [];
+
+    const plans = paths.map((packagePath, index) => {
+      const manifest = packageManifests[index];
+      if (isCurrentManifest(manifest)) {
+        const entries = manifest.entries || [];
+        return { packagePath, requireEntries: false, entries };
+      }
+      const matchesPackage = (entry) => dirname(entry.path) === packagePath;
+      const entries = isCurrentManifest(projectManifest) ? (projectManifest.entries || []).filter(matchesPackage) : [];
+      return { packagePath, requireEntries: true, entries };
+    }).map((plan) => ({ ...plan, sourceIDs: plan.entries.map((entry) => sourceID({ ...projectScope, ...entry })) }));
+
+    const allIDs = plans.flatMap((plan) => plan.sourceIDs);
+    const allRecords = await this.readSourceRecords(allIDs);
+    const recordByID = new Map(allIDs.map((id, index) => [id, allRecords[index]]));
+
+    const statuses = new Map();
+    for (const plan of plans) {
+      const records = plan.sourceIDs.map((id) => recordByID.get(id));
+      const complete = (!plan.requireEntries || plan.entries.length > 0) && entriesComplete(plan.entries, records);
+      statuses.set(plan.packagePath, complete ? { status: 'complete', format: CACHE_FORMAT_VERSION } : { status: 'missing' });
     }
-    return { status: 'missing' };
+    return statuses;
   }
 
   async prepareSources({ origin, project, ref, files }) {
@@ -303,7 +367,7 @@ export class GoSemanticSourceCache {
         sources: this.memory[SOURCES].size,
         packages: this.memory[PACKAGES].size,
         projects: [...this.memory[PROJECTS].values()].filter((manifest) => !manifest.mergeRequest).length,
-        bytes: [...this.memory[SOURCES].values()].reduce((total, file) => total + (file.bytes || new TextEncoder().encode(file.source).byteLength), 0),
+        bytes: [...this.memory[SOURCES].values()].reduce((total, file) => total + (file.bytes || ENCODER.encode(file.source).byteLength), 0),
       };
     }
 
@@ -377,9 +441,19 @@ export class GoSemanticSourceCache {
   }
 
   async readManifest(storeName, id) {
-    if (!this.databasePromise) return this.memory[storeName].get(id);
+    return (await this.readManifests(storeName, [id]))[0];
+  }
+
+  async readManifests(storeName, ids) {
+    if (!ids.length) return [];
+    if (!this.databasePromise) return ids.map((id) => this.memory[storeName].get(id));
     const database = await this.databasePromise;
-    return requestResult(database.transaction(storeName, 'readonly').objectStore(storeName).get(id));
+    const transaction = database.transaction(storeName, 'readonly');
+    const complete = transactionResult(transaction);
+    const store = transaction.objectStore(storeName);
+    const records = await Promise.all(ids.map((id) => requestResult(store.get(id))));
+    await complete;
+    return records;
   }
 
   async writeManifest(storeName, manifest) {
@@ -412,6 +486,10 @@ export class GoSemanticSourceCache {
       source: file.source,
       bytes: file.bytes,
       format: CACHE_FORMAT_VERSION,
+      // Verification happens here, once, at write time. Read and status
+      // paths trust this marker instead of re-hashing the source against
+      // its Git blob ID on every call.
+      verified: true,
     }));
     await this.writeSourceRecords(records);
     const available = await this.readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
@@ -436,52 +514,34 @@ export class GoSemanticSourceCache {
     await complete;
   }
 
+  // Side-effect-free: trusts each source record's `verified` marker (set
+  // once at write time) and its format version instead of re-hashing the
+  // source against its Git blob ID, and never deletes anything it finds
+  // stale — pruning of records that fail verification belongs to the
+  // explicitly-mutating operations (`prepareSources`, `stageSnapshotSources`),
+  // not to a read.
   async readSnapshot(storeName, id, predicate = () => true) {
-    if (!this.databasePromise) {
-      const manifest = this.memory[storeName].get(id);
-      if (!manifest?.complete || manifest.format !== CACHE_FORMAT_VERSION) return null;
-      const entries = (manifest.entries || []).filter(predicate);
-      const files = entries.map((entry) => this.memory[SOURCES].get(sourceID({ ...manifest, ...entry })));
-      return await this.validateSourceRecords(manifest, entries, files)
-        ? { modulePath: manifest.modulePath, files: files.map(({ source }, index) => ({ path: entries[index].path, source })), format: manifest.format }
-        : null;
-    }
-
-    const database = await this.databasePromise;
-    const manifest = await requestResult(database.transaction(storeName, 'readonly').objectStore(storeName).get(id));
-    if (!manifest?.complete || manifest.format !== CACHE_FORMAT_VERSION) return null;
+    const manifest = await this.readManifest(storeName, id);
+    if (!isCurrentManifest(manifest)) return null;
     const entries = (manifest.entries || []).filter(predicate);
-    const transaction = database.transaction(SOURCES, 'readonly');
-    const complete = transactionResult(transaction);
-    const sources = transaction.objectStore(SOURCES);
-    const files = await Promise.all(entries.map((entry) => requestResult(sources.get(sourceID({ ...manifest, ...entry })))));
-    await complete;
-    return await this.validateSourceRecords(manifest, entries, files)
-      ? { modulePath: manifest.modulePath, files: files.map(({ source }, index) => ({ path: entries[index].path, source })), format: manifest.format }
-      : null;
+    const files = await this.readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
+    if (!entriesComplete(entries, files)) return null;
+    return {
+      modulePath: manifest.modulePath,
+      files: files.map(({ source }, index) => ({ path: entries[index].path, source })),
+      format: manifest.format,
+    };
   }
 
+  // Same trust-the-marker, no-mutation contract as `readSnapshot`, without
+  // materializing file contents.
   async hasSnapshot(storeName, id, predicate = () => true, requireEntries = false) {
-    if (!this.databasePromise) {
-      const manifest = this.memory[storeName].get(id);
-      if (!manifest?.complete || manifest.format !== CACHE_FORMAT_VERSION) return false;
-      const entries = (manifest.entries || []).filter(predicate);
-      if (requireEntries && !entries.length) return false;
-      const files = entries.map((entry) => this.memory[SOURCES].get(sourceID({ ...manifest, ...entry })));
-      return this.validateSourceRecords(manifest, entries, files);
-    }
-
-    const database = await this.databasePromise;
-    const manifest = await requestResult(database.transaction(storeName, 'readonly').objectStore(storeName).get(id));
-    if (!manifest?.complete || manifest.format !== CACHE_FORMAT_VERSION) return false;
+    const manifest = await this.readManifest(storeName, id);
+    if (!isCurrentManifest(manifest)) return false;
     const entries = (manifest.entries || []).filter(predicate);
     if (requireEntries && !entries.length) return false;
-    const transaction = database.transaction(SOURCES, 'readonly');
-    const complete = transactionResult(transaction);
-    const sources = transaction.objectStore(SOURCES);
-    const files = await Promise.all(entries.map((entry) => requestResult(sources.get(sourceID({ ...manifest, ...entry })))));
-    await complete;
-    return this.validateSourceRecords(manifest, entries, files);
+    const files = await this.readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
+    return entriesComplete(entries, files);
   }
 }
 
