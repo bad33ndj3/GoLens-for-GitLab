@@ -64,6 +64,22 @@ function mountFixture(html) {
   return window;
 }
 
+// Releasing a fixture requires `happyDOM.close()` and nothing less: the
+// synchronous `window.close()` leaves the document reachable, and so does
+// dropping every reference to it from here (measured — assigning
+// `globalThis.document` alone is enough to pin it, and `delete` does not
+// unpin it). Each un-released full-size (60x120) fixture keeps ~1.3 GB
+// resident for the rest of the run; three of them in a row exhausted the
+// default V8 heap before the large semantic-core cases could run. This is a
+// `happy-dom` teardown characteristic of these benchmarks, not a retention
+// bug in `go-navigation.js` — the same growth occurs with no helper called
+// at all; see ticket 24.
+async function releaseFixture({ window }) {
+  delete globalThis.document;
+  delete globalThis.NodeFilter;
+  await window.happyDOM.close();
+}
+
 async function fileContextForSetup() {
   const helpers = await loadGoNavigation();
   const html = buildDiffFixtureHTML({ fileCount: FULL_FILE_COUNT, rowsPerFile: FULL_ROWS_PER_FILE });
@@ -75,7 +91,7 @@ async function fileContextForSetup() {
   const context = helpers.fileContextFor(cell);
   assert.ok(context, 'expected fileContextFor to resolve a file context');
   assert.match(context.path, /\.go$/);
-  return { helpers, cell };
+  return { helpers, cell, window };
 }
 
 async function codeCellForSetup() {
@@ -88,7 +104,7 @@ async function codeCellForSetup() {
   assert.ok(span, 'expected an identifier span inside a diff code cell');
   const cell = helpers.codeCellFor(span);
   assert.ok(cell, 'expected codeCellFor to resolve the containing code cell');
-  return { helpers, span };
+  return { helpers, span, window };
 }
 
 async function caretAtPointSetup() {
@@ -113,7 +129,7 @@ async function caretAtPointSetup() {
   window.document.caretPositionFromPoint = () => ({ offsetNode: textNode, offset: 0 });
   const hit = helpers.caretAtPoint(cell, 0, 0);
   assert.ok(hit, 'expected caretAtPoint to resolve an identifier at the stubbed caret position');
-  return { helpers, cell };
+  return { helpers, cell, window };
 }
 
 async function occurrenceRangesSetup() {
@@ -124,7 +140,7 @@ async function occurrenceRangesSetup() {
   globalThis.NodeFilter = window.NodeFilter;
   const occurrences = helpers.occurrenceRanges('Client');
   assert.ok(occurrences.length > 0, 'expected at least one "Client" occurrence in the fixture');
-  return { helpers };
+  return { helpers, window };
 }
 
 export const benchmarks = [
@@ -132,6 +148,7 @@ export const benchmarks = [
     name: `fileContextFor x1000 (uncached, ${FULL_FILE_COUNT}x${FULL_ROWS_PER_FILE} diff, un-throttled mousemove path)`,
     category: 'diff-dom',
     setup: fileContextForSetup,
+    teardown: releaseFixture,
     run: ({ helpers, cell }) => {
       for (let index = 0; index < 1000; index++) helpers.fileContextFor(cell);
     },
@@ -140,6 +157,7 @@ export const benchmarks = [
     name: `codeCellFor x1000 (uncached, ${FULL_FILE_COUNT}x${FULL_ROWS_PER_FILE} diff, hit-test path)`,
     category: 'diff-dom',
     setup: codeCellForSetup,
+    teardown: releaseFixture,
     run: ({ helpers, span }) => {
       for (let index = 0; index < 1000; index++) helpers.codeCellFor(span);
     },
@@ -148,6 +166,7 @@ export const benchmarks = [
     name: `caretAtPoint x1000 (uncached, ${FULL_FILE_COUNT}x${FULL_ROWS_PER_FILE} diff, hover hit-test path, stubbed browser caret hit-test)`,
     category: 'diff-dom',
     setup: caretAtPointSetup,
+    teardown: releaseFixture,
     run: ({ helpers, cell }) => {
       for (let index = 0; index < 1000; index++) helpers.caretAtPoint(cell, 0, 0);
     },
@@ -158,6 +177,7 @@ export const benchmarks = [
     iterations: SMOKE ? 1 : 4,
     warmup: SMOKE ? 0 : 1,
     setup: occurrenceRangesSetup,
+    teardown: releaseFixture,
     run: ({ helpers }) => {
       const occurrences = helpers.occurrenceRanges('Client');
       assert.ok(occurrences.length > 0);
