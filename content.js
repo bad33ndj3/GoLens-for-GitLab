@@ -4,8 +4,6 @@
   const ONBOARDING_VERSION = 11;
   const ONBOARDING_STORAGE_KEY = 'golensOnboardingVersion';
   const FRIDAY_MR_CREATE_STORAGE_KEY = 'golensFridayMergeRequestCreation';
-  const FULL_FILE_EXPANSION_TIMEOUT_MS = 15000;
-  const FULL_FILE_EXPANSION_LIMIT = 500;
   const CELEBRATION_POLL_INTERVALS_MS = [250, 500, 750, 1000, 1500, 2000, 2500];
   const RECONCILE_DEBOUNCE_MS = 50;
   // Injectable time source (test-only) so debounce tests are deterministic
@@ -99,7 +97,6 @@
     // loadOverlayRegistryModule's failure handling).
     onboardingOverlayRelease: null,
     settingsOverlayRelease: null,
-    autoCollapsedGeneratedFolders: new Set(),
     celebrationStatus: null,
     celebrationRunID: 0,
     celebrationPollTimer: null,
@@ -195,114 +192,17 @@
     setTimeout(() => observer.disconnect(), 15000);
   }
 
-  function generatedFilesDocumentationLink(warning) {
-    return [...warning.querySelectorAll('a[href]')].some((link) => {
-      try {
-        const url = new URL(link.getAttribute('href'), location.href);
-        return url.hash === '#collapse-generated-files'
-          && /\/help\/user\/project\/merge_requests\/changes(?:\.(?:html|md))?$/.test(url.pathname);
-      } catch {
-        return false;
-      }
-    });
-  }
-
-  function isGeneratedCollapsedDiff(diffFile) {
-    const warnings = diffFile.querySelectorAll(
-      '[data-testid="diff-file-warning"], .collapsed-file-warning, .rd-no-preview'
-    );
-    return [...warnings].some((warning) =>
-      warning.textContent.includes('.gitattributes') && generatedFilesDocumentationLink(warning)
-    );
-  }
-
-  function diffFileRoots() {
-    return document.querySelectorAll(
-      'diff-file[data-testid="rd-diff-file"], diff-file[data-file-data], .diff-file.file-holder'
-    );
-  }
-
+  // Still used by reconcileGoTestFileRows() below (unrelated feature, out of
+  // this ticket's scope); the generated-files-specific callers of this
+  // function moved to page/features/generated-files.js (ticket 13), which
+  // carries its own copy (small pure helper, cheap to duplicate rather than
+  // share across the classic-script/ES-module boundary).
   function normalizeRepositoryPath(path) {
     return (path || '')
       .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
       .trim()
       .replace(/\s*\/\s*/g, '/')
       .replace(/^\/+|\/+$/g, '');
-  }
-
-  function diffFilePath(diffFile) {
-    try {
-      const fileData = JSON.parse(diffFile.dataset.fileData || '{}');
-      const dataPath = normalizeRepositoryPath(fileData.new_path || fileData.old_path);
-      if (dataPath) return dataPath;
-    } catch {
-      // Legacy diffs and incomplete Rapid Diff fragments use DOM path metadata.
-    }
-    const dataPath = normalizeRepositoryPath(diffFile.dataset.path);
-    if (dataPath) return dataPath;
-    const title = diffFile.querySelector(
-      '[data-testid="file-title"], .file-title-name, .rd-diff-file-link, [data-testid="rd-diff-file-header"] a'
-    );
-    return normalizeRepositoryPath(title?.textContent);
-  }
-
-  function folderContainsPath(folderPath, filePath) {
-    return filePath.startsWith(`${folderPath}/`);
-  }
-
-  function reconcileGeneratedFileFolders(allFilePaths, hiddenFilePaths) {
-    const allPaths = [...allFilePaths];
-    const hiddenPaths = [...hiddenFilePaths];
-    document.querySelectorAll('[data-testid="file-row"].folder').forEach((folder) => {
-      const folderPath = normalizeRepositoryPath(folder.getAttribute('title'));
-      const containsHidden = folderPath && hiddenPaths.some((path) => folderContainsPath(folderPath, path));
-      const containsVisible = folderPath && allPaths.some((path) =>
-        folderContainsPath(folderPath, path) && !hiddenFilePaths.has(path)
-      );
-      const onlyContainsHidden = Boolean(containsHidden && !containsVisible);
-      folder.toggleAttribute('data-golens-generated-folder', onlyContainsHidden);
-      if (!onlyContainsHidden || state.autoCollapsedGeneratedFolders.has(folderPath)) return;
-      state.autoCollapsedGeneratedFolders.add(folderPath);
-      if (folder.getAttribute('aria-expanded') === 'true') folder.click();
-    });
-  }
-
-  function restoreGeneratedDiffFiles() {
-    document.querySelectorAll('[data-golens-generated-hidden]').forEach((diffFile) => {
-      diffFile.removeAttribute('data-golens-generated-hidden');
-    });
-    document.querySelectorAll('[data-golens-generated-file-row]').forEach((fileRow) => {
-      fileRow.removeAttribute('data-golens-generated-file-row');
-    });
-    document.querySelectorAll('[data-golens-generated-folder]').forEach((folder) => {
-      folder.removeAttribute('data-golens-generated-folder');
-    });
-    state.autoCollapsedGeneratedFolders.clear();
-  }
-
-  function reconcileGeneratedDiffFiles() {
-    if (!state.enabled || !state.settings.hideGeneratedFiles || !isMergeRequestDiff()) {
-      restoreGeneratedDiffFiles();
-      return;
-    }
-    const hiddenFileHashes = new Set();
-    const allFilePaths = new Set();
-    const hiddenFilePaths = new Set();
-    diffFileRoots().forEach((diffFile) => {
-      const hidden = isGeneratedCollapsedDiff(diffFile);
-      const filePath = diffFilePath(diffFile);
-      diffFile.toggleAttribute('data-golens-generated-hidden', hidden);
-      if (hidden && diffFile.id) hiddenFileHashes.add(diffFile.id);
-      if (filePath) allFilePaths.add(filePath);
-      if (hidden && filePath) hiddenFilePaths.add(filePath);
-    });
-    document.querySelectorAll('[data-file-row]').forEach((fileRow) => {
-      fileRow.toggleAttribute(
-        'data-golens-generated-file-row',
-        hiddenFileHashes.has(fileRow.dataset.fileRow)
-      );
-    });
-    reconcileGeneratedFileFolders(allFilePaths, hiddenFilePaths);
   }
 
   function restoreGoTestFileRows() {
@@ -375,218 +275,6 @@
     }
     document.querySelectorAll('[data-testid="discussion-content"].js-discussion-container')
       .forEach(mountOverviewDiscussionLineLink);
-  }
-
-  function fullFileIcon() {
-    return `
-      <svg class="gitlab-lens-full-file-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 1.75h10M3 14.25h10M8 3.25v3.5m0-3.5L6.25 5M8 3.25 9.75 5M8 12.75v-3.5m0 3.5L6.25 11M8 12.75 9.75 11"></path>
-      </svg>
-      <svg class="gitlab-lens-changes-only-icon" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 1.75h10M3 14.25h10M8 6.75v-3.5m0 3.5L6.25 5M8 6.75 9.75 5M8 9.25v3.5m0-3.5L6.25 11M8 9.25 9.75 11"></path>
-      </svg>
-      <svg class="gitlab-lens-full-file-spinner" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="8" cy="8" r="5.5"></circle>
-      </svg>
-    `;
-  }
-
-  function setFullFileButtonState(button, { mode = 'full', label, busy = false } = {}) {
-    const defaultLabel = mode === 'changes' ? 'Show changes only' : mode === 'complete' ? 'Full file shown' : 'Show full file';
-    const accessibleLabel = label || defaultLabel;
-    button.dataset.mode = mode;
-    button.dataset.state = busy ? 'busy' : mode === 'complete' ? 'complete' : 'idle';
-    button.disabled = busy || mode === 'complete';
-    button.toggleAttribute('aria-busy', busy);
-    button.title = busy ? 'Expanding full file…' : accessibleLabel;
-    button.setAttribute('aria-label', busy ? 'Expanding full file' : accessibleLabel);
-  }
-
-  function createFullFileButton({ mode = 'full', label, renderer = 'fallback' } = {}) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'gitlab-lens-full-file-button';
-    button.dataset.golensFullFile = '';
-    button.dataset.renderer = renderer;
-    button.innerHTML = fullFileIcon();
-    setFullFileButtonState(button, { mode, label });
-    return button;
-  }
-
-  function rapidFullFileItem(diffFile) {
-    const script = diffFile.querySelector('[data-options-menu] script[type="application/json"]');
-    if (!script?.textContent) return null;
-    try {
-      const findItem = (items) => {
-        for (const item of items || []) {
-          if (item?.extraAttrs?.['data-click'] === 'showFullFile') return item;
-          const nested = findItem(item?.items);
-          if (nested) return nested;
-        }
-        return null;
-      };
-      return findItem(JSON.parse(script.textContent));
-    } catch {
-      return null;
-    }
-  }
-
-  function rapidViewerIsText(diffFile) {
-    try {
-      return JSON.parse(diffFile.dataset.fileData || '{}').viewer?.startsWith('text_') || false;
-    } catch {
-      return false;
-    }
-  }
-
-  function expansionControls(diffFile) {
-    const selectors = [
-      '.js-unfold-all:not(:disabled)',
-      '[data-click="expandLines"][data-expand-direction]:not(:disabled)',
-      '.js-unfold:not(:disabled)',
-      '.js-unfold-down:not(:disabled)',
-    ];
-    return selectors.flatMap((selector) => [...diffFile.querySelectorAll(selector)]);
-  }
-
-  function diffLineCount(diffFile) {
-    return diffFile.querySelectorAll('tr, .diff-grid-row, [data-hunk-lines]').length;
-  }
-
-  function waitForExpansionMutation(diffFile, control, button) {
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const initialLineCount = diffLineCount(diffFile);
-      const finish = (callback, value) => {
-        if (settled) return;
-        settled = true;
-        observer.disconnect();
-        clearTimeout(timeout);
-        callback(value);
-      };
-      const observer = new MutationObserver(() => {
-        const cancelled = !state.enabled || !diffFile.isConnected || !button.isConnected;
-        const expanded = !control.isConnected || diffLineCount(diffFile) !== initialLineCount;
-        if (!cancelled && !expanded) return;
-        finish(resolve);
-      });
-      observer.observe(diffFile, { childList: true, subtree: true });
-      const timeout = setTimeout(() => finish(reject, new Error('Timed out while expanding diff lines.')), FULL_FILE_EXPANSION_TIMEOUT_MS);
-    });
-  }
-
-  async function expandAllHunks(diffFile, button) {
-    let expansions = 0;
-    while (state.enabled && diffFile.isConnected && button.isConnected) {
-      const control = expansionControls(diffFile)[0];
-      if (!control) {
-        setFullFileButtonState(button, { mode: 'complete' });
-        return;
-      }
-      if (++expansions > FULL_FILE_EXPANSION_LIMIT) throw new Error('Too many diff expansion steps.');
-      const progress = waitForExpansionMutation(diffFile, control, button);
-      control.click();
-      await progress;
-    }
-  }
-
-  function visibleLegacyFullFileAction(optionsButton) {
-    const controlled = optionsButton.getAttribute('aria-controls');
-    const scopes = [
-      controlled ? document.getElementById(controlled) : null,
-      optionsButton.closest('[data-testid="file-title-container"]'),
-      ...document.querySelectorAll('[role="menu"]'),
-    ].filter(Boolean);
-    for (const scope of scopes) {
-      const action = [...scope.querySelectorAll('button, [role="menuitem"]')].find((candidate) =>
-        /^(show full file|show changes only)$/i.test(candidate.textContent.trim())
-      );
-      if (action) return action;
-    }
-    return null;
-  }
-
-  async function waitForLegacyFullFileAction(optionsButton) {
-    const deadline = Date.now() + 1500;
-    while (Date.now() < deadline) {
-      const action = visibleLegacyFullFileAction(optionsButton);
-      if (action) return action;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    return null;
-  }
-
-  async function runLegacyFullFileAction(diffFile, button) {
-    if (button.dataset.state === 'busy') return;
-    setFullFileButtonState(button, { mode: button.dataset.mode, busy: true });
-    try {
-      const optionsButton = diffFile.querySelector('[data-testid="options-dropdown-button"]');
-      if (optionsButton) {
-        optionsButton.click();
-        const nativeAction = await waitForLegacyFullFileAction(optionsButton);
-        if (nativeAction) {
-          const showingFullFile = /^show full file$/i.test(nativeAction.textContent.trim());
-          nativeAction.click();
-          const mode = showingFullFile ? 'changes' : 'full';
-          diffFile.dataset.golensFullFileMode = mode;
-          setFullFileButtonState(button, { mode });
-          return;
-        }
-        optionsButton.click();
-      }
-      if (button.dataset.mode === 'changes') throw new Error('Show changes only is unavailable.');
-      await expandAllHunks(diffFile, button);
-    } catch (error) {
-      if (!button.isConnected) return;
-      setFullFileButtonState(button, { mode: button.dataset.mode, label: 'Could not expand full file' });
-      button.dataset.error = error.message || String(error);
-    }
-  }
-
-  function mountRapidFullFileButton(diffFile) {
-    if (diffFile.querySelector('[data-golens-full-file]')) return;
-    const nativeItem = rapidFullFileItem(diffFile);
-    const hasFallback = expansionControls(diffFile).length > 0;
-    if ((!nativeItem && !hasFallback) || (!rapidViewerIsText(diffFile) && !hasFallback)) return;
-    const options = diffFile.querySelector('.rd-diff-file-options-menu');
-    const info = options?.parentElement || diffFile.querySelector('.rd-diff-file-info');
-    if (!info) return;
-    const mode = nativeItem?.extraAttrs?.['data-full'] ? 'changes' : 'full';
-    const button = createFullFileButton({ mode, label: nativeItem?.text, renderer: nativeItem ? 'rapid' : 'fallback' });
-    if (nativeItem) {
-      button.dataset.click = 'showFullFile';
-      if (nativeItem.extraAttrs['data-full']) button.dataset.full = nativeItem.extraAttrs['data-full'];
-    } else {
-      button.addEventListener('click', () => runLegacyFullFileAction(diffFile, button));
-    }
-    info.insertBefore(button, options || null);
-  }
-
-  function mountLegacyFullFileButton(diffFile) {
-    if (diffFile.querySelector('[data-golens-full-file]')) return;
-    const rememberedMode = diffFile.dataset.golensFullFileMode;
-    if (!expansionControls(diffFile).length && rememberedMode !== 'changes') return;
-    const header = diffFile.querySelector('[data-testid="file-title-container"], .file-title');
-    const actions = header?.querySelector('.file-actions');
-    if (!actions) return;
-    const button = createFullFileButton({ mode: rememberedMode || 'full', renderer: 'legacy' });
-    button.addEventListener('click', () => runLegacyFullFileAction(diffFile, button));
-    const optionsButton = actions.querySelector('[data-testid="options-dropdown-button"]');
-    const optionsGroup = optionsButton?.parentElement;
-    actions.insertBefore(button, optionsGroup?.parentElement === actions ? optionsGroup : null);
-  }
-
-  function removeFullFileButtons() {
-    document.querySelectorAll('[data-golens-full-file]').forEach((button) => button.remove());
-  }
-
-  function reconcileFullFileButtons() {
-    if (!state.enabled || !isMergeRequestDiff()) {
-      removeFullFileButtons();
-      return;
-    }
-    document.querySelectorAll('diff-file[data-testid="rd-diff-file"], diff-file[data-file-data]').forEach(mountRapidFullFileButton);
-    document.querySelectorAll('.diff-file.file-holder').forEach(mountLegacyFullFileButton);
   }
 
   function inReviewFocus() {
@@ -1153,7 +841,6 @@
       try {
         await Promise.all(Object.entries(nextSettings).map(([key, value]) => settingsStore.set(key, value)));
         state.settings = { ...state.settings, ...nextSettings };
-        reconcileGeneratedDiffFiles();
         close();
       } catch (error) {
         shadow.querySelector('[data-setup-status]').textContent = error.message || 'Unable to save these choices.';
@@ -1886,8 +1573,6 @@
     } else {
       await disableGoLens();
     }
-    reconcileFullFileButtons();
-    reconcileGeneratedDiffFiles();
     reconcileGoTestFileRows();
     reconcileOverviewDiscussionLineLinks();
     renderControlState();
@@ -2026,8 +1711,6 @@
     closeOnboarding();
     closeSettingsOverlay({ restoreFocus: false });
     closeBookmarkDrawer({ restoreFocus: false });
-    removeFullFileButtons();
-    restoreGeneratedDiffFiles();
     restoreGoTestFileRows();
     removeOverviewDiscussionLineLinks();
     await disableGoLens();
@@ -2061,8 +1744,6 @@
     }
 
     createControls();
-    reconcileFullFileButtons();
-    reconcileGeneratedDiffFiles();
     reconcileGoTestFileRows();
     reconcileOverviewDiscussionLineLinks();
   }
@@ -2134,9 +1815,12 @@
       schedulePageReconcile();
     });
     new MutationObserver(schedulePageReconcile).observe(document.body, { childList: true, subtree: true });
+    // Still tracked in state.settings for the onboarding radio's pre-fill
+    // (showFirstRunOnboarding reads state.settings.hideGeneratedFiles);
+    // the reconcile side effect this used to trigger moved to
+    // page/features/generated-files.js's own settings.subscribe (ticket 13).
     settingsStore?.subscribe('hideGeneratedFiles', (value) => {
       state.settings = { ...state.settings, hideGeneratedFiles: value };
-      reconcileGeneratedDiffFiles();
     });
     settingsStore?.subscribe('shortcutBindings', (value) => {
       state.settings = { ...state.settings, shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(value) || value };
