@@ -31,7 +31,7 @@ migration. This map produces the spec and its tickets; it does not execute the r
 
 ## Decisions so far
 
-<!-- none yet -->
+- [01 — Audit tests and docs against current features](issues/01-audit-tests-and-docs-against-current-features.md) — Docs mostly matched; fixed `domain.md`'s inaccurate `src/` layout and `AGENTS.md`'s missing `bench`/`package`/`release` commands. No coverage gaps found; nothing added to fog.
 
 ## Not yet specified
 

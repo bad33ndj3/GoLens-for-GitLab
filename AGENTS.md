@@ -9,9 +9,11 @@ GoLens for GitLab is a dependency-light Manifest V3 browser extension.
 - `go-navigation.js` connects diff interactions to GitLab source fetching and semantic RPC.
 - `go-semantic-core.js` contains the parser-backed Go symbol index; `go-semantic-worker.js` exposes it through the extension service worker.
 - `popup.*` defines compact active-review controls; `settings.*` defines the tabbed settings iframe; `gitlab-lens.css` and `manifest.json` complete the extension UI and configuration.
-- `tests/` contains Node unit tests and the headless browser smoke test.
+- `tests/` contains Node unit tests, the headless browser smoke test, and the performance benchmark harness (`tests/benchmarks/`).
 - `assets/` contains extension artwork. `vendor/` contains checked-in Tree-sitter runtime files and the Go grammar.
 - `experiments/` documents non-production investigations; do not make production behavior depend on them.
+- `scripts/` contains `package-extension.mjs` (zips the shippable files into `dist/`), `release-extension.mjs` (tags and pushes a release), `vendor-parser.mjs`, and `benchmark.mjs`.
+- `docs/benchmarks/` holds the performance baseline and comparison output produced by `npm run bench`; see `docs/benchmarks/README.md`.
 
 ## Build, Test, and Development Commands
 
@@ -20,6 +22,9 @@ GoLens for GitLab is a dependency-light Manifest V3 browser extension.
 - `npm run test:browser` loads the unpacked extension in Chrome or Helium against a local GitLab fixture.
 - `npm run check` performs syntax checks, unit tests, and the browser smoke test. Run this before submitting changes.
 - `npm run vendor:parser` refreshes `vendor/` after parser dependency changes. Commit the regenerated artifacts and license updates together.
+- `npm run bench` runs the performance benchmark harness against the hot paths tracked in `docs/benchmarks/`; see `docs/benchmarks/README.md` for baseline/comparison usage.
+- `npm run package` builds the distributable extension zip into `dist/` (gitignored).
+- `npm run release` tags and pushes a release from `package.json`'s version and `manifest.json`.
 
 For manual testing, load the repository through `chrome://extensions` using **Load unpacked**, then refresh a GitLab merge-request Changes page.
 
