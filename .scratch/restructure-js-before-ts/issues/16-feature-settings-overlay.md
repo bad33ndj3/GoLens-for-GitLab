@@ -1,10 +1,14 @@
 # 16 — Feature-migratie: settings-overlay
 
 **What to build:** De in-page settings-overlay uit `content.js` wordt `features/settings-overlay`
-met `mount(ctx) → { unmount, show(), close() }`: overlay-DOM, settings.html-embedding en de
-ready-handshake privé; overlay-registry-claim zolang open. Lifecycle routeert
-`golens-show-settings`/`golens-close-settings`/`golens-settings-ready` naar de handle.
-Legacy-code direct verwijderd.
+met `mount(ctx) → { unmount, show(), close(), ready() }`: overlay-DOM, settings.html-embedding en
+de ready-handshake privé; overlay-registry-claim zolang open. Legacy-code direct verwijderd.
+
+*Bijgesteld tijdens uitvoering:* de oorspronkelijke tekst zei dat **lifecycle**
+`golens-show-settings`/`golens-close-settings`/`golens-settings-ready` naar de handle routeert, en
+noemde alleen `show()`/`close()`. Dat kon niet: lifecycle leeft achter een async `import()` en
+antwoordt per ontwerp nooit. `bootstrap.js` routeert en antwoordt nu, de handle heeft ook
+`ready()`, en de methodes geven een `kind` terug in plaats van stil terug te keren. Zie Status.
 
 **Blocked by:** 11 — lifecycle-orchestrator; 12 — overlay-registry.
 
