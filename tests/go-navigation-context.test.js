@@ -699,6 +699,35 @@ test('parallelizes package file pagination once GitLab reports a total page coun
   }
 });
 
+test('retries a retryable failure on a parallelized pagination page instead of aborting the listing', async () => {
+  const originalFetch = globalThis.fetch;
+  helpers.setClock({ setTimeout: (fn) => { fn(); return 0; }, clearTimeout: () => {} });
+  let page3Attempts = 0;
+  globalThis.fetch = async (url) => {
+    const page = Number(new URL(url).searchParams.get('page'));
+    if (page === 3) {
+      page3Attempts++;
+      if (page3Attempts < 2) return { ok: false, status: 503, async text() { return ''; } };
+    }
+    const entries = page === 1
+      ? Array.from({ length: 100 }, (_value, index) => ({ type: 'blob', path: `pkg/file${index}.go`, id: 'a'.repeat(40) }))
+      : [{ type: 'blob', path: `pkg/extra${page}.go`, id: 'a'.repeat(40) }];
+    return {
+      ok: true,
+      headers: { get: (name) => (name.toLowerCase() === 'x-total-pages' ? '3' : '') },
+      async json() { return entries; },
+    };
+  };
+  try {
+    const files = await helpers.listPackageFiles('pkg', 'a'.repeat(40));
+    assert.equal(files.length, 102, 'the retried page still contributed its entry once it succeeded');
+    assert.equal(page3Attempts, 2, 'the transient failure on a concurrently-fetched page was retried, not left to abort the whole listing');
+  } finally {
+    globalThis.fetch = originalFetch;
+    helpers.setClock();
+  }
+});
+
 test('falls back to sequential pagination when GitLab omits a total page count', async () => {
   const originalFetch = globalThis.fetch;
   const requestedPages = [];

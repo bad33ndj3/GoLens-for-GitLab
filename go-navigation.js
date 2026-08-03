@@ -32,7 +32,7 @@
       setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
       clearTimeout: (id) => globalThis.clearTimeout(id),
       requestFrame: (fn) => (globalThis.requestAnimationFrame ? globalThis.requestAnimationFrame(fn) : globalThis.setTimeout(fn, 16)),
-      requestIdle: (fn) => (globalThis.requestIdleCallback ? globalThis.requestIdleCallback(fn) : globalThis.setTimeout(fn, 0)),
+      requestIdle: (fn) => (globalThis.requestIdleCallback ? globalThis.requestIdleCallback(fn, { timeout: 300 }) : globalThis.setTimeout(fn, 0)),
     };
   }
   let clock = defaultClock();
@@ -707,7 +707,7 @@
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const headers = csrf ? { 'X-CSRF-Token': csrf } : {};
     const fetchPage = async (page) => {
-      const response = await authenticatedFetch(urlFor(page), { headers, signal });
+      const response = await fetchWithRetry(urlFor(page), { headers, signal });
       if (!response.ok) throw new Error(`GitLab source API returned ${response.status}`);
       const entries = await response.json();
       if (!Array.isArray(entries)) throw new Error('GitLab returned an invalid repository tree response');

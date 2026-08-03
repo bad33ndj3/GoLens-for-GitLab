@@ -14,7 +14,7 @@
     return {
       setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
       clearTimeout: (id) => globalThis.clearTimeout(id),
-      requestIdle: (fn) => (globalThis.requestIdleCallback ? globalThis.requestIdleCallback(fn) : globalThis.setTimeout(fn, 0)),
+      requestIdle: (fn) => (globalThis.requestIdleCallback ? globalThis.requestIdleCallback(fn, { timeout: 300 }) : globalThis.setTimeout(fn, 0)),
     };
   }
   let clock = defaultClock();

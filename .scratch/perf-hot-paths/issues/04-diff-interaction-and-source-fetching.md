@@ -44,11 +44,25 @@ so in the comparison rather than quoting the ratio as a product number.
 tests and benchmarks share).
 
 **Status:** done. All checklist items implemented and verified — `go-navigation.js`, `content.js`, and
-`go-semantic-worker.js` modified as described below. `npm test`: 155 tests, 152 pass, 3 fail (pre-existing,
+`go-semantic-worker.js` modified as described below. `npm test`: 156 tests, 153 pass, 3 fail (pre-existing,
 unrelated `format: 4` vs `format: 3` cache-version mismatches in `tests/go-semantic-worker.test.js`,
 confirmed present on the pre-ticket baseline via `git stash`). `npm run test:browser` times out on
 DevTools `Runtime.evaluate` in this sandbox both with and without this ticket's changes (confirmed via
 `git stash`) — a pre-existing environmental limitation, not a regression.
+
+Follow-up from `/code-review`: the first pass of the parallel pagination path (`fetchTreeEntries`) called
+`authenticatedFetch` directly instead of `fetchWithRetry`, meaning the newly-added 6-wide concurrent page
+fetch had no retry protection — a direct violation of "retry before concurrency rises." Fixed by routing
+`fetchTreeEntries`'s per-page fetch through `fetchWithRetry`, with a regression test asserting a transient
+failure on a concurrently-fetched page is retried rather than aborting the whole listing. Also added an
+explicit `{ timeout: 300 }` to both `requestIdleCallback` calls so the debounced reconcile/occurrence-refresh
+passes can't stall indefinitely under sustained mutation load. Two minor, non-blocking deviations remain,
+noted rather than fixed: (1) `listPackageFiles`'s 200-Go-file guard now runs once after all pages are fetched
+instead of aborting mid-pagination the moment the limit is crossed — functionally equivalent, just no longer
+saves the remaining page fetches for a pathologically large package; (2) `content.js`'s page-reconcile
+observer intentionally stays on `document.body` rather than a narrower diff-only root, because
+`reconcilePage()` also drives page-wide concerns (control-strip mounting, MR-navigation detection) that
+don't live under any single diff container — `go-navigation.js`'s diff observer is scoped to `#diffs`.
 
 - [x] A burst of pointer events over the diff produces a bounded number of hit-tests
 - [x] File context is cached per diff-file root and is still correct after the diff mutates
