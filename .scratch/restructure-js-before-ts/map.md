@@ -62,6 +62,22 @@ blijven staan zoals ze geschreven zijn; dit is de correctielijst.
   voor de rest van deze operatie — de smoke-omgeving repareren verdient een eigen ticket vóór de
   zwaardere feature-carve-outs (13–21).
 
+- **De benchmark-OOM was harness-teardown, geen fixture-schaal en geen productielek.** Ticket 24 nam
+  aan dat de keuze "te grote fixture / te lage heap-limiet" versus "echt lek" was. Het was geen van
+  beide: de drie `diff-dom`-cases gaven hun happy-dom-fixture nooit vrij (`window.close()` is
+  ontoereikend; alleen `await window.happyDOM.close()` breekt de keten), waardoor ~4 GB bezet bleef
+  vóór de grote `semantic-core`-cases. Na een `teardown`-hook in `runCase` draait `npm run bench`
+  `EXIT:0` op de **standaard** heap — peak RSS 1.95 GB, plateau 302 MB. Geen `package.json`-wijziging
+  nodig. Baseline voor 13–21 staat in ticket 24.
+- **De browser-smoke blijft kapot en is machine-niveau.** Ticket 23 heeft de gesanctioneerde
+  hypothese (te korte `Runtime.evaluate`-timeout) gemeten en verworpen: met 30s→90s is het resultaat
+  2/8 groen en intermitterend, zonder "net niet genoeg tijd"-patroon. Scenario 1 faalt nooit;
+  scenario 2 (SW→content-script messaging) en 5 (full-file-injectie na streaming) falen wisselend.
+  Profiel-lock/teardown niet bevestigd. Diagnose: nondeterminisme in headless
+  Chromium 150 / Helium 0.14.9.1 op deze machine. `tests/browser-smoke.mjs` is onveranderd
+  teruggezet. **Gevolg: 13–21 hebben géén end-to-end vangnet.** Dat is een beslissing voor de user,
+  niet iets om stil te absorberen.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,
