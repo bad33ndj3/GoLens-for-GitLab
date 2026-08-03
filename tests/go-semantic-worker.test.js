@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { before, test } from 'node:test';
 
 let handler;
+let routeMethod;
 let nextID = 0;
 const pending = new Map();
 
@@ -21,7 +22,7 @@ before(async () => {
       pending.delete(message.id);
     },
   };
-  await import('../go-semantic-worker.js?worker-test');
+  ({ routeMethod } = await import('../go-semantic-worker.js?worker-test'));
 });
 
 function request(method, params) {
@@ -30,6 +31,32 @@ function request(method, params) {
   handler({ data: { id, method, params } });
   return response;
 }
+
+// routeMethod is the pure routing core `dispatch` uses to decide mutation
+// queue sequencing: no I/O, no worker/index/cache instances involved, so
+// these run against the plain function with no fixture setup at all.
+test('routeMethod classifies storage-only status reads as non-queued queries', () => {
+  for (const method of ['projectCacheStatus', 'mergeRequestCacheStatus', 'packageCacheStatus']) {
+    assert.deepEqual(routeMethod(method), { kind: 'query', queued: false });
+  }
+});
+
+test('routeMethod classifies cache/index-mutating methods as queued mutations', () => {
+  for (const method of [
+    'clearCache', 'cachePackage', 'cacheProject', 'cacheMergeRequest', 'indexPackage', 'indexProject',
+    'restorePackage', 'restoreProject', 'restoreMergeRequest', 'disposeProject', 'prepareSources',
+  ]) {
+    assert.deepEqual(routeMethod(method), { kind: 'mutation', queued: true });
+  }
+});
+
+test('routeMethod classifies resolution/search queries and unknown or missing methods as queued, non-extending', () => {
+  for (const method of ['resolveDefinition', 'resolveHover', 'findReferences', 'findImplementations', 'packageRelations', 'cacheStats']) {
+    assert.deepEqual(routeMethod(method), { kind: 'query', queued: true });
+  }
+  assert.deepEqual(routeMethod('renameSymbol'), { kind: 'query', queued: true });
+  assert.deepEqual(routeMethod(undefined), { kind: 'query', queued: true });
+});
 
 test('worker protocol indexes and resolves a definition', async () => {
   const source = 'package sample\nfunc Target() {}\nfunc Use() { Target() }\n';

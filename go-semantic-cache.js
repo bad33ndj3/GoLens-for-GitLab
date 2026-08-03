@@ -1,7 +1,7 @@
 const DATABASE_NAME = 'golens-go-semantic-cache';
 const DATABASE_VERSION = 3;
 // Bumped from 3 to 4: source records now carry a `verified` marker written
-// once at write time (see `stageSnapshotSources`) instead of being
+// once at write time (see `_stageSnapshotSources`) instead of being
 // re-hashed against their Git blob ID on every read/status check. The
 // format version is embedded in every store key (`sourceID`/`packageID`/
 // `projectID`/`mergeRequestID`), so records written under the previous
@@ -108,7 +108,7 @@ async function validSourceRecord(entry, record) {
 }
 
 // A source record is trusted on the read/status path purely by its stored
-// `verified` marker (written once, at write time, by `stageSnapshotSources`)
+// `verified` marker (written once, at write time, by `_stageSnapshotSources`)
 // and format version — no re-hashing against the Git blob ID on every read.
 function verifiedRecord(record) {
   return !!record && record.format === CACHE_FORMAT_VERSION && record.verified === true;
@@ -177,7 +177,7 @@ export class GoSemanticSourceCache {
       complete: true,
       updatedAt: Date.now(),
     };
-    await this.writeSnapshot(PACKAGES, manifest, normalizedEntries, snapshotFiles(files));
+    await this._writeSnapshot(PACKAGES, manifest, normalizedEntries, snapshotFiles(files));
   }
 
   async writeProject({ origin, project, ref, modulePath = '', entries, files = [] }) {
@@ -193,13 +193,13 @@ export class GoSemanticSourceCache {
       complete: true,
       updatedAt: Date.now(),
     };
-    await this.writeSnapshot(PROJECTS, manifest, normalizedEntries, snapshotFiles(files));
+    await this._writeSnapshot(PROJECTS, manifest, normalizedEntries, snapshotFiles(files));
   }
 
   async stageProject({ origin, project, ref, modulePath = '', entries, files = [] }) {
     const normalizedEntries = normalizeEntries(entries || files);
     const manifest = { origin, project, ref, modulePath, format: CACHE_FORMAT_VERSION };
-    const available = await this.stageSnapshotSources(manifest, normalizedEntries, snapshotFiles(files));
+    const available = await this._stageSnapshotSources(manifest, normalizedEntries, snapshotFiles(files));
     return {
       modulePath,
       files: available.map(({ source }, index) => ({ path: normalizedEntries[index].path, source })),
@@ -223,23 +223,23 @@ export class GoSemanticSourceCache {
       complete: true,
       updatedAt: Date.now(),
     };
-    await this.writeManifest(PROJECTS, manifest);
+    await this._writeManifest(PROJECTS, manifest);
     return manifest;
   }
 
   async readPackage({ origin, project, ref, packagePath }) {
     const scope = { origin, project, ref, packagePath };
-    const packageSnapshot = await this.readSnapshot(PACKAGES, packageID(scope));
+    const packageSnapshot = await this._readSnapshot(PACKAGES, packageID(scope));
     if (packageSnapshot) return packageSnapshot;
     const projectScope = { origin, project, ref };
     const matchesPackage = (entry) => dirname(entry.path) === packagePath;
-    const projectSnapshot = await this.readSnapshot(PROJECTS, projectID(projectScope), matchesPackage);
+    const projectSnapshot = await this._readSnapshot(PROJECTS, projectID(projectScope), matchesPackage);
     return projectSnapshot?.files.length ? projectSnapshot : null;
   }
 
   async readProject({ origin, project, ref }) {
     const scope = { origin, project, ref };
-    return this.readSnapshot(PROJECTS, projectID(scope));
+    return this._readSnapshot(PROJECTS, projectID(scope));
   }
 
   async hasProject({ origin, project, ref }) {
@@ -248,7 +248,7 @@ export class GoSemanticSourceCache {
 
   async projectStatus({ origin, project, ref }) {
     const scope = { origin, project, ref };
-    if (await this.hasSnapshot(PROJECTS, projectID(scope))) return { status: 'complete', format: CACHE_FORMAT_VERSION };
+    if (await this._hasSnapshot(PROJECTS, projectID(scope))) return { status: 'complete', format: CACHE_FORMAT_VERSION };
     return { status: 'missing' };
   }
 
@@ -258,7 +258,7 @@ export class GoSemanticSourceCache {
       return { ...projectStatus, coverage: 'full', searchStatus: 'complete' };
     }
     const id = mergeRequestID({ origin, project, mergeRequest, ref });
-    const manifest = await this.readManifest(PROJECTS, id);
+    const manifest = await this._readManifest(PROJECTS, id);
     if (!isCurrentManifest(manifest)) return { status: 'missing' };
     const packagePaths = manifest.packagePaths || [];
     // One batched status check across every package the MR touches instead
@@ -280,7 +280,7 @@ export class GoSemanticSourceCache {
     const status = await this.mergeRequestStatus({ origin, project, mergeRequest, ref });
     if (status.status !== 'complete') return null;
     if (status.coverage === 'full') return { coverage: 'full', searchStatus: 'complete', packagePaths: [] };
-    const manifest = await this.readManifest(PROJECTS, mergeRequestID({ origin, project, mergeRequest, ref }));
+    const manifest = await this._readManifest(PROJECTS, mergeRequestID({ origin, project, mergeRequest, ref }));
     return {
       coverage: 'related',
       searchStatus: manifest.searchStatus || 'complete',
@@ -305,13 +305,13 @@ export class GoSemanticSourceCache {
   async packageStatusesFor({ origin, project, ref, packagePaths }) {
     const paths = [...new Set(packagePaths || [])];
     const projectScope = { origin, project, ref };
-    const packageManifests = await this.readManifests(
+    const packageManifests = await this._readManifests(
       PACKAGES,
       paths.map((packagePath) => packageID({ ...projectScope, packagePath })),
     );
 
     const needsProjectFallback = packageManifests.some((manifest) => !isCurrentManifest(manifest));
-    const [projectManifest] = needsProjectFallback ? await this.readManifests(PROJECTS, [projectID(projectScope)]) : [];
+    const [projectManifest] = needsProjectFallback ? await this._readManifests(PROJECTS, [projectID(projectScope)]) : [];
 
     const plans = paths.map((packagePath, index) => {
       const manifest = packageManifests[index];
@@ -325,7 +325,7 @@ export class GoSemanticSourceCache {
     }).map((plan) => ({ ...plan, sourceIDs: plan.entries.map((entry) => sourceID({ ...projectScope, ...entry })) }));
 
     const allIDs = plans.flatMap((plan) => plan.sourceIDs);
-    const allRecords = await this.readSourceRecords(allIDs);
+    const allRecords = await this._readSourceRecords(allIDs);
     const recordByID = new Map(allIDs.map((id, index) => [id, allRecords[index]]));
 
     const statuses = new Map();
@@ -348,10 +348,10 @@ export class GoSemanticSourceCache {
     }
 
     const groups = [...grouped.values()];
-    const existing = await this.readSourceRecords(groups.map(({ id }) => id));
+    const existing = await this._readSourceRecords(groups.map(({ id }) => id));
     const valid = await Promise.all(groups.map(({ entry }, index) => validSourceRecord(entry, existing[index])));
     const invalidIDs = groups.filter((_group, index) => existing[index] && !valid[index]).map(({ id }) => id);
-    await this.deleteSourceRecords(invalidIDs);
+    await this._deleteSourceRecords(invalidIDs);
     const available = new Set(groups.filter((_group, index) => valid[index]).map(({ id }) => id));
     const missingGroups = groups.filter(({ id }) => !available.has(id));
     return {
@@ -400,7 +400,7 @@ export class GoSemanticSourceCache {
     return previous;
   }
 
-  async readSourceRecords(ids) {
+  async _readSourceRecords(ids) {
     if (!ids.length) return [];
     if (!this.databasePromise) return ids.map((id) => this.memory[SOURCES].get(id));
     const database = await this.databasePromise;
@@ -412,7 +412,7 @@ export class GoSemanticSourceCache {
     return records;
   }
 
-  async writeSourceRecords(records) {
+  async _writeSourceRecords(records) {
     if (!records.length) return;
     if (!this.databasePromise) {
       records.forEach((record) => this.memory[SOURCES].set(record.id, record));
@@ -426,7 +426,7 @@ export class GoSemanticSourceCache {
     await complete;
   }
 
-  async deleteSourceRecords(ids) {
+  async _deleteSourceRecords(ids) {
     if (!ids.length) return;
     if (!this.databasePromise) {
       ids.forEach((id) => this.memory[SOURCES].delete(id));
@@ -440,11 +440,11 @@ export class GoSemanticSourceCache {
     await complete;
   }
 
-  async readManifest(storeName, id) {
-    return (await this.readManifests(storeName, [id]))[0];
+  async _readManifest(storeName, id) {
+    return (await this._readManifests(storeName, [id]))[0];
   }
 
-  async readManifests(storeName, ids) {
+  async _readManifests(storeName, ids) {
     if (!ids.length) return [];
     if (!this.databasePromise) return ids.map((id) => this.memory[storeName].get(id));
     const database = await this.databasePromise;
@@ -456,7 +456,7 @@ export class GoSemanticSourceCache {
     return records;
   }
 
-  async writeManifest(storeName, manifest) {
+  async _writeManifest(storeName, manifest) {
     if (!this.databasePromise) {
       this.memory[storeName].set(manifest.id, manifest);
       return;
@@ -468,15 +468,15 @@ export class GoSemanticSourceCache {
     await complete;
   }
 
-  async validateSourceRecords(manifest, entries, records) {
+  async _validateSourceRecords(manifest, entries, records) {
     const valid = await Promise.all(entries.map((entry, index) => validSourceRecord(entry, records[index])));
     const invalidIDs = entries.filter((_entry, index) => records[index] && !valid[index])
       .map((entry) => sourceID({ ...manifest, ...entry }));
-    await this.deleteSourceRecords(invalidIDs);
+    await this._deleteSourceRecords(invalidIDs);
     return valid.every(Boolean);
   }
 
-  async stageSnapshotSources(manifest, entries, files) {
+  async _stageSnapshotSources(manifest, entries, files) {
     const fileValidity = await Promise.all(files.map((file) => validSourceRecord(file, file)));
     const invalidFile = files.find((_file, index) => !fileValidity[index]);
     if (invalidFile) throw new Error(`Source content does not match Git blob ${invalidFile.blobId} for ${invalidFile.path}`);
@@ -491,16 +491,16 @@ export class GoSemanticSourceCache {
       // its Git blob ID on every call.
       verified: true,
     }));
-    await this.writeSourceRecords(records);
-    const available = await this.readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
-    if (!await this.validateSourceRecords(manifest, entries, available)) {
+    await this._writeSourceRecords(records);
+    const available = await this._readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
+    if (!await this._validateSourceRecords(manifest, entries, available)) {
       throw new Error('Cannot complete semantic snapshot with missing or invalid source blobs');
     }
     return available;
   }
 
-  async writeSnapshot(storeName, manifest, entries, files) {
-    await this.stageSnapshotSources(manifest, entries, files);
+  async _writeSnapshot(storeName, manifest, entries, files) {
+    await this._stageSnapshotSources(manifest, entries, files);
 
     if (!this.databasePromise) {
       this.memory[storeName].set(manifest.id, manifest);
@@ -518,13 +518,13 @@ export class GoSemanticSourceCache {
   // once at write time) and its format version instead of re-hashing the
   // source against its Git blob ID, and never deletes anything it finds
   // stale — pruning of records that fail verification belongs to the
-  // explicitly-mutating operations (`prepareSources`, `stageSnapshotSources`),
+  // explicitly-mutating operations (`prepareSources`, `_stageSnapshotSources`),
   // not to a read.
-  async readSnapshot(storeName, id, predicate = () => true) {
-    const manifest = await this.readManifest(storeName, id);
+  async _readSnapshot(storeName, id, predicate = () => true) {
+    const manifest = await this._readManifest(storeName, id);
     if (!isCurrentManifest(manifest)) return null;
     const entries = (manifest.entries || []).filter(predicate);
-    const files = await this.readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
+    const files = await this._readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
     if (!entriesComplete(entries, files)) return null;
     return {
       modulePath: manifest.modulePath,
@@ -533,14 +533,14 @@ export class GoSemanticSourceCache {
     };
   }
 
-  // Same trust-the-marker, no-mutation contract as `readSnapshot`, without
+  // Same trust-the-marker, no-mutation contract as `_readSnapshot`, without
   // materializing file contents.
-  async hasSnapshot(storeName, id, predicate = () => true, requireEntries = false) {
-    const manifest = await this.readManifest(storeName, id);
+  async _hasSnapshot(storeName, id, predicate = () => true, requireEntries = false) {
+    const manifest = await this._readManifest(storeName, id);
     if (!isCurrentManifest(manifest)) return false;
     const entries = (manifest.entries || []).filter(predicate);
     if (requireEntries && !entries.length) return false;
-    const files = await this.readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
+    const files = await this._readSourceRecords(entries.map((entry) => sourceID({ ...manifest, ...entry })));
     return entriesComplete(entries, files);
   }
 }

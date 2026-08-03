@@ -165,6 +165,12 @@ async function restoreFromIndexStore(index, scope) {
   return index.restoreIndex(blob);
 }
 
+// Imperative shell: per-method persistence and rollback. `dispatch`'s pure
+// `routeMethod` above has already decided queue sequencing; everything past
+// that point — IndexedDB reads/writes, WASM parser/index calls, the
+// commit-pin (`isCommitSHA`) shortcuts, and `cacheProject`'s
+// disposeProject-on-failure rollback — is a side effect and lives here, not
+// in the pure core.
 async function performDispatch(method, params = {}) {
   if (!method) throw new Error('Semantic worker method is required');
   if (method === 'cacheStats') return sourceCache.stats();
@@ -301,12 +307,45 @@ async function performDispatch(method, params = {}) {
   throw new Error(`Unknown semantic worker method: ${method}`);
 }
 
+// Pure routing core: given only a method name (no params, no I/O), decides
+// how `dispatch` must schedule it against the mutation queue. This is the
+// entire queueing policy today expressed as two membership checks — pulled
+// out so it is testable on its own, independent of the effectful shell
+// below. `queued: false` bypasses the mutation queue's wait entirely
+// (storage-only status reads, per the NON_QUEUED_METHODS comment above);
+// `kind: 'mutation'` additionally extends the queue so later mutations wait
+// for this one. Every other method (including unknown/missing method names —
+// `performDispatch` is what actually rejects those) waits on the queue
+// without extending it, identical to today's fallthrough branch.
+export function routeMethod(method) {
+  if (NON_QUEUED_METHODS.has(method)) return { kind: 'query', queued: false };
+  if (MUTATING_METHODS.has(method)) return { kind: 'mutation', queued: true };
+  return { kind: 'query', queued: true };
+}
+
+// Imperative shell: schedules `performDispatch` per `routeMethod`'s routing
+// decision. All persistence/rollback behaviour (e.g. cacheProject's
+// disposeProject-on-failure) lives inside performDispatch itself; this layer
+// only owns queue sequencing.
 function dispatch(method, params = {}) {
-  if (NON_QUEUED_METHODS.has(method)) return performDispatch(method, params);
-  if (!MUTATING_METHODS.has(method)) return mutationQueue.then(() => performDispatch(method, params));
+  const route = routeMethod(method);
+  if (!route.queued) return performDispatch(method, params);
   const operation = mutationQueue.then(() => performDispatch(method, params));
-  mutationQueue = operation.catch(() => undefined);
+  if (route.kind === 'mutation') mutationQueue = operation.catch(() => undefined);
   return operation;
+}
+
+// Shared wire contract for both RPC transports (the port used in production
+// and the `self` postMessage fallback used by tests without a service-worker
+// port): translates a dispatch outcome into the `{ id, ok, result | error }`
+// envelope and hands it to `respond`. Keeping this in one place is what
+// keeps the two transports below "the same contract, two deliveries".
+async function handleRpcRequest(id, method, params, respond) {
+  try {
+    respond({ id, ok: true, result: await dispatch(method, params) });
+  } catch (error) {
+    respond({ id, ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
 }
 
 function respondToRuntimeMessage(message, sendResponse) {
@@ -333,19 +372,13 @@ if (globalThis.chrome?.runtime?.onConnect) {
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== 'golens-go-rpc') return;
     port.onMessage.addListener(({ id, method, params }) => {
-      dispatch(method, params)
-        .then((result) => port.postMessage({ id, ok: true, result }))
-        .catch((error) => port.postMessage({ id, ok: false, error: error instanceof Error ? error.message : String(error) }));
+      handleRpcRequest(id, method, params, (message) => port.postMessage(message));
     });
   });
 } else {
-  self.addEventListener('message', async (event) => {
+  self.addEventListener('message', (event) => {
     const { id, method, params } = event.data || {};
     if (!id || !method) return;
-    try {
-      self.postMessage({ id, ok: true, result: await dispatch(method, params) });
-    } catch (error) {
-      self.postMessage({ id, ok: false, error: error instanceof Error ? error.message : String(error) });
-    }
+    handleRpcRequest(id, method, params, (message) => self.postMessage(message));
   });
 }
