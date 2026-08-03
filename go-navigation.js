@@ -46,9 +46,6 @@
 
   const state = {
     enabled: false,
-    port: null,
-    rpcID: 0,
-    pending: new Map(),
     packages: new Map(),
     projects: new Map(),
     projectProgressListeners: new Map(),
@@ -554,39 +551,41 @@
     return `${labels[progress.phase] || 'Caching related packages'} · ${progress.percentage}% · ${progress.completed} / ${progress.total} packages`;
   }
 
-  function workerRPC(method, params) {
-    if (!state.port) {
-      state.port = chrome.runtime.connect({ name: 'golens-go-rpc' });
-      state.port.onMessage.addListener((response) => {
-        const pending = state.pending.get(response.id);
-        if (!pending) return;
-        clearTimeout(pending.timeout);
-        state.pending.delete(response.id);
-        if (response.ok) pending.resolve(response.result);
-        else pending.reject(new Error(response.error || 'Go semantic service failed'));
-      });
-      state.port.onDisconnect.addListener(() => {
-        const error = new Error(chrome.runtime.lastError?.message || 'Go semantic service disconnected');
-        for (const pending of state.pending.values()) {
-          clearTimeout(pending.timeout);
-          pending.reject(error);
-        }
-        state.pending.clear();
-        state.port = null;
-        state.packages.clear();
-        state.projects.clear();
-        state.modulePaths.clear();
+  // Temporary bridge onto platform/rpc-client (ticket 09): go-navigation
+  // still dispatches by a dynamic wire-method-name string (`resolveAt(target,
+  // 'resolveHover', …)`), so `workerRPC` stays as a lookup shim rather than
+  // every call site switching to `client.query.resolveHover(...)` directly.
+  // Framing, port lifecycle/reconnect, and in-flight bookkeeping now live in
+  // page/platform/rpc-client.js; this file only knows the wire-method name
+  // and its params. `rpcClient` is created lazily (only once a caller
+  // actually needs the worker), so tests that never trigger an RPC never
+  // touch `chrome.runtime`.
+  let rpcClient = null;
+  let rpcMethodNamespace = null;
+  let rpcClientPromise = null;
+
+  function ensureRpcClient() {
+    if (rpcClient) return Promise.resolve(rpcClient);
+    if (!rpcClientPromise) {
+      rpcClientPromise = import(chrome.runtime.getURL('page/platform/rpc-client.js')).then((module) => {
+        rpcClient = module.createRpcClient({
+          connect: () => chrome.runtime.connect({ name: 'golens-go-rpc' }),
+          onDisconnect: () => {
+            state.packages.clear();
+            state.projects.clear();
+            state.modulePaths.clear();
+          },
+        });
+        rpcMethodNamespace = module.methodNamespace;
+        return rpcClient;
       });
     }
-    const id = ++state.rpcID;
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        state.pending.delete(id);
-        reject(new Error('Go semantic service timed out'));
-      }, ['indexProject', 'cacheProject', 'restoreProject', 'restoreMergeRequest', 'projectCacheStatus', 'mergeRequestCacheStatus', 'cacheMergeRequest', 'packageCacheStatus', 'prepareSources'].includes(method) ? 120000 : 20000);
-      state.pending.set(id, { resolve, reject, timeout });
-      state.port.postMessage({ id, method, params });
-    });
+    return rpcClientPromise;
+  }
+
+  async function workerRPC(method, params) {
+    const client = await ensureRpcClient();
+    return client[rpcMethodNamespace(method)][method](params);
   }
 
   function authenticatedFetch(input, options = {}) {
@@ -3043,14 +3042,7 @@
     document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('mouseup', reconcileBookmarkSelectionUI, true);
     document.removeEventListener('visibilitychange', refreshMergeRequestRefs, true);
-    const cancellation = new Error('Go intelligence request cancelled');
-    for (const pending of state.pending.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(cancellation);
-    }
-    state.pending.clear();
-    state.port?.disconnect();
-    state.port = null;
+    rpcClient?.dispose({ reason: 'Go intelligence request cancelled' });
     state.packages.clear();
     state.projects.clear();
     state.projectProgressListeners.clear();
