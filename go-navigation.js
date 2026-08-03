@@ -5,9 +5,6 @@
   const IDENTIFIER = /[\p{L}_][\p{L}\p{N}_]*/u;
   const GO_KEYWORDS = new Set(['break', 'default', 'func', 'interface', 'select', 'case', 'defer', 'go', 'map', 'struct', 'chan', 'else', 'goto', 'package', 'switch', 'const', 'fallthrough', 'if', 'range', 'type', 'continue', 'for', 'import', 'return', 'var']);
   const POPOVER_DISMISS_DELAY = 450;
-  const RELATED_CACHE_MAX_CANDIDATE_PACKAGES = 10;
-  const RELATED_CACHE_MAX_SEARCH_QUERIES = 8;
-  const RELATED_CACHE_SEARCH_PAGES = 2;
   const FULL_TYPE_BODY_INITIAL_LINES = 40;
   const SYMBOL_PRESENTATIONS = {
     interface: { badge: 'I', label: 'Interface', className: 'interface' },
@@ -121,6 +118,106 @@
       // blocked" from this check — degraded, not crashed (mirrors the
       // clock bridge's failure handling above).
     });
+
+  // Bridge onto page/features/mr-preload.js (ticket 19): preloadMergeRequest,
+  // mergeRequestPreloadStatus, preloadFullProject, fullProjectPreloadStatus,
+  // and invalidateCacheState used to be five functions defined directly in
+  // this file. Their pure planning core (which packages/searches to load, in
+  // what order) is genuinely extractable — it now lives in
+  // page/features/mr-preload.internal.js — but the execution shell still
+  // needs workerRPC/loadPackage/loadProject/projectContext/
+  // mergeRequestHeadRef/mergeRequestIID/listMergeRequestChangedFiles/
+  // modulePathFor/searchProjectBlobPaths, all shared with hover/click
+  // resolution elsewhere in this file (not migrated by this ticket). Ticket
+  // 03 §3's "capabilities that lifecycle injects at mount" is the sanctioned
+  // escape hatch for exactly this: this bridge builds a `legacy` capability
+  // bag from this file's own functions and mounts the module itself, fully
+  // capable — unlike page/main.js's page/lifecycle, which has no access to
+  // these closures (that would be the forbidden globalThis contract) and so
+  // mounts a second, capability-less instance purely for message routing
+  // (see mr-preload.js's header comment for the documented consequence).
+  //
+  // Same shape as the clock/overlay-registry bridges above: IIFE-top-level
+  // kickoff for maximum head start, no queue-until-ready placeholder (every
+  // adapter below is async and only ever invoked from a click handler or a
+  // runtime message, both long after module evaluation completes) — except
+  // `invalidateCacheState`, which content.js calls synchronously and
+  // fire-and-forget; a `pendingInvalidate` flag replays it once the module
+  // becomes ready instead of silently dropping it during the (sub-30ms, per
+  // ticket 04 §7's measurement) load race.
+  async function loadMrPreloadModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/features/mr-preload.js'));
+    } catch {
+      return await import('./page/features/mr-preload.js');
+    }
+  }
+  let mrPreloadHandle = null;
+  let pendingInvalidate = false;
+  // Exposed via __test.mrPreloadReady so tests can deterministically await
+  // the load instead of racing it; production code never awaits this itself.
+  const mrPreloadReady = loadMrPreloadModule()
+    .then(({ mount }) => {
+      mrPreloadHandle = mount({
+        legacy: {
+          projectContext,
+          mergeRequestHeadRef,
+          mergeRequestIID,
+          workerRPC,
+          loadPackage,
+          loadProject,
+          listMergeRequestChangedFiles,
+          modulePathFor,
+          searchProjectBlobPaths,
+          projectLoadingProgress,
+          forgetStaleProjectCache({ origin, project, ref }) {
+            const projectKey = `${origin}\u0000${project}\u0000${ref}`;
+            if (!state.projectProgressListeners.has(projectKey)) state.projects.delete(projectKey);
+          },
+          resetCaches() {
+            state.packages.clear();
+            state.projects.clear();
+            state.projectProgressListeners.clear();
+          },
+        },
+      });
+      if (pendingInvalidate) {
+        pendingInvalidate = false;
+        mrPreloadHandle.invalidateCache();
+      }
+    })
+    .catch(() => {
+      // Both the chrome.runtime.getURL and relative import fallbacks failed
+      // (should not happen in production). Leave mrPreloadHandle null; the
+      // adapters below then permanently throw "module failed to load"
+      // instead of crashing on a null handle (mirrors the clock/
+      // overlay-registry bridges' failure handling above).
+    });
+
+  async function preloadMergeRequest(progress = () => {}) {
+    await mrPreloadReady;
+    if (!mrPreloadHandle) throw new Error('MR preload module failed to load.');
+    return mrPreloadHandle.preloadMergeRequest({ progress });
+  }
+  async function mergeRequestPreloadStatus() {
+    await mrPreloadReady;
+    if (!mrPreloadHandle) throw new Error('MR preload module failed to load.');
+    return mrPreloadHandle.preloadStatus();
+  }
+  async function preloadFullProject(progress = () => {}, requestedRef = '') {
+    await mrPreloadReady;
+    if (!mrPreloadHandle) throw new Error('MR preload module failed to load.');
+    return mrPreloadHandle.preloadFullProject({ progress, ref: requestedRef });
+  }
+  async function fullProjectPreloadStatus() {
+    await mrPreloadReady;
+    if (!mrPreloadHandle) throw new Error('MR preload module failed to load.');
+    return mrPreloadHandle.fullProjectStatus();
+  }
+  function invalidateCacheState() {
+    if (mrPreloadHandle) mrPreloadHandle.invalidateCache();
+    else pendingInvalidate = true;
+  }
 
   const state = {
     enabled: false,
@@ -590,44 +687,10 @@
     return `Fetching project Go sources · ${progress.percentage}% · ${progress.completed} / ${progress.total} files`;
   }
 
-  function relatedLoadingProgress(phase, completed = 0, total = 0, details = {}) {
-    const ranges = {
-      changed: [5, 40],
-      dependencies: [40, 65],
-      candidates: [75, 95],
-    };
-    const safeTotal = Math.max(0, Number.isFinite(total) ? Math.floor(total) : 0);
-    const safeCompleted = Math.min(safeTotal, Math.max(0, Number.isFinite(completed) ? Math.floor(completed) : 0));
-    const fraction = Math.max(0, Math.min(1, Number.isFinite(details.packageFraction) ? details.packageFraction : 0));
-    let percentage = 0;
-    if (phase === 'ready') percentage = 100;
-    else if (phase === 'searching') percentage = details.phaseDetail === 'implementations' ? 72 : 68;
-    else if (phase === 'saving') percentage = 98;
-    else if (ranges[phase]) {
-      const [start, end] = ranges[phase];
-      const progress = safeTotal ? (safeCompleted + fraction) / safeTotal : 1;
-      percentage = Math.round(start + Math.min(1, progress) * (end - start));
-    }
-    const { packageFraction: _packageFraction, ...rest } = details;
-    return { phase, completed: safeCompleted, total: safeTotal, percentage, unit: 'packages', ...rest };
-  }
-
-  function relatedLoadingMessage(progress) {
-    if (progress.phase === 'discovering') return 'Discovering changed Go packages…';
-    if (progress.phase === 'searching') {
-      return progress.phaseDetail === 'implementations'
-        ? `Finding likely implementations · ${progress.percentage}%`
-        : `Finding likely usages · ${progress.percentage}%`;
-    }
-    if (progress.phase === 'saving') return `Saving related cache · ${progress.percentage}%`;
-    if (progress.phase === 'ready') return 'Related MR cache ready';
-    const labels = {
-      changed: 'Caching changed packages',
-      dependencies: 'Caching direct dependencies',
-      candidates: 'Caching likely related packages',
-    };
-    return `${labels[progress.phase] || 'Caching related packages'} · ${progress.percentage}% · ${progress.completed} / ${progress.total} packages`;
-  }
+  // relatedLoadingProgress/relatedLoadingMessage (MR-related preload's own
+  // progress view-model formatters) moved to
+  // page/features/mr-preload.internal.js (ticket 19) — they were only ever
+  // used by preloadMergeRequest, also moved there.
 
   // Temporary bridge onto platform/rpc-client (ticket 09): go-navigation
   // still dispatches by a dynamic wire-method-name string (`resolveAt(target,
@@ -1081,230 +1144,13 @@
     return ref;
   }
 
-  function mergeSearchStatus(current, next) {
-    if (current === 'unavailable' || next === 'unavailable') return 'unavailable';
-    if (current === 'limited' || next === 'limited') return 'limited';
-    return 'complete';
-  }
-
-  function relatedReadyMessage(searchStatus) {
-    if (searchStatus === 'unavailable') return 'Related cache ready · code search unavailable';
-    if (searchStatus === 'limited') return 'Related cache ready · candidate search limited';
-    return 'Related MR cache ready';
-  }
-
-  function implementationSearchTerms(interfaceRecord, interfacesByIdentity = new Map()) {
-    const terms = new Set();
-    const visited = new Set();
-    const collect = (record) => {
-      if (!record || visited.has(record.identity)) return;
-      visited.add(record.identity);
-      for (const methodName of record.methodNames || []) {
-        if (methodName) terms.add(methodName);
-      }
-      for (const embeddedIdentity of record.embedded || []) collect(interfacesByIdentity.get(embeddedIdentity));
-    };
-    collect(interfaceRecord);
-    return [...terms].sort();
-  }
-
-  async function mergeRequestPreloadStatus() {
-    const context = projectContext();
-    if (!context) throw new Error('GitLab project context is unavailable.');
-    const ref = await mergeRequestHeadRef();
-    const mergeRequest = mergeRequestIID();
-    const result = await workerRPC('projectCacheStatus', { origin: location.origin, project: context.project, mergeRequest, ref });
-    return { ...result, ref };
-  }
-
-  async function preloadMergeRequest(progress = () => {}) {
-    const context = projectContext();
-    if (!context) throw new Error('GitLab project context is unavailable.');
-    const ref = await mergeRequestHeadRef();
-    const mergeRequest = mergeRequestIID();
-    const scope = { origin: location.origin, project: context.project, mergeRequest, ref };
-    const cacheStatus = await workerRPC('projectCacheStatus', scope);
-    if (cacheStatus.status === 'complete') {
-      progress(relatedReadyMessage(cacheStatus.searchStatus), projectLoadingProgress('ready', 0, 0, {
-        coverage: cacheStatus.coverage,
-        searchStatus: cacheStatus.searchStatus,
-      }));
-      return { ...cacheStatus, ref };
-    }
-
-    const tracker = { files: 0, cached: 0, downloaded: 0 };
-    const relations = new Map();
-    const loaded = new Set();
-    const report = (update, message = relatedLoadingMessage(update)) => progress(message, update);
-    const reportDiscovery = (message, details = {}) => report(relatedLoadingProgress('discovering', 0, 0, {
-      cached: tracker.cached,
-      downloaded: tracker.downloaded,
-      remaining: 0,
-      packages: loaded.size,
-      ...details,
-    }), message);
-    const loadRelatedPackage = async (packagePath, phase, packageIndex, packageTotal) => {
-      const label = packagePath || 'root package';
-      const result = await loadPackage(packagePath, ref, (_message, update) => {
-        const packageFraction = update.phase === 'discovering' ? 0 : Math.min(1, (update.percentage || 0) / 100);
-        const aggregate = relatedLoadingProgress(phase, packageIndex, packageTotal, {
-          packageFraction,
-          cached: tracker.cached + (update.cached || 0),
-          downloaded: tracker.downloaded + (update.downloaded || 0),
-          remaining: Math.max(0, (update.total || 0) - (update.completed || 0)),
-          packages: loaded.size,
-        });
-        report(aggregate);
-      });
-      const files = result.files || 0;
-      const downloaded = result.downloaded || 0;
-      tracker.files += files;
-      tracker.downloaded += downloaded;
-      tracker.cached += Number.isFinite(result.cached) ? result.cached : Math.max(0, files - downloaded);
-      const relation = await workerRPC('packageRelations', { origin: location.origin, project: context.project, ref, packagePath });
-      if (relation.status !== 'relations') throw new Error(`Unable to inspect related package ${label}`);
-      relations.set(packagePath, relation);
-      loaded.add(packagePath);
-      return relation;
-    };
-    const loadPhase = async (packagePaths, phase) => {
-      const pending = [...new Set(packagePaths)].filter((packagePath) => !loaded.has(packagePath)).sort();
-      if (!pending.length) {
-        report(relatedLoadingProgress(phase, 0, 0, {
-          cached: tracker.cached,
-          downloaded: tracker.downloaded,
-          remaining: 0,
-          packages: loaded.size,
-        }));
-        return;
-      }
-      for (let index = 0; index < pending.length; index++) {
-        await loadRelatedPackage(pending[index], phase, index, pending.length);
-        report(relatedLoadingProgress(phase, index + 1, pending.length, {
-          cached: tracker.cached,
-          downloaded: tracker.downloaded,
-          remaining: 0,
-          packages: loaded.size,
-        }));
-      }
-    };
-
-    reportDiscovery('Discovering changed Go packages…');
-    const changedFiles = await listMergeRequestChangedFiles();
-    const seedPackages = [...new Set(changedFiles.map(dirname))].sort();
-    await loadPhase(seedPackages, 'changed');
-
-    const directDependencies = [...new Set(seedPackages.flatMap((packagePath) => relations.get(packagePath)?.imports || []))];
-    await loadPhase(directDependencies, 'dependencies');
-
-    // The sidebar intentionally performs a bounded candidate search. Deeper
-    // traversal stays lazy, while the popup remains the exhaustive option.
-    let searchStatus = 'limited';
-    const modulePath = await modulePathFor(ref);
-    const referencedImports = seedPackages.flatMap((packagePath) => relations.get(packagePath)?.referencedImports || []);
-    const availableInterfaces = new Map();
-    for (const relation of relations.values()) {
-      for (const interfaceRecord of relation.interfaces || []) availableInterfaces.set(interfaceRecord.identity, interfaceRecord);
-    }
-    const relevantInterfaces = new Map();
-    for (const packagePath of seedPackages) {
-      for (const interfaceRecord of relations.get(packagePath)?.interfaces || []) relevantInterfaces.set(interfaceRecord.identity, interfaceRecord);
-    }
-    for (const reference of referencedImports) {
-      const interfaceRecord = relations.get(reference.packagePath)?.interfaces.find(({ name }) => name === reference.name);
-      if (interfaceRecord) relevantInterfaces.set(interfaceRecord.identity, interfaceRecord);
-    }
-
-    const searchCache = new Map();
-    let searchQueries = 0;
-    const searchCandidates = async (query) => {
-      if (!searchCache.has(query)) {
-        if (searchQueries >= RELATED_CACHE_MAX_SEARCH_QUERIES) return new Set();
-        searchQueries++;
-        searchCache.set(query, searchProjectBlobPaths(query, ref, {
-          maxPages: RELATED_CACHE_SEARCH_PAGES,
-          maxPaths: RELATED_CACHE_MAX_CANDIDATE_PACKAGES * 2,
-        }));
-      }
-      const result = await searchCache.get(query);
-      searchStatus = mergeSearchStatus(searchStatus, result.status);
-      return new Set(result.paths.map(dirname));
-    };
-    const candidates = new Set();
-    if (!modulePath) {
-      searchStatus = 'limited';
-    } else {
-      report(relatedLoadingProgress('searching', 0, 0, { phaseDetail: 'usages' }));
-      for (const packagePath of seedPackages) {
-        const importPath = [modulePath, packagePath].filter(Boolean).join('/');
-        for (const candidate of await searchCandidates(importPath)) candidates.add(candidate);
-      }
-
-      report(relatedLoadingProgress('searching', 0, 0, { phaseDetail: 'implementations' }));
-      for (const interfaceRecord of relevantInterfaces.values()) {
-        for (const term of implementationSearchTerms(interfaceRecord, availableInterfaces)) {
-          for (const candidate of await searchCandidates(term)) candidates.add(candidate);
-        }
-      }
-    }
-
-    const boundedCandidates = [...candidates]
-      .filter((packagePath) => !loaded.has(packagePath))
-      .sort()
-      .slice(0, RELATED_CACHE_MAX_CANDIDATE_PACKAGES);
-    await loadPhase(boundedCandidates, 'candidates');
-    const finalProgress = relatedLoadingProgress('saving', loaded.size, loaded.size, {
-      cached: tracker.cached,
-      downloaded: tracker.downloaded,
-      remaining: 0,
-      packages: loaded.size,
-      searchStatus,
-    });
-    report(finalProgress, `Saving related cache · ${loaded.size} packages · ${finalProgress.percentage}%`);
-    await workerRPC('cacheMergeRequest', { ...scope, packagePaths: [...loaded], searchStatus });
-    const verified = await workerRPC('projectCacheStatus', scope);
-    if (verified.status !== 'complete') throw new Error('Related MR sources were indexed but not stored in the persistent cache.');
-    progress(relatedReadyMessage(verified.searchStatus), relatedLoadingProgress('ready', loaded.size, loaded.size, {
-      cached: tracker.cached,
-      downloaded: tracker.downloaded,
-      remaining: 0,
-      packages: loaded.size,
-      searchStatus: verified.searchStatus,
-    }));
-    return { ...verified, ref };
-  }
-
-  async function fullProjectPreloadStatus() {
-    const context = projectContext();
-    if (!context) throw new Error('GitLab project context is unavailable.');
-    const ref = await mergeRequestHeadRef();
-    const result = await workerRPC('projectCacheStatus', { origin: location.origin, project: context.project, ref });
-    return { ...result, ref };
-  }
-
-  async function preloadFullProject(progress = () => {}, requestedRef = '') {
-    const context = projectContext();
-    if (!context) throw new Error('GitLab project context is unavailable.');
-    const ref = requestedRef || await mergeRequestHeadRef();
-    if (!COMMIT_SHA.test(ref)) throw new Error('Full-project search requires an immutable commit.');
-    const cacheStatus = await workerRPC('projectCacheStatus', { origin: location.origin, project: context.project, ref });
-    if (cacheStatus.status !== 'complete') {
-      const projectKey = `${location.origin}\u0000${context.project}\u0000${ref}`;
-      if (!state.projectProgressListeners.has(projectKey)) state.projects.delete(projectKey);
-      await loadProject(ref, progress);
-    } else {
-      progress('Full project cache ready', projectLoadingProgress('ready'));
-    }
-    const verified = await workerRPC('projectCacheStatus', { origin: location.origin, project: context.project, ref });
-    if (verified.status !== 'complete') throw new Error('Project sources were indexed but not stored in the persistent cache.');
-    return { ...verified, ref };
-  }
-
-  function invalidateCacheState() {
-    state.packages.clear();
-    state.projects.clear();
-    state.projectProgressListeners.clear();
-  }
+  // mergeSearchStatus/relatedReadyMessage/implementationSearchTerms and
+  // mergeRequestPreloadStatus/preloadMergeRequest/fullProjectPreloadStatus/
+  // preloadFullProject/invalidateCacheState all moved to
+  // page/features/mr-preload.js and its .internal.js pure core (ticket 19).
+  // The bridge near the top of this file ("Bridge onto
+  // page/features/mr-preload.js") now defines these same five names as
+  // thin async adapters onto the mounted module's handle.
 
   async function resolveAt(target, method, onProgress) {
     const file = fileContextFor(target.cell);
@@ -3163,7 +3009,7 @@
     clearBookmarks,
     recoverBookmark,
     registerBookmarkSurface,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, mergeSearchStatus, relatedReadyMessage, implementationSearchTerms, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, relatedLoadingProgress, relatedLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked, setClock, clockReady: legacyDebounceIdleReady, overlayRegistryReady,
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked, setClock, clockReady: legacyDebounceIdleReady, overlayRegistryReady, mrPreloadReady,
       // Live accessor (ticket 08): scheduleDiffReconciliation is reassigned
       // over time (null -> queue-until-ready placeholder -> real debounced
       // function), so tests need a getter rather than the value captured

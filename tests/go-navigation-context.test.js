@@ -292,36 +292,10 @@ test('reports determinate full-project preload progress through cache completion
   assert.equal(helpers.projectLoadingMessage(reused), '1,800 cached · 200 remaining · 81%');
 });
 
-test('reports MR-related preload progress in fixed linear package phases', () => {
-  const updates = [
-    helpers.relatedLoadingProgress('discovering'),
-    helpers.relatedLoadingProgress('changed', 0, 2),
-    helpers.relatedLoadingProgress('changed', 1, 2),
-    helpers.relatedLoadingProgress('changed', 2, 2),
-    helpers.relatedLoadingProgress('dependencies', 0, 1),
-    helpers.relatedLoadingProgress('dependencies', 1, 1),
-    helpers.relatedLoadingProgress('searching', 0, 0, { phaseDetail: 'usages' }),
-    helpers.relatedLoadingProgress('searching', 0, 0, { phaseDetail: 'implementations' }),
-    helpers.relatedLoadingProgress('candidates', 0, 2),
-    helpers.relatedLoadingProgress('candidates', 1, 2),
-    helpers.relatedLoadingProgress('candidates', 2, 2),
-    helpers.relatedLoadingProgress('saving', 4, 4),
-    helpers.relatedLoadingProgress('ready', 4, 4),
-  ];
-  assert.deepEqual(updates.map(({ percentage }) => percentage), [0, 5, 23, 40, 40, 65, 68, 72, 75, 85, 95, 98, 100]);
-  assert.equal(updates.every((update, index) => index === 0 || update.percentage >= updates[index - 1].percentage), true);
-  assert.equal(
-    helpers.relatedLoadingMessage(helpers.relatedLoadingProgress('candidates', 1, 2)),
-    'Caching likely related packages · 85% · 1 / 2 packages',
-  );
-});
-
-test('preserves the most restrictive optional search coverage state', () => {
-  assert.equal(helpers.mergeSearchStatus('complete', 'limited'), 'limited');
-  assert.equal(helpers.mergeSearchStatus('limited', 'complete'), 'limited');
-  assert.equal(helpers.mergeSearchStatus('limited', 'unavailable'), 'unavailable');
-  assert.equal(helpers.relatedReadyMessage('unavailable'), 'Related cache ready · code search unavailable');
-});
+// relatedLoadingProgress/relatedLoadingMessage/mergeSearchStatus/
+// relatedReadyMessage/implementationSearchTerms and their coverage moved to
+// tests/features-mr-preload.test.js (ticket 19): those pure functions now
+// live in page/features/mr-preload.internal.js, not go-navigation.js.
 
 test('routes interface declarations to implementations without searching on hover', () => {
   const result = { status: 'resolved', isDefinition: true, definition: { kind: 'interface' } };
@@ -751,33 +725,6 @@ test('falls back to sequential pagination when GitLab omits a total page count',
   } finally {
     globalThis.fetch = originalFetch;
   }
-});
-
-test('uses every required interface method to discover candidate implementation packages', () => {
-  assert.deepEqual(
-    helpers.implementationSearchTerms({
-      name: 'ReadCloser',
-      methodNames: ['Read', 'Close'],
-    }),
-    ['Close', 'Read'],
-  );
-});
-
-test('uses methods inherited from indexed embedded interfaces to discover implementations', () => {
-  const reader = { identity: 'contracts.Reader', methodNames: ['Read'], embedded: [] };
-  const closer = { identity: 'contracts.Closer', methodNames: ['Close'], embedded: [] };
-  const readCloser = {
-    identity: 'contracts.ReadCloser',
-    methodNames: [],
-    embedded: ['contracts.Reader', 'contracts.Closer'],
-  };
-  assert.deepEqual(
-    helpers.implementationSearchTerms(readCloser, new Map([
-      [reader.identity, reader],
-      [closer.identity, closer],
-    ])),
-    ['Close', 'Read'],
-  );
 });
 
 test('exhausts commit-pinned basic code search and supports cancellation', async () => {

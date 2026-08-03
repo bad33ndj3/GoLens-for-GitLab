@@ -145,6 +145,28 @@ De feature-carve-outs snijden uit twee hub-bestanden; max één agent per hubbes
 gedeeld raakvlak van élk ticket — parallelle agents moeten hun entry met een eigen, unieke anchor
 toevoegen.
 
+## BLOKKADE: message-gestuurde features kunnen nog niet gemigreerd worden (2026-08-03, uit 16)
+
+Ticket 16 is geschreven, gefaald op de browser-smoke en teruggedraaid; zie
+`issues/16-feature-settings-overlay.md` voor het volledige bewijs. Twee structurele oorzaken,
+allebei buiten 16's eigen scope:
+
+1. **Load-race.** `bootstrap.js` laadt de page-modules via een asynchrone `import()`; hun
+   `chrome.runtime.onMessage`-listener bestaat pas ~15–30 ms na page-load. `content.js` en
+   `go-navigation.js` registreren synchroon. Elke message die in dat gat valt is voor de module
+   verloren — in productie: een popup-klik tijdens het laden doet stil niets.
+2. **Liegende ack.** `page/lifecycle` roept per ontwerp nooit `sendResponse` aan, dus `content.js`
+   blijft de responder en moet `ok: true` antwoorden zonder het werk gedaan te hebben.
+
+**Gevolg voor de planning:** tickets die een feature met een popup-/message-ingang uit een hub
+snijden (16 settings-overlay, 15 onboarding, en alles wat via `FEATURE_ROUTES` binnenkomt) zijn
+geblokkeerd tot er een ticket ligt dat (a) een synchroon geregistreerde, bufferende listener in
+`bootstrap.js` zet (queue-until-ready, zoals ticket 08's clock-bridge) en (b) beslist wie
+antwoordt. Puur DOM-/observer-gedreven features (13 generated-files) en RPC-features zonder
+message-ingang (19 mr-preload) hebben hier geen last van en zijn wél migreerbaar.
+
+De browser-smoke is bewust **niet** verzwakt om dit te laten passeren.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,

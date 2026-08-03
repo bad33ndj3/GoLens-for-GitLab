@@ -19,6 +19,7 @@ import { createClock } from './platform/clock.js';
 import { createSettingsStore } from './platform/settings-store.js';
 import { start as startLifecycle } from './lifecycle/index.js';
 import { mount as mountGeneratedFiles } from './features/generated-files.js';
+import { mount as mountMrPreload } from './features/mr-preload.js';
 
 export function mount(ctx = {}) {
   const clock = ctx.clock || createClock();
@@ -33,7 +34,10 @@ export function mount(ctx = {}) {
 
   const lifecycle = startLifecycle({
     platform: { clock, settings },
-    features: [{ name: 'generated-files', mount: mountGeneratedFiles }],
+    features: [
+      { name: 'generated-files', mount: mountGeneratedFiles },
+      { name: 'mr-preload', mount: mountMrPreload },
+    ],
   });
 
   let unmounted = false;
