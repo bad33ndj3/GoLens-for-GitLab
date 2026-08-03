@@ -16,6 +16,8 @@ const extensionFiles = [
   'manifest.json',
   'shortcut-settings.js',
   'bookmark-store.js',
+  'bootstrap.js',
+  'page',
   'content.js',
   'extension-cache-ui.js',
   'golens-theme.css',
