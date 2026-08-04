@@ -142,8 +142,14 @@ function implementationsSetup(scaleKey) {
     assert.ok(first.candidates.length >= 1, 'expected at least one Doer implementor');
     assert.equal(first.hasMore, true, `expected a second page of implementors for pageSize:${pageSize}`);
     assert.ok(first.nextCursor, 'expected a non-empty cursor for page two');
+    const pkg000Files = project.files.filter((file) => file.path.startsWith('pkg000/'));
     return {
-      index, interfaceDefinition: resolved.definition, firstPageCursor: first.nextCursor, pageSize,
+      index,
+      interfaceDefinition: resolved.definition,
+      firstPageCursor: first.nextCursor,
+      pageSize,
+      modulePath: project.modulePath,
+      pkg000Files,
     };
   };
 }
@@ -196,7 +202,18 @@ function scaleDependentCases(scaleKey, { indexProjectIterations, indexProjectWar
       iterations: otherIterations,
       warmup: otherWarmup,
       setup: implementationsSetup(scaleKey),
-      run: ({ index, interfaceDefinition, pageSize }) => {
+      run: ({
+        index, interfaceDefinition, pageSize, modulePath, pkg000Files,
+      }) => {
+        // Reindexing an already-indexed package re-parses only that
+        // package's own files (cheap) but bumps the index's single global
+        // mutationGeneration, invalidating every memoized findImplementations
+        // structure project-wide. Without this, the harness's own reused
+        // setup/context would make every iteration after the first a warm
+        // hit, hiding the genuinely cold cost this case exists to measure.
+        index.indexPackage({
+          ...SCOPE, packagePath: 'pkg000', modulePath, files: pkg000Files,
+        });
         const result = index.findImplementations({ ...SCOPE, interfaceDefinition, pageSize });
         assert.equal(result.status, 'implementations');
       },

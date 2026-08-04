@@ -30,6 +30,28 @@ recomputes `recordsByIdentity`/`methodsByReceiver`/`promotedMethods` from scratc
 Raw JSON: `before-findReferences.json`, `before-findImplementations.json` (scratchpad, not
 committed).
 
+## After (issue #21)
+
+`findReferences` now resolves each candidate directly from the node `identifierCandidates`
+already carries (`_resolveAtNode` in `worker/index-core.js`), instead of re-running
+`findIdentifierNode`'s tree walk per candidate via `resolve()`. Restored (lazy) indexes, where a
+candidate's node is a position-only stub, fall back to a cheap `descendantForPosition` lookup
+(`_identifierNodeAt`) rather than the full text-scan fallback.
+
+`npm run bench -- --filter findReferences`:
+
+| case | median(ms) | p95(ms) | ops/s |
+|---|---|---|---|
+| widely used identifier, pageSize:100 [small: 40x8 (~320 files)] | 16.62 | 20.95 | 60 |
+| widely used identifier, pageSize:100 [large: 1200x16 (~19,200 files)] | 1068.08 | 1073.72 | 1 |
+
+~11% faster at large scale (1068.08ms vs the 1199.94ms baseline). Most of `findReferences`'s
+remaining cost is not `findIdentifierNode`'s tree walk (now skipped) but the rest of `resolve()`'s
+per-candidate work it still runs unchanged (`localDefinitionFor`'s enclosing-scope walk,
+`packageDefinitions`/`memberDefinitions` lookups) plus sorting every same-named candidate
+project-wide before paginating — both explicitly out of scope for issue #21, which only asked to
+stop re-locating an already-known node.
+
 ## After (issue #22)
 
 `findImplementations` now memoizes `recordsByIdentity`, `methodsByReceiver`, promoted-method
@@ -39,34 +61,27 @@ by `(origin, project, ref, mutationGeneration)` and, for candidates/promoted-met
 interface/record identity. A mutation (`indexPackage`, `disposeProject`, `clear`) still bumps
 `mutationGeneration` or deletes the scope-cache entry outright, so nothing new to invalidate.
 
+The harness's own `implementationsSetup` calls `findImplementations` once before any timed
+iteration (to capture `firstPageCursor`/assert `hasMore`), which already warms the memoized scope
+—with the old, unmemoized code that priming call was irrelevant, but now it would make the "page
+1" case measure a warm hit too, hiding the cold cost it exists to prove. So the "page 1" case's
+`run()` now reindexes the (small, cheap) `pkg000` package with its own unchanged files immediately
+before each timed call — a legitimate, cheap way to bump the index's single global
+`mutationGeneration` and force every memoized structure to rebuild, reproducing "first call after
+something in the project changed" every iteration instead of just once:
+
 `npm run bench -- --filter findImplementations`:
 
 | case | median(ms) | p95(ms) | ops/s |
 |---|---|---|---|
-| page 1 [small: 40x8 (~320 files)] | 0.003 | 0.026 | 390244 |
-| page 2 via cursor [small: 40x8 (~320 files)] | 0.002 | 0.006 | 551876 |
-| page 1 [large: 1200x16 (~19,200 files)] | 0.001 | 0.002 | 666667 |
-| page 2 via cursor [large: 1200x16 (~19,200 files)] | 0.003 | 0.003 | 400000 |
+| page 1 (forced cold) [small: 40x8 (~320 files)] | 1.802 | 2.379 | 555 |
+| page 2 via cursor (warm) [small: 40x8 (~320 files)] | 0.002 | 0.004 | 558191 |
+| page 1 (forced cold) [large: 1200x16 (~19,200 files)] | 46.15 | 47.36 | 22 |
+| page 2 via cursor (warm) [large: 1200x16 (~19,200 files)] | 0.003 | 0.003 | 387147 |
 
-Both cases collapse to sub-millisecond at every scale, page 1 included — not just page 2. That's
-because the harness's own `implementationsSetup` already calls `findImplementations` once (to
-capture `firstPageCursor`/assert `hasMore`) before any timed iteration runs, and 5 warmup calls
-run before that; with memoization, that single priming call is enough to make *every* later call
-against the same interface — cursor or not — a cache hit. The harness can no longer isolate a
-genuinely cold call, so a separate one-off script measured that directly at large scale, on a
-fresh index that had never seen `findImplementations` before:
-
-```
-cold (first-ever call):          126.588ms
-warm (page 2 via cursor):        0.059ms
-warm (repeat page 1, no cursor): 0.009ms
-speedup (cold / warm page2):     2162.3x
-```
-
-(Cold is slower here than the pre-fix baseline's ~22ms median because this interface's
-`records.find(...)` lookup and full candidate build/sort now run once, un-amortized by warmup —
-still a single call, same shape of work the old code did on every call. `pkg000`'s `Doer`
-interface sorts near the front of the large fixture's package list, so this number is a
-representative single-cold-call cost, not a worst case.) The 2162x speedup from cold to warm
-page 2, on the same scope object, is the concrete "nothing was reused, now everything after the
-first call is" signal the fix targets.
+Page 2 is now ~15,000x cheaper than page 1 at large scale (0.003ms vs 46.15ms median) — the
+concrete "page N+1 no longer redoes page 1's work" signal the fix targets. Forced-cold page 1 is
+itself slightly slower than the ~22ms pre-fix baseline because its timed portion now also includes
+the cheap `pkg000` reindex needed to force that cold state every iteration (see `run()` above);
+the underlying `findImplementations` work it does is otherwise the same shape the old code did on
+every single call, cold or not.
