@@ -519,8 +519,10 @@ test('renders stable IDE-style GoDoc, implementation, and navigation popovers', 
   assert.equal(shadow.querySelector('.docs').textContent, 'Not found in 12 indexed packages. Search coverage is incomplete.');
   assert.equal(shadow.querySelector('.scope').textContent, '12 indexed packages · search coverage is incomplete');
   assert.equal([...shadow.querySelectorAll('.choices button')].at(-1).textContent, 'Search complete project');
-  assert.equal(shadow.querySelector('.full-search-dialog').getAttribute('aria-modal'), 'true');
-  assert.equal(shadow.querySelector('.full-search-minimize').getAttribute('aria-label'), 'Minimize full-project search');
+  // The full-search modal itself is page/features/project-search.js's own
+  // private DOM as of ticket 20 (tests/features-project-search.test.js) —
+  // this file only asserts the popover still renders the action that opens
+  // it.
 
   helpers.showResult({
     status: 'implementations',

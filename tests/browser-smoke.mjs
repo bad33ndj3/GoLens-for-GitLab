@@ -479,7 +479,6 @@ const html = `<!doctype html>
         document.body.dataset.goPopoverCloseVisible = String(!goUI.querySelector('.close-button')?.hidden);
         document.body.dataset.goScope = goUI.querySelector('.scope')?.textContent || '';
         document.body.dataset.goFullSearchAction = String([...goUI.querySelectorAll('.choices button')].some((button) => button.textContent === 'Search complete project'));
-        document.body.dataset.goFullSearchModal = String(goUI.querySelector('.full-search-dialog')?.getAttribute('aria-modal') === 'true');
         document.body.dataset.goInDiffDestination = String(Boolean(goUI.querySelector('.destination-in-diff')));
         document.body.dataset.goNewTabDestination = String(Boolean(goUI.querySelector('.destination-new-tab')));
         const targetStyle = getComputedStyle(document.getElementById('go-target'));
@@ -488,10 +487,14 @@ const html = `<!doctype html>
         document.body.dataset.goTargetOutline = targetStyle.outlineStyle;
         const fullSearchAction = [...goUI.querySelectorAll('.choices button')].find((button) => button.textContent === 'Search complete project');
         fullSearchAction?.click();
-        document.body.dataset.goFullSearchOpened = String(!goUI.querySelector('.full-search-backdrop')?.hidden);
-        document.body.dataset.goFullSearchCancelVisible = String(Boolean(goUI.querySelector('.full-search-cancel')));
-        goUI.querySelector('.full-search-cancel')?.click();
-        document.body.dataset.goFullSearchCancelled = String(goUI.querySelector('.full-search-backdrop')?.hidden && goUI.querySelector('.scope')?.textContent.includes('incomplete'));
+        // page/features/project-search.js (ticket 20) owns the modal DOM in
+        // its own shadow host now, separate from goUI's popover host.
+        const psUI = document.getElementById('golens-project-search-root')?.shadowRoot;
+        document.body.dataset.goFullSearchModal = String(psUI?.querySelector('.full-search-dialog')?.getAttribute('aria-modal') === 'true');
+        document.body.dataset.goFullSearchOpened = String(!psUI?.querySelector('.full-search-backdrop')?.hidden);
+        document.body.dataset.goFullSearchCancelVisible = String(Boolean(psUI?.querySelector('.full-search-cancel')));
+        psUI?.querySelector('.full-search-cancel')?.click();
+        document.body.dataset.goFullSearchCancelled = String(Boolean(psUI?.querySelector('.full-search-backdrop')?.hidden) && goUI.querySelector('.scope')?.textContent.includes('incomplete'));
         goUI.querySelector('.choices .choice')?.click();
         document.body.dataset.goChoiceClosedPopover = String(!popover.classList.contains('show'));
         const shortcutTarget = document.getElementById('go-target');

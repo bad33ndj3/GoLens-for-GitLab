@@ -25,6 +25,7 @@ import { mount as mountOnboarding } from './features/onboarding.js';
 import { mount as mountKeyboardNav } from './features/keyboard-nav.js';
 import { mount as mountMrPreload } from './features/mr-preload.js';
 import { mount as mountCelebration } from './features/celebration.js';
+import { mount as mountProjectSearch } from './features/project-search.js';
 
 export function mount(ctx = {}) {
   const clock = ctx.clock || createClock();
@@ -64,6 +65,14 @@ export function mount(ctx = {}) {
       },
       { name: 'mr-preload', mount: mountMrPreload },
       { name: 'celebration', mount: mountCelebration },
+      // Same "second, inert instance" shape as mr-preload above: this
+      // mount has no ctx.legacy (page/lifecycle has no access to
+      // go-navigation.js's closures), so open()/close() degrade to
+      // `unavailable` — the functional instance is go-navigation.js's own
+      // self-bridge (see its "Bridge onto page/features/project-search.js"
+      // comment). Registered here anyway so the module graph stays the
+      // single source of truth for "what features exist" (ticket 04 §1).
+      { name: 'project-search', mount: mountProjectSearch },
     ],
     // Opt out of lifecycle's own chrome.runtime.onMessage registration:
     // bootstrap.js registers synchronously, before this module graph even

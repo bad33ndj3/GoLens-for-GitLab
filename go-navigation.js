@@ -221,6 +221,59 @@
     else pendingInvalidate = true;
   }
 
+  // Bridge onto page/features/project-search.js (ticket 20): the "search
+  // complete project" modal used to be four functions defined directly in
+  // this file (searchCompleteProject/openFullSearch/runFullSearch plus the
+  // minimize/restore/cancel trio). Its paging/progress decision core is
+  // genuinely extractable — it now lives in
+  // page/features/project-search.internal.js — but the execution shell
+  // still needs searchProjectBlobPaths/loadPackage (shared with hover/click
+  // resolution and mr-preload, not migrated by this ticket) and the
+  // popover-rendering functions showResult/pinPopover/hidePopover/toast
+  // (also shared, likewise not migrated). Same escape hatch as the
+  // mr-preload bridge above: a `legacy` capability bag built from this
+  // file's own functions, mounted fully capable here — unlike
+  // page/main.js's page/lifecycle, which mounts a second, capability-less
+  // instance purely for message routing (see project-search.js's own
+  // header comment).
+  async function loadProjectSearchModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/features/project-search.js'));
+    } catch {
+      return await import('./page/features/project-search.js');
+    }
+  }
+  let projectSearchHandle = null;
+  // Exposed via __test.projectSearchReady so tests can deterministically
+  // await the load instead of racing it; production code never awaits this
+  // itself.
+  const projectSearchReady = loadProjectSearchModule()
+    .then(({ mount }) => {
+      projectSearchHandle = mount({
+        legacy: {
+          searchProjectBlobPaths,
+          loadPackage,
+          findReferencesAt,
+          findImplementationsAt,
+          showResult,
+          pinPopover,
+          hidePopover,
+          toast,
+          isEnabled: () => state.enabled,
+        },
+      });
+    })
+    .catch(() => {
+      // Both the chrome.runtime.getURL and relative import fallbacks failed
+      // (should not happen in production). Leave projectSearchHandle null;
+      // openFullSearch() below then permanently no-ops instead of crashing
+      // on a null handle (mirrors the mr-preload bridge's failure handling).
+    });
+
+  function openFullSearch(result, pointer) {
+    projectSearchHandle?.open(result, pointer);
+  }
+
   const state = {
     enabled: false,
     packages: new Map(),
@@ -241,7 +294,6 @@
     activeElement: null,
     lastErrorToast: '',
     toastTimer: null,
-    fullSearch: null,
     abortController: null,
     ui: null,
     selectedIdentifier: '',
@@ -1273,19 +1325,12 @@
         .toast-actions button:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
         .toast-actions button:active { background:var(--golens-surface-pressed); transform:translateY(1px); }
         .toast-actions button:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:1px; }
-        .full-search-backdrop { position:fixed; inset:0; display:grid; place-items:center; padding:20px; background:rgba(0,0,0,.58); pointer-events:auto; } .full-search-backdrop[hidden] { display:none; }
-        .full-search-dialog { width:min(480px,100%); padding:var(--golens-space-4); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-lg); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); }
-        .full-search-header { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--golens-space-3); } .full-search-title { margin:0; font-size:15px; } .full-search-copy { margin:8px 0 14px; color:var(--golens-text-secondary); }
-        .full-search-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; } .full-search-actions button,.full-search-chip { padding:7px 10px; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-sm); background:var(--golens-surface-raised); color:var(--golens-text-primary); cursor:pointer; }
-        .full-search-chip { position:fixed; right:18px; bottom:18px; pointer-events:auto; } .full-search-chip[hidden] { display:none; }
         @media (prefers-reduced-motion:reduce) { .header-action,.choice,.loading-track > i { transition:none; } .header-action:active,.choice:active { transform:none; } }
       </style>
       <section class="popover" role="tooltip" aria-labelledby="golens-popover-title">
         <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><div class="header-actions"><button class="header-action copy-button" type="button" aria-label="Copy source location" title="Copy source location" hidden><svg class="copy-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg><svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.25 3.15 3.15L13 4.6"/></svg></button><button class="header-action close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></header>
         <div class="popover-body"><div class="loading-progress" hidden role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase"></span><span class="loading-progress-count"></span></div><div class="loading-track" role="progressbar" aria-label="Go intelligence loading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="docs"></div><div class="scope" hidden></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
       </section>
-      <div class="full-search-backdrop" hidden><section class="full-search-dialog" role="dialog" aria-modal="true" aria-labelledby="golens-full-search-title"><div class="full-search-header"><div><h2 id="golens-full-search-title" class="full-search-title">Search complete project</h2><p class="full-search-copy">GoLens searches the complete project at this commit, then downloads only matching Go packages.</p></div><button class="header-action full-search-minimize" type="button" aria-label="Minimize full-project search">−</button></div><div class="loading-progress full-search-progress" role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase">Preparing project</span><span class="loading-progress-count">0%</span></div><div class="loading-track" role="progressbar" aria-label="Full-project search progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="full-search-actions"><button class="full-search-retry" type="button" hidden>Retry</button><button class="full-search-cancel" type="button">Cancel</button><button class="full-search-dismiss" type="button">Minimize</button></div></section></div>
-      <button class="full-search-chip" type="button" hidden>Project search · 0%</button>
       <section class="toast" data-kind="message" role="status" aria-live="polite"><p class="toast-label">Shortcut tip</p><div class="toast-content"><div class="toast-message"></div><kbd class="toast-binding"></kbd></div><div class="toast-actions"><button type="button" data-action="shortcut-tip-dismiss">Got it</button><button type="button" data-action="shortcut-tip-disable">Turn tips off</button></div></section>
     `;
     document.body.append(host);
@@ -1297,11 +1342,6 @@
     popover.addEventListener('keydown', onKeyDown);
     popover.querySelector('.copy-button').addEventListener('click', (event) => copySourceLocation(event.currentTarget));
     popover.querySelector('.close-button').addEventListener('click', hidePopover);
-    shadow.querySelector('.full-search-minimize').addEventListener('click', minimizeFullSearch);
-    shadow.querySelector('.full-search-dismiss').addEventListener('click', minimizeFullSearch);
-    shadow.querySelector('.full-search-chip').addEventListener('click', restoreFullSearch);
-    shadow.querySelector('.full-search-retry').addEventListener('click', runFullSearch);
-    shadow.querySelector('.full-search-cancel').addEventListener('click', cancelFullSearch);
     shadow.querySelector('[data-action="shortcut-tip-dismiss"]').addEventListener('click', hideToast);
     shadow.querySelector('[data-action="shortcut-tip-disable"]').addEventListener('click', async () => {
       const saved = await globalThis.GoLensShortcutCoach?.setEnabled?.(false);
@@ -1627,133 +1667,6 @@
     button.textContent = label;
     button.addEventListener('click', listener);
     return button;
-  }
-
-  function updateFullSearchProgress(message, progress = null) {
-    const shadow = ensureUI();
-    const panel = shadow.querySelector('.full-search-progress');
-    const percentage = progress?.percentage ?? 0;
-    panel.querySelector('.loading-progress-phase').textContent = message || 'Preparing project';
-    panel.querySelector('.loading-progress-count').textContent = `${percentage}%`;
-    panel.querySelector('.loading-track').setAttribute('aria-valuenow', String(percentage));
-    panel.querySelector('.loading-track i').style.width = `${percentage}%`;
-    shadow.querySelector('.full-search-chip').textContent = `Project search · ${percentage}%`;
-  }
-
-  function minimizeFullSearch() {
-    if (!state.fullSearch) return;
-    const shadow = ensureUI();
-    shadow.querySelector('.full-search-backdrop').hidden = true;
-    const chip = shadow.querySelector('.full-search-chip');
-    chip.hidden = false;
-    chip.focus();
-  }
-
-  function restoreFullSearch() {
-    if (!state.fullSearch) return;
-    const shadow = ensureUI();
-    shadow.querySelector('.full-search-chip').hidden = true;
-    shadow.querySelector('.full-search-backdrop').hidden = false;
-    shadow.querySelector(state.fullSearch.status === 'error' ? '.full-search-retry' : '.full-search-minimize').focus();
-  }
-
-  function cancelFullSearch() {
-    const search = state.fullSearch;
-    if (!search) return;
-    search.controller?.abort();
-    state.fullSearch = null;
-    const shadow = ensureUI();
-    shadow.querySelector('.full-search-backdrop').hidden = true;
-    shadow.querySelector('.full-search-chip').hidden = true;
-    showResult(search.result, search.pointer);
-    pinPopover(search.pointer);
-    toast('Complete project search cancelled. Coverage remains incomplete.');
-  }
-
-  async function searchCompleteProject(search) {
-    const terms = search.result.request.kind === 'references'
-      ? [search.result.request.definition.name]
-      : search.result.searchTerms || [];
-    if (!terms.length) {
-      throw new Error('This interface has no searchable methods, so code search cannot prove complete coverage.');
-    }
-    const candidatePackages = new Set();
-    for (let index = 0; index < terms.length; index++) {
-      updateFullSearchProgress(
-        `Searching project code for ${terms[index]}`,
-        { percentage: Math.round(5 + (index / terms.length) * 30) },
-      );
-      const result = await searchProjectBlobPaths(terms[index], search.result.request.ref, {
-        maxPages: Infinity,
-        maxPaths: Infinity,
-        searchType: 'basic',
-        signal: search.controller.signal,
-      });
-      if (result.status !== 'complete') {
-        throw new Error('GitLab code search could not prove complete coverage for this project.');
-      }
-      result.paths.map(dirname).forEach((packagePath) => candidatePackages.add(packagePath));
-    }
-    const packages = [...candidatePackages].sort();
-    for (let index = 0; index < packages.length; index++) {
-      updateFullSearchProgress(
-        `Indexing matching package ${index + 1} of ${packages.length}`,
-        { percentage: Math.round(35 + ((index + 1) / Math.max(1, packages.length)) * 60) },
-      );
-      await loadPackage(packages[index], search.result.request.ref, () => {}, search.controller.signal);
-    }
-    return {
-      kind: 'completeProjectSearch',
-      packageCount: packages.length,
-      complete: true,
-      searchStatus: 'complete',
-      strategy: 'gitlabCodeSearch',
-    };
-  }
-
-  async function rerunFullSearchQuery(search, scope) {
-    if (search.result.request.kind === 'references') {
-      return findReferencesAt(search.result.request.target, search.result.request.definition, '', scope);
-    }
-    return findImplementationsAt(search.result.request.target, search.result.request.definition, undefined, '', scope);
-  }
-
-  async function runFullSearch() {
-    const search = state.fullSearch;
-    if (!search || search.status === 'busy') return;
-    const shadow = ensureUI();
-    search.status = 'busy';
-    search.controller = new AbortController();
-    shadow.querySelector('.full-search-retry').hidden = true;
-    updateFullSearchProgress('Preparing complete project search');
-    try {
-      const scope = await searchCompleteProject(search);
-      if (state.fullSearch !== search || !state.enabled) return;
-      updateFullSearchProgress('Refreshing semantic result', { percentage: 100 });
-      const refreshed = await rerunFullSearchQuery(search, scope);
-      if (state.fullSearch !== search || !state.enabled) return;
-      state.fullSearch = null;
-      shadow.querySelector('.full-search-backdrop').hidden = true;
-      shadow.querySelector('.full-search-chip').hidden = true;
-      showResult(refreshed, search.pointer);
-      pinPopover(search.pointer);
-    } catch (error) {
-      if (state.fullSearch !== search) return;
-      search.status = 'error';
-      search.controller = null;
-      updateFullSearchProgress(error.message || 'Full-project search failed');
-      shadow.querySelector('.full-search-retry').hidden = false;
-      restoreFullSearch();
-    }
-  }
-
-  function openFullSearch(result, pointer) {
-    if (!result.request?.ref) return;
-    state.fullSearch?.controller?.abort();
-    state.fullSearch = { result, pointer, status: 'idle' };
-    hidePopover();
-    restoreFullSearch();
-    runFullSearch();
   }
 
   async function loadMoreResults(result, pointer, button) {
@@ -2684,11 +2597,17 @@
   function onKeyDown(event) {
     if (event.key !== 'Escape') return;
     if ([...event.composedPath(), document.activeElement].some((target) => target?.closest?.('input, textarea, select, [contenteditable], dialog, [role="dialog"], [aria-modal="true"]'))) return;
-    const fullSearchOpen = state.ui && !state.ui.shadowRoot.querySelector('.full-search-backdrop').hidden;
-    if (fullSearchOpen) {
+    // Ticket 20: the full-search modal's DOM moved into
+    // page/features/project-search.js's own shadow host, so this can no
+    // longer read `.full-search-backdrop` directly — it asks the
+    // self-bridged handle instead. Only reached when the modal does NOT
+    // have focus (the guard above already suppresses Escape while it
+    // does, via event.composedPath()'s in-shadow entries) — e.g. a click
+    // on the backdrop blurred focus to <body> without closing the dialog.
+    // See project-search.js's header comment for the fuller trace.
+    if (projectSearchHandle?.minimize?.()?.kind === 'minimized') {
       event.preventDefault();
       event.stopPropagation();
-      minimizeFullSearch();
       return;
     }
     if (state.popoverMode === 'hidden') {
@@ -2883,8 +2802,7 @@
     state.refsPromise = null;
     state.refsKey = '';
     state.refsFetchedAt = 0;
-    state.fullSearch?.controller?.abort();
-    state.fullSearch = null;
+    projectSearchHandle?.close({ restorePopover: false });
     state.ui?.remove();
     state.ui = null;
   }
@@ -2921,7 +2839,7 @@
     clearBookmarks,
     recoverBookmark,
     registerBookmarkSurface,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, locationKey, showShortcutCoachHint, setClock, clockReady: legacyDebounceIdleReady, keyboardNavReady, mrPreloadReady,
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, locationKey, showShortcutCoachHint, setClock, clockReady: legacyDebounceIdleReady, keyboardNavReady, mrPreloadReady, projectSearchReady,
       // Live accessor (ticket 08): scheduleDiffReconciliation is reassigned
       // over time (null -> queue-until-ready placeholder -> real debounced
       // function), so tests need a getter rather than the value captured
