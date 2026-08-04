@@ -431,6 +431,18 @@ load (zelfde flakiness-patroon als eerder gedocumenteerd, niet hetzelfde scenari
 pre-existing ticket-37-fout waargenomen op deze machine bij aanvang — eindresultaat is dus volledig
 groen.
 
+Ticket 22's commit claimde meteen ook ticket 35's vier message-types in `bootstrap.js`
+(`bootstrap.js:40-53`) — 35 stond daarmee al `resolved` zonder eigen wijziging nodig te hebben, zie
+`issues/35-content-message-types.md`'s `## Voltooiing`. **Correctie op deze sectie's eigen
+"eindresultaat is dus volledig groen"**: een vervolgsessie (nog op commit `fc595d4`, schone tree)
+draaide `npm run test:browser` solo vier keer en kreeg 4/4 rood, verdeeld over twee al bekende,
+losstaande oorzaken — twee keer scenario 5 (large-diff-timing, machine-load) en twee keer de
+settings-overlay-race die ticket 37 al beschrijft. Geen van beide is een 22/35-regressie (de
+skeleton-mount-scenario, vóór settings, faalde in geen van de vier runs), maar het weerspreekt
+letterlijk deze sectie's "solo tweemaal groen"-claim. Op deze machine is `npm run test:browser`
+dus niet betrouwbaar reproduceerbaar groen te krijgen zolang 37 openstaat — behandel een groene
+run als gunstig toeval, niet als bevestiging, tot 37 is opgelost.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,
