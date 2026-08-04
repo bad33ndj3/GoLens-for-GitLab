@@ -725,6 +725,47 @@ func Use() {
   assert.equal(next.hasMore, false);
 });
 
+test('excludes the declaration site and a shadowing local of the same name from findReferences', () => {
+  const source = `package shadow
+
+func New() {}
+
+func Use() {
+	New()
+}
+
+func Other() {
+	New := 5
+	_ = New
+}
+`;
+  index.indexPackage({
+    project: 'group/project',
+    ref: 'abc123',
+    packagePath: 'pkg/shadow',
+    modulePath: 'example.com/project',
+    files: [{ path: 'pkg/shadow/shadow.go', source }],
+  });
+  const definitionResult = index.resolve({
+    project: 'group/project',
+    ref: 'abc123',
+    packagePath: 'pkg/shadow',
+    path: 'pkg/shadow/shadow.go',
+    ...position(source, 3, 'New'),
+  });
+  assert.equal(definitionResult.status, 'resolved');
+  assert.equal(definitionResult.isDefinition, true);
+
+  const references = index.findReferences({
+    project: 'group/project',
+    ref: 'abc123',
+    packagePath: 'pkg/shadow',
+    definition: definitionResult.definition,
+  });
+  assert.equal(references.status, 'references');
+  assert.deepEqual(references.locations.map((location) => location.line), [6]);
+});
+
 test('finds project-wide interface implementations with context and confidence', () => {
   const implementationIndex = new GoSemanticIndex(index.parser);
   const contracts = `package contracts

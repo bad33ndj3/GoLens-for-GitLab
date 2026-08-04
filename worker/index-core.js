@@ -401,18 +401,6 @@ function utf8Column(line, character) {
   return new TextEncoder().encode(line.slice(0, Math.max(0, character))).length;
 }
 
-function utf16Column(line, byteColumn) {
-  const encoder = new TextEncoder();
-  let bytes = 0;
-  let character = 0;
-  for (const value of line) {
-    if (bytes >= byteColumn) break;
-    bytes += encoder.encode(value).length;
-    character += value.length;
-  }
-  return character;
-}
-
 function findIdentifierNode(root, source, line, character, fallbackIdentifier = '', occurrence = null, lines = source.split('\n')) {
   const row = Math.max(0, Math.min(line - 1, lines.length - 1));
   const sourceLine = lines[row] || '';
@@ -1188,6 +1176,30 @@ export class GoSemanticIndex {
 
     const identifierNode = findIdentifierNode(this._treeFor(file).rootNode, file.source, line, character, identifier, occurrence, fileLines(file));
     if (!identifierNode) return { status: 'notFound', reason: 'identifierNotFound' };
+    return this._resolveAtNode({ origin, project, ref, entry, file, path, identifierNode });
+  }
+
+  // A restored-from-snapshot `identifierCandidates` entry carries a bare
+  // position stub (see `restoreIndex`), not a live tree-sitter node, until
+  // its file is actually parsed. Reuse the node as-is when it's already
+  // live; otherwise resolve it against the (lazily materialized) tree by
+  // position alone — cheaper than `findIdentifierNode`'s fallback text scan
+  // because the exact row/column is already known to be correct.
+  _identifierNodeAt(file, candidateNode) {
+    if (candidateNode.type) return candidateNode;
+    let node = this._treeFor(file).rootNode.descendantForPosition({
+      row: candidateNode.startPosition.row,
+      column: candidateNode.startPosition.column,
+    });
+    while (node && !IDENTIFIER_TYPES.has(node.type)) node = node.parent;
+    return node;
+  }
+
+  // Resolution from an already-known identifier node, skipping the
+  // tree-walk-based lookup `resolve()` needs when it only has a position.
+  // `findReferences` calls this directly with the node its identifier-name
+  // index already carries, instead of re-locating it per candidate.
+  _resolveAtNode({ origin, project, ref, entry, file, path, identifierNode }) {
     const symbol = textOf(file.source, identifierNode);
     const parent = identifierNode.parent;
     let candidates = [];
@@ -1308,15 +1320,18 @@ export class GoSemanticIndex {
       };
       if (cursor && locationCursor(location) <= cursor) continue;
       if (sameDefinition({ ...definition, ...location }, definition)) continue;
-      const result = this.resolve({
+      const candidateEntry = this.packages.get(packageKey(origin, project, ref, candidatePackagePath));
+      if (!candidateEntry) continue;
+      const identifierNode = this._identifierNodeAt(file, node);
+      if (!identifierNode) continue;
+      const result = this._resolveAtNode({
         origin,
         project,
         ref,
-        packagePath: candidatePackagePath,
+        entry: candidateEntry,
+        file,
         path: file.path,
-        line: location.line,
-        character: utf16Column(fileLines(file)[node.startPosition.row] || '', node.startPosition.column),
-        identifier: definition.name,
+        identifierNode,
       });
       if (result.status === 'resolved' && sameDefinition(result.definition, definition)) locations.push(location);
       if (locations.length > size) break;
