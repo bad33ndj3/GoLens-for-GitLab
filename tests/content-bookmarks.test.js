@@ -10,6 +10,14 @@ test('moves bookmark markers away from GitLab comment buttons', async () => {
   assert.match(css, /:has\(button:not\(\.golens-bookmark-marker\)\) > \.golens-bookmark-marker\s*\{\s*left: 18px;/);
 });
 
+// Ticket 18: content.js no longer reaches bookmarks through the ad-hoc
+// `globalThis.GoLensGoNavigation.subscribeBookmarks`/`revealBookmark`/etc.
+// bridge — it's a pure consumer of page/features/bookmarks.js's handle,
+// reached through the single `globalThis.GoLensGoNavigation.bookmarks`
+// accessor go-navigation.js's self-bridge exposes. This fixture mocks that
+// handle directly (the shape `mount(ctx)` in bookmarks.js itself returns),
+// mirroring how the pre-ticket-18 version of this test mocked the ad-hoc
+// bridge's individual functions.
 test('fourth page control renders current and stale MR bookmarks in an accessible drawer', async () => {
   const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
   window.document.write(`<!doctype html><html><head><meta name="csrf-token" content="fixture"></head><body>
@@ -26,15 +34,19 @@ test('fourth page control renders current and stale MR bookmarks in an accessibl
   globalThis.innerHeight = 800;
 
   let bookmarkListener;
+  let snapshot = { scope: null, current: [], stale: [] };
   const calls = [];
   globalThis.GoLensGoNavigation = {
     init() {}, teardown() {}, invalidateCacheState() {},
-    subscribeBookmarks(listener) { bookmarkListener = listener; listener({ scope: null, current: [], stale: [] }); return () => {}; },
     async mergeRequestPreloadStatus() { return { status: 'missing' }; },
-    async revealBookmark(record) { calls.push(['jump', record.id]); return true; },
-    async removeBookmark(record) { calls.push(['remove', record.id]); },
-    async recoverBookmark(record) { calls.push(['recover', record.id]); return { status: 'recovered' }; },
-    async clearBookmarks(mode) { calls.push(['clear', mode]); return 1; },
+    bookmarks: {
+      subscribe(listener) { bookmarkListener = listener; listener(snapshot); return () => {}; },
+      snapshot() { return snapshot; },
+      async reveal(id) { calls.push(['jump', id]); return true; },
+      async remove(id) { calls.push(['remove', id]); return true; },
+      async recover(id) { calls.push(['recover', id]); return { kind: 'recovered' }; },
+      async clear(mode) { calls.push(['clear', mode]); return 1; },
+    },
   };
   globalThis.chrome = {
     storage: {
@@ -56,7 +68,8 @@ test('fourth page control renders current and stale MR bookmarks in an accessibl
     id: 'stale', label: 'previous handler', stale: true,
     location: { path: 'pkg/old.go', side: 'old', startLine: 7, endLine: 7 },
   };
-  bookmarkListener({ scope: { headSha: 'a'.repeat(40) }, current: [current], stale: [stale] });
+  snapshot = { scope: { headSha: 'a'.repeat(40) }, current: [current], stale: [stale] };
+  bookmarkListener(snapshot);
   const controls = window.document.getElementById('gitlab-lens-root').shadowRoot;
   const trigger = controls.querySelector('[data-action="bookmarks"]');
   assert.equal(controls.querySelectorAll('.controls > button').length, 4);

@@ -26,6 +26,7 @@ import { mount as mountKeyboardNav } from './features/keyboard-nav.js';
 import { mount as mountMrPreload } from './features/mr-preload.js';
 import { mount as mountCelebration } from './features/celebration.js';
 import { mount as mountProjectSearch } from './features/project-search.js';
+import { mount as mountBookmarks } from './features/bookmarks.js';
 
 export function mount(ctx = {}) {
   const clock = ctx.clock || createClock();
@@ -73,6 +74,17 @@ export function mount(ctx = {}) {
       // comment). Registered here anyway so the module graph stays the
       // single source of truth for "what features exist" (ticket 04 §1).
       { name: 'project-search', mount: mountProjectSearch },
+      // Same "second, inert instance" shape as mr-preload/project-search
+      // above: this mount has no ctx.legacy (page/lifecycle has no access
+      // to go-navigation.js's diff-DOM/MR-network closures), so every
+      // method degrades to false/0/`{kind:'unavailable'}` — no diff
+      // observer runs, no markers render. The functional instance is
+      // go-navigation.js's own self-bridge (see its "Bridge onto
+      // page/features/bookmarks.js" comment), reached by content.js's
+      // drawer through `globalThis.GoLensGoNavigation.bookmarks`. Registered
+      // here anyway so the module graph stays the single source of truth
+      // for "what features exist" (ticket 04 §1).
+      { name: 'bookmarks', mount: mountBookmarks },
     ],
     // Opt out of lifecycle's own chrome.runtime.onMessage registration:
     // bootstrap.js registers synchronously, before this module graph even

@@ -89,10 +89,23 @@
     preloadRunID: 0,
     fullPreload: { status: 'idle', message: '', progress: null },
     fullPreloadRunID: 0,
-    bookmarkSnapshot: { scope: null, current: [], stale: [] },
     bookmarkUnsubscribe: null,
     bookmarkDrawerReturnFocus: null,
   };
+
+  // Ticket 18: this file no longer holds bookmark *data* of its own
+  // (formerly `state.bookmarkSnapshot`, kept in sync via an ad-hoc
+  // `globalThis.GoLensGoNavigation.subscribeBookmarks` bridge). It's a pure
+  // consumer of page/features/bookmarks.js's handle now, reached through
+  // `globalThis.GoLensGoNavigation.bookmarks` — the single live accessor
+  // that file's self-bridge exposes (see its own comment) — since this
+  // classic script can't dynamically import a feature module and also share
+  // go-navigation.js's diff-DOM closures the way that module's `legacy`
+  // capability bag needs. `snapshot()` is synchronous and cheap, so every
+  // render below just calls it fresh instead of caching a copy.
+  function currentBookmarkSnapshot() {
+    return globalThis.GoLensGoNavigation?.bookmarks?.snapshot() || { scope: null, current: [], stale: [] };
+  }
 
   function isGitLab() {
     if (window.gon?.gitlab_url) return true;
@@ -348,9 +361,8 @@
   }
 
   function ensureBookmarkSubscription() {
-    if (state.bookmarkUnsubscribe || !globalThis.GoLensGoNavigation?.subscribeBookmarks) return;
-    state.bookmarkUnsubscribe = globalThis.GoLensGoNavigation.subscribeBookmarks((snapshot) => {
-      state.bookmarkSnapshot = snapshot;
+    if (state.bookmarkUnsubscribe || !globalThis.GoLensGoNavigation?.bookmarks) return;
+    state.bookmarkUnsubscribe = globalThis.GoLensGoNavigation.bookmarks.subscribe(() => {
       renderBookmarkControl();
       renderBookmarkDrawer();
     });
@@ -359,8 +371,9 @@
   function renderBookmarkControl(shadow = document.getElementById('gitlab-lens-root')?.shadowRoot) {
     const button = shadow?.querySelector('[data-action="bookmarks"]');
     if (!button) return;
-    const count = state.bookmarkSnapshot.current.length;
-    const stale = state.bookmarkSnapshot.stale.length;
+    const snapshot = currentBookmarkSnapshot();
+    const count = snapshot.current.length;
+    const stale = snapshot.stale.length;
     const badge = button.querySelector('.bookmark-count');
     badge.textContent = count > 99 ? '99+' : String(count);
     badge.hidden = count === 0;
@@ -447,12 +460,13 @@
   function renderBookmarkDrawer() {
     const shadow = document.getElementById('golens-bookmark-drawer-root')?.shadowRoot;
     if (!shadow) return;
-    renderBookmarkSection(shadow, '[data-bookmark-list="current"]', state.bookmarkSnapshot.current, false);
-    renderBookmarkSection(shadow, '[data-bookmark-list="stale"]', state.bookmarkSnapshot.stale, true);
-    shadow.querySelector('[data-bookmark-section="stale"]').hidden = state.bookmarkSnapshot.stale.length === 0;
-    shadow.querySelector('[data-clear="current"]').disabled = state.bookmarkSnapshot.current.length === 0;
-    shadow.querySelector('[data-clear="stale"]').disabled = state.bookmarkSnapshot.stale.length === 0;
-    shadow.querySelector('[data-clear="all"]').disabled = state.bookmarkSnapshot.current.length + state.bookmarkSnapshot.stale.length === 0;
+    const snapshot = currentBookmarkSnapshot();
+    renderBookmarkSection(shadow, '[data-bookmark-list="current"]', snapshot.current, false);
+    renderBookmarkSection(shadow, '[data-bookmark-list="stale"]', snapshot.stale, true);
+    shadow.querySelector('[data-bookmark-section="stale"]').hidden = snapshot.stale.length === 0;
+    shadow.querySelector('[data-clear="current"]').disabled = snapshot.current.length === 0;
+    shadow.querySelector('[data-clear="stale"]').disabled = snapshot.stale.length === 0;
+    shadow.querySelector('[data-clear="all"]').disabled = snapshot.current.length + snapshot.stale.length === 0;
   }
 
   function showBookmarkDrawer() {
@@ -505,21 +519,24 @@
       const action = event.target.closest('[data-bookmark-action]');
       const clear = event.target.closest('[data-clear]');
       const status = shadow.querySelector('.status');
+      const bookmarks = globalThis.GoLensGoNavigation?.bookmarks;
+      if (!bookmarks) return;
       if (action) {
-        const record = [...state.bookmarkSnapshot.current, ...state.bookmarkSnapshot.stale].find((item) => item.id === action.dataset.bookmarkId);
+        const snapshot = currentBookmarkSnapshot();
+        const record = [...snapshot.current, ...snapshot.stale].find((item) => item.id === action.dataset.bookmarkId);
         if (!record) return;
-        if (action.dataset.bookmarkAction === 'jump') await globalThis.GoLensGoNavigation.revealBookmark(record);
-        if (action.dataset.bookmarkAction === 'remove') await globalThis.GoLensGoNavigation.removeBookmark(record);
+        if (action.dataset.bookmarkAction === 'jump') await bookmarks.reveal(record.id);
+        if (action.dataset.bookmarkAction === 'remove') await bookmarks.remove(record.id);
         if (action.dataset.bookmarkAction === 'recover') {
           action.disabled = true;
           status.textContent = 'Checking commit-pinned context…';
-          const result = await globalThis.GoLensGoNavigation.recoverBookmark(record);
-          status.textContent = result.status === 'recovered' ? 'Bookmark recovered.' : result.message || 'Bookmark could not be recovered safely.';
+          const result = await bookmarks.recover(record.id);
+          status.textContent = result.kind === 'recovered' ? 'Bookmark recovered.' : result.message || 'Bookmark could not be recovered safely.';
         }
       }
       if (clear) {
         const mode = clear.dataset.clear === 'current' ? 'current' : clear.dataset.clear;
-        const count = await globalThis.GoLensGoNavigation.clearBookmarks(mode);
+        const count = await bookmarks.clear(mode);
         status.textContent = count ? `Cleared ${count} bookmark${count === 1 ? '' : 's'}.` : 'No matching bookmarks to clear.';
       }
     });
@@ -765,7 +782,6 @@
     state.controlsMounted = false;
     state.preload = { status: 'idle', message: '', progress: null };
     state.fullPreload = { status: 'idle', message: 'Not cached', progress: null };
-    state.bookmarkSnapshot = { scope: null, current: [], stale: [] };
   }
 
   async function reconcilePage() {
