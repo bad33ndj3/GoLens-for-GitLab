@@ -7,15 +7,23 @@ bootstrap + ES-module-graph. Daarna abstracties heroverwegen na de reeks migrati
 in de praktijk te breed/te smal bleken worden bijgesteld en in de tickets 03/04-antwoorden
 gedocumenteerd; dependency-regels nagelopen op overtredingen.
 
-**Blocked by:** 07; 08; 13; 14; 15; 16; 17; 18; 19; 20; 21; 26; 27; 28; 29; 30; 31; 32; 33; 34; 35.
+**Blocked by:** 07; 08; 13; 14; 15; 16; 17; 18; 19; 20; 21; 26; 27; 28; 29; 30; 31; 32; 33; 34; 35;
+36.
 
 **Status:** blocked
 
 **Correctie (2026-08-04):** premise "legacy bestanden bevatten geen productiecode meer"
 klopt niet — zie map.md's `## Correcties tijdens uitvoering` voor de volledige inventarisatie
-(~2000 regels ongeclaimde productiecode in beide hub-bestanden) en de voorgestelde tickets
-26-35 die dat gat dichten. Deze ticket blijft ongewijzigd en wordt weer `ready-for-agent`
-zodra 26-35 landen.
+(~2000 regels ongeclaimde productiecode in beide hub-bestanden) en de tickets 26-36 die dat gat
+dichten. Deze ticket wordt weer `ready-for-agent` zodra 26-36 landen.
+
+**Scope-afbakening (2026-08-04, tweede ronde):** een eerdere versie van deze correctie zei dat
+deze ticket "ongewijzigd blijft", terwijl map.md's voorstellijst 22 juist inperkte tot alleen zijn
+titel. Dat is nu beslecht: **22 bezit alleen het slopen** van de vijf dynamic-import-bridges en
+`globalThis.GoLensGoNavigation`/`GoLensContent`, de manifest-update en de
+dependency-regelverificatie over de hele import-graph. Het **herhuisvesten van het levende gedrag**
+dat vandaag nog in `go-navigation.js`'s orkestratielaag zit (`init`/`teardown`/`onKeyDown`/
+`runNavigationAction`/`diffObserver`/`refreshMergeRequestRefs`) is ticket 36, niet deze.
 
 - [ ] Geen globalThis-contract tussen modules meer; legacy-bestanden verwijderd
 - [ ] Manifest bevat alleen bootstrap (+ ongewijzigde externe scripts) en WAR voor `page/*`

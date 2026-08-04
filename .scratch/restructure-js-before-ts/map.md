@@ -261,10 +261,23 @@ aanmaakt.
     need a bootstrap.js claim (ticket-16 pattern) once `content.js`'s own listener is
     deleted. Likely folds into whichever of 30/31 owns the behaviour each message
     triggers, but call it out as its own checklist item so it isn't dropped silently.
-  - **22 rewritten** (after 26-35 land): only what its title says — delete the four
+  - **36 — go-navigation.js's orchestration slice** (added 2026-08-04, after review of
+    26-35): the group this list originally named in the inventory above but then failed to
+    give a ticket — `init()`/`teardown()`/`onKeyDown` (live Escape routing, two branches)/
+    `runNavigationAction` (the `state.enabled` gate, reached from `page/main.js:66`)/
+    `state.diffObserver` + `isBookmarkOnlyMutation`/`refreshMergeRequestRefs`/
+    `ensureRpcClient`+`workerRPC`/`offerShortcutCoach`, plus the `__test` bag (35 entries,
+    consumed by `tests/go-navigation-context.test.js`, `tests/benchmarks/diff-dom.bench.mjs`
+    and the `content-*` tests) that dies with the file. Blocked by 31 and 34 — `init()` *is*
+    the second `state.enabled` flag and `content.js:686`/`:282` (31's reconcile loop) is what
+    calls it, so both decisions land first. A valid outcome of 36 is "dissolves into 31+34,
+    no module of its own", documented rather than assumed.
+  - **22 rewritten** (after 26-36 land): only what its title says — delete the four
     dynamic-import bridges and `globalThis.GoLensGoNavigation`/`GoLensContent`, wire real
     deps into `page/main.js`/`page/lifecycle` directly, update the manifest, verify
     dependency rules over the full graph, full `npm run check` + browser-smoke green.
+    **This supersedes 22's own correction note** ("deze ticket blijft ongewijzigd"), which
+    contradicted this line: rehoming live behaviour is 36's job, bridge-deletion is 22's.
 
 ## Not yet specified
 
