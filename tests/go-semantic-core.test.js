@@ -995,6 +995,94 @@ test('paginates more than fifty implementations in stable order', () => {
   assert.deepEqual(names, [...names].sort());
 });
 
+test('reflects a mutation in findImplementations results instead of serving a stale cached candidate list', () => {
+  const localIndex = new GoSemanticIndex(index.parser);
+  const contracts = 'package contracts\ntype Runner interface { Run() error }\n';
+  const original = 'package service\ntype Original struct{}\nfunc (Original) Run() error { return nil }\n';
+  localIndex.indexProject({
+    project: 'stale-cache', ref: 'stale-cache', modulePath: 'example.com/project',
+    files: [
+      { path: 'contracts/contracts.go', source: contracts },
+      { path: 'service/service.go', source: original },
+    ],
+  });
+  const definition = localIndex.resolve({
+    project: 'stale-cache', ref: 'stale-cache', packagePath: 'contracts', path: 'contracts/contracts.go', ...position(contracts, 2, 'Runner'),
+  }).definition;
+
+  const before = localIndex.findImplementations({ project: 'stale-cache', ref: 'stale-cache', interfaceDefinition: definition });
+  assert.deepEqual(before.candidates.map(({ displayName }) => displayName), ['service.Original']);
+
+  // Add a second implementing type to the same package (mutating call:
+  // indexPackage bumps mutationGeneration), which must invalidate any
+  // cached candidates/promotedMethods/recordsByIdentity for this scope.
+  const extended = `${original}\ntype Extra struct{}\nfunc (Extra) Run() error { return nil }\n`;
+  localIndex.indexPackage({
+    project: 'stale-cache', ref: 'stale-cache', packagePath: 'service', modulePath: 'example.com/project',
+    files: [{ path: 'service/service.go', source: extended }],
+  });
+
+  const after = localIndex.findImplementations({ project: 'stale-cache', ref: 'stale-cache', interfaceDefinition: definition });
+  assert.deepEqual(
+    after.candidates.map(({ displayName }) => displayName).sort(),
+    ['service.Extra', 'service.Original'],
+  );
+});
+
+test('paginated findImplementations results match an equivalent single large-page call', () => {
+  const contracts = 'package contracts\ntype Runner interface { Run() error }\n';
+  const implementations = Array.from({ length: 55 }, (_value, number) => {
+    const name = `Runner${String(number).padStart(2, '0')}`;
+    return `type ${name} struct{}\nfunc (${name}) Run() error { return nil }`;
+  }).join('\n');
+  const project = {
+    project: 'pagination-consistency', ref: 'pagination-consistency', modulePath: 'example.com/project',
+    files: [
+      { path: 'contracts/contracts.go', source: contracts },
+      { path: 'service/service.go', source: `package service\n${implementations}\n` },
+    ],
+  };
+
+  // Two independent indexes so the two sides of the comparison don't share
+  // any object references: `pagedIndex` is queried through the cached,
+  // paginated path (each page a cursor-driven call against the same
+  // candidatesCache), `freshIndex` is queried exactly once with a page size
+  // large enough to return everything in one (also cached, but never
+  // paginated) call. If the cached/paginated path ever disagreed with an
+  // uncached-style single call, comparing against literal shared references
+  // from one cache couldn't catch it -- comparing across two separate
+  // indexes can.
+  const pagedIndex = new GoSemanticIndex(index.parser);
+  pagedIndex.indexProject(project);
+  const pagedDefinition = pagedIndex.resolve({
+    project: 'pagination-consistency', ref: 'pagination-consistency', packagePath: 'contracts', path: 'contracts/contracts.go', ...position(contracts, 2, 'Runner'),
+  }).definition;
+
+  const freshIndex = new GoSemanticIndex(index.parser);
+  freshIndex.indexProject(project);
+  const freshDefinition = freshIndex.resolve({
+    project: 'pagination-consistency', ref: 'pagination-consistency', packagePath: 'contracts', path: 'contracts/contracts.go', ...position(contracts, 2, 'Runner'),
+  }).definition;
+  const whole = freshIndex.findImplementations({
+    project: 'pagination-consistency', ref: 'pagination-consistency', interfaceDefinition: freshDefinition, pageSize: 100,
+  });
+  assert.equal(whole.hasMore, false);
+  assert.equal(whole.candidates.length, 55);
+
+  const paged = [];
+  let cursor = '';
+  for (let guard = 0; guard < 10; guard += 1) {
+    const page = pagedIndex.findImplementations({
+      project: 'pagination-consistency', ref: 'pagination-consistency', interfaceDefinition: pagedDefinition, pageSize: 10, cursor,
+    });
+    paged.push(...page.candidates);
+    if (!page.hasMore) break;
+    cursor = page.nextCursor;
+  }
+  assert.deepEqual(paged.map(({ displayName }) => displayName), whole.candidates.map(({ displayName }) => displayName));
+  assert.deepEqual(paged, whole.candidates);
+});
+
 test('resolves version-suffixed imports to their declared package convention', () => {
   const localIndex = new GoSemanticIndex(index.parser);
   const source = `package versioned
