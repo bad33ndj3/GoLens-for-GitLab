@@ -16,6 +16,7 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
   const tabMessages = [];
   let allowedOrigins = ['http://*/*', 'https://*/*', 'https://gitlab.com/*'];
   const requestedOrigins = [];
+  let hostAccessStatus = { matches: [], error: null };
   globalThis.chrome = {
     storage: {
       sync: {
@@ -29,6 +30,7 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
         if (type === 'golens-cache-stats') return { ok: true, result: { sources: 1, packages: 1, projects: 0, bytes: 12 } };
         if (type === 'golens-clear-cache') return { ok: true, result: { sources: 1, packages: 1, projects: 0, bytes: 12 } };
         if (type === 'golens-sync-host-access') return { ok: true, result: { origins: [] } };
+        if (type === 'golens-host-access-status') return { ok: true, result: hostAccessStatus };
         return { ok: false, error: 'Unexpected request' };
       },
     },
@@ -103,8 +105,38 @@ test('tabbed settings manage preferences, shortcuts, host access, cache, and hel
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(requestedOrigins, ['https://gitlab.internal/*']);
   assert.match(window.document.querySelector('[data-host-list]').textContent, /https:\/\/gitlab\.internal/);
-  window.document.querySelector('[data-host-list] button').click();
+  // Registration has not been confirmed active yet (hostAccessStatus defaults to no matches),
+  // so the row must say a tab refresh is needed rather than implying it already works.
+  let hostRow = window.document.querySelector('[data-host-list] > div');
+  assert.equal(hostRow.dataset.state, 'idle');
+  assert.match(hostRow.textContent, /Refresh open tabs to activate/);
+
+  // Once the worker confirms the dynamic content script registered successfully for this
+  // origin, the row must flip to an explicit active/success state.
+  hostAccessStatus = { matches: ['https://gitlab.internal/*'], error: null };
+  hostForm.elements.origin.value = 'https://gitlab.other/group/project';
+  hostForm.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
   await new Promise((resolve) => setTimeout(resolve, 0));
+  hostRow = [...window.document.querySelectorAll('[data-host-list] > div')].find((row) => row.textContent.includes('gitlab.internal'));
+  assert.equal(hostRow.dataset.state, 'success');
+  assert.match(hostRow.textContent, /Active/);
+
+  // A registration failure (e.g. the scripting API rejecting the registration) must surface
+  // per origin with its reason instead of being swallowed silently.
+  hostAccessStatus = { matches: [], error: 'scripting.registerContentScripts failed: file not found' };
+  hostForm.elements.origin.value = 'https://gitlab.broken/group/project';
+  hostForm.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  for (const row of window.document.querySelectorAll('[data-host-list] > div')) {
+    assert.equal(row.dataset.state, 'error');
+    assert.match(row.textContent, /Failed: scripting\.registerContentScripts failed: file not found/);
+  }
+
+  hostAccessStatus = { matches: [], error: null };
+  while (window.document.querySelector('[data-host-list] button')) {
+    window.document.querySelector('[data-host-list] button').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
   assert.match(window.document.querySelector('[data-host-list]').textContent, /No self-hosted origins allowed/);
 
   tabs[3].click();

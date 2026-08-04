@@ -1,7 +1,7 @@
 import { Language, Parser } from '../vendor/web-tree-sitter.js';
 import { GoSemanticSourceCache, isCommitSHA } from './source-cache.js';
 import { GoSemanticIndex, INDEX_FORMAT_VERSION } from './index-core.js';
-import { syncSelfHostedContentScripts } from '../gitlab-host-access.js';
+import { refreshHostAccessStatus, syncSelfHostedContentScripts } from '../gitlab-host-access.js';
 
 const INDEX_DATABASE_NAME = 'golens-go-semantic-index';
 const INDEX_DATABASE_VERSION = 1;
@@ -353,6 +353,10 @@ function respondToRuntimeMessage(message, sendResponse) {
     syncSelfHostedContentScripts()
       .then((origins) => sendResponse({ ok: true, result: { origins } }))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+  if (message?.type === 'golens-host-access-status') {
+    refreshHostAccessStatus().then((result) => sendResponse({ ok: true, result }));
     return true;
   }
   if (message?.type !== 'golens-cache-stats' && message?.type !== 'golens-clear-cache') return false;

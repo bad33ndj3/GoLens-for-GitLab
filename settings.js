@@ -141,10 +141,21 @@ async function syncHostAccess() {
   if (!response?.ok) throw new Error(response?.error || 'Unable to update GitLab host access.');
 }
 
+async function fetchHostAccessStatus() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'golens-host-access-status' });
+    if (response?.ok) return response.result;
+    return { matches: [], error: response?.error || 'Unable to check GitLab host access.' };
+  } catch (error) {
+    return { matches: [], error: error.message || 'Unable to check GitLab host access.' };
+  }
+}
+
 async function refreshHostAccess() {
   const list = document.querySelector('[data-host-list]');
   const granted = await chrome.permissions.getAll();
   const patterns = grantedSelfHostedPatterns(granted.origins);
+  const { matches, error } = await fetchHostAccessStatus();
   list.replaceChildren();
   if (!patterns.length) {
     const empty = document.createElement('p');
@@ -158,6 +169,18 @@ async function refreshHostAccess() {
     const row = document.createElement('div');
     const label = document.createElement('code');
     label.textContent = origin;
+    const rowStatus = document.createElement('span');
+    rowStatus.className = 'host-row-status';
+    if (error) {
+      row.dataset.state = 'error';
+      rowStatus.textContent = `Failed: ${error}`;
+    } else if (matches.includes(pattern)) {
+      row.dataset.state = 'success';
+      rowStatus.textContent = 'Active';
+    } else {
+      row.dataset.state = 'idle';
+      rowStatus.textContent = 'Refresh open tabs to activate';
+    }
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.textContent = 'Remove';
@@ -175,7 +198,7 @@ async function refreshHostAccess() {
         remove.disabled = false;
       }
     });
-    row.append(label, remove);
+    row.append(label, rowStatus, remove);
     list.append(row);
   });
 }
