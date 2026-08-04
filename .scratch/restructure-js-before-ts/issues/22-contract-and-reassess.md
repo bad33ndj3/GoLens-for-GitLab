@@ -7,10 +7,11 @@ bootstrap + ES-module-graph. Daarna abstracties heroverwegen na de reeks migrati
 in de praktijk te breed/te smal bleken worden bijgesteld en in de tickets 03/04-antwoorden
 gedocumenteerd; dependency-regels nagelopen op overtredingen.
 
-**Blocked by:** 07; 08; 13; 14; 15; 16; 17; 18; 19; 20; 21; 26; 27; 28; 29; 30; 31; 32; 33; 34; 35;
-36.
+**Blocked by:** 07; 08; 13; 14; 15; 16; 17; 18; 19; 20; 21; 26; 27; 28; 29; 30; 31; 32; 33; 34; 36.
+(35 stond hier eerder ook — verwijderd, zie **Bevindingen batch 3** hieronder: 35 hangt van 22 af,
+niet andersom.)
 
-**Status:** blocked
+**Status:** ready-for-agent — alle overige blockers zijn `resolved`/`done`/`closed`.
 
 **Correctie (2026-08-04):** premise "legacy bestanden bevatten geen productiecode meer"
 klopt niet — zie map.md's `## Correcties tijdens uitvoering` voor de volledige inventarisatie
@@ -35,6 +36,12 @@ enable-fanout (met de activatie-latch als apart, behouden signaal); 36's volledi
 `bootstrap.js` verhuizen zodra content.js's eigen handler hier verdwijnt. Dit bevestigt 22's
 premisse-correctie (zie boven): het "slopen"-werk en het "herhuisvesten van resterend levend
 gedrag"-werk zijn in de praktijk niet los te knippen — allebei landen in deze ticket.
+
+**Correctie (2026-08-04, derde ronde):** 35 stond hierboven in 22's eigen blocked-by-lijst, terwijl
+35's eigen ticket zegt dat 35 juist op 22 wacht (content.js moet weg vóórdat 35's claim in
+bootstrap.js geen dubbele responder wordt). Dat was een cirkel. Opgelost: 35 uit 22's blocked-by
+gehaald. 22 is daarmee niet meer geblokkeerd — elke overige blocker staat op `resolved`/`done`/
+`closed`.
 
 - [ ] Geen globalThis-contract tussen modules meer; legacy-bestanden verwijderd
 - [ ] Manifest bevat alleen bootstrap (+ ongewijzigde externe scripts) en WAR voor `page/*`
