@@ -3,6 +3,21 @@
 Volgorde = hypothese-ranking op basis van code-inspectie. Alleen punt 5 is gemeten (zie onderaan).
 Meet voordat je aan iets begint dat meer dan een uur kost.
 
+**Statusupdate 2026-08-04:** `go-semantic-core.js`/`go-semantic-worker.js`/`go-navigation.js`/
+`content.js` zijn sindsdien opgesplitst (`worker/index-core.js`, `worker/source-cache.js`,
+`worker/dispatch.js`, `page/features/code-intel*.js`, `page/lifecycle/mr-session.js` —
+zie `AGENTS.md`). Regelverwijzingen hieronder zijn dus historisch (t.o.v. de oude bestanden),
+niet meer 1-op-1 navigeerbaar. Per punt:
+- **1, 4, 5, 6, 7, 8, 9, 10: gedaan.** Geverifieerd in de huidige code (`_scopeCache`/
+  `mutationGeneration` in `worker/index-core.js` voor 1; index-persistentie voor 4;
+  gebatchte/parallelle cache-reads voor 5/6; hover-throttle, lineaire occurrence-collection,
+  gedebouncete observers voor 7/8/9; retry + parallelle paginering voor 10).
+- **2, 3: nog open.** Geverifieerd door de huidige `findReferences`/`findImplementations` in
+  `worker/index-core.js` te lezen — beide doen nog steeds het volledige werk per aanroep,
+  zonder memoisatie. Specs: issue #21 (punt 2) en #22 (punt 3). Before-benchmark:
+  `docs/benchmarks/before-findings-2-3.md`.
+- **11: nog open,** niet apart getickt.
+
 ---
 
 ## 1. `searchScope` draait bij élke hover over alle geïndexeerde bestanden
