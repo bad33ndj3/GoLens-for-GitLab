@@ -17,6 +17,9 @@
 //     actions (toggleBookmark, previousBookmark, nextBookmark), reproducing
 //     go-navigation.js's former runNavigationAction() body directly against
 //     page/features/bookmarks.js's real handle.
+//   - toggleDiffView() -> boolean — forwards to page/features/controls.js's
+//     own handle, which drives GitLab's inline/side-by-side preference
+//     through GitLab's own preferences dropdown (GitHub issue #5).
 //   - legacyToast: { message(text), shortcutHint(hint), isShowing() } — the
 //     shared toast surface (page/lifecycle/mr-session.js's `toast` instance)
 //     serving multiple call sites; giving this module its own toast host would
@@ -74,6 +77,7 @@ export function mount(ctx = {}) {
   const settings = ctx.settings;
   const runLegacyNavigationAction = ctx.runLegacyNavigationAction;
   const navigationAction = ctx.navigationAction;
+  const toggleDiffView = ctx.toggleDiffView;
   const legacyToast = ctx.legacyToast || {};
   const minimizeProjectSearch = ctx.minimizeProjectSearch;
   const handleCodeIntelEscape = ctx.handleCodeIntelEscape;
@@ -227,6 +231,7 @@ export function mount(ctx = {}) {
     else if (action === 'nextHunk') handled = navigateElements(hunkTargets(), 1, 'No loaded diff hunks.', 'hunk');
     else if (action === 'previousFile') handled = navigateElements(diffFileRoots(), -1, 'No loaded diff files.', 'file');
     else if (action === 'nextFile') handled = navigateElements(diffFileRoots(), 1, 'No loaded diff files.', 'file');
+    else if (action === 'toggleDiffView') handled = toggleDiffView?.() === true;
     else handled = navigationAction?.(action) === true || runLegacyNavigationAction?.(action) === true;
     if (handled) {
       event.preventDefault();

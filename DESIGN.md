@@ -17,7 +17,7 @@
 
 GoLens for GitLab is a dependency-light Manifest V3 browser extension that adds Go-aware navigation and focused review tools to GitLab merge requests. It runs against GitLab.com and self-hosted GitLab, reads repository source through the user's signed-in same-origin session, parses Go locally with checked-in Tree-sitter assets, and stores commit-pinned source snapshots in browser IndexedDB. Repository source is not sent to an external service.
 
-The extension has five user-facing surfaces: a three-button control rail mounted beside GitLab's AI-panel control, a first-run onboarding dialog, a compact toolbar popup, a large tabbed settings overlay, and a Go intelligence popover. These surfaces share a dependency-free semantic token layer while keeping their layout and state rules isolated. The design preserves GitLab's DOM ownership, Shadow DOM boundaries, native file search, current permissions, and all existing storage and messaging contracts.
+The extension has five user-facing surfaces: a five-button control rail mounted beside GitLab's AI-panel control, a first-run onboarding dialog, a compact toolbar popup, a large tabbed settings overlay, and a Go intelligence popover. These surfaces share a dependency-free semantic token layer while keeping their layout and state rules isolated. The design preserves GitLab's DOM ownership, Shadow DOM boundaries, native file search, current permissions, and all existing storage and messaging contracts.
 
 The primary invariant is: **never navigate or cache speculatively**. Source identity must be tied to the GitLab origin, project, and immutable commit; ambiguous or unsupported semantic results remain explicit instead of being guessed.
 

@@ -19,6 +19,7 @@ test('normalizes, displays, and matches portable shortcut bindings', () => {
     nextHunk: 'Alt+F5',
     previousFile: 'Alt+PageUp',
     nextFile: 'Alt+PageDown',
+    toggleDiffView: 'Alt+KeyV',
     historyBack: 'Ctrl+Minus',
     historyForward: 'Ctrl+Shift+Minus',
     toggleBookmark: 'Alt+KeyM',

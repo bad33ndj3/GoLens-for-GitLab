@@ -94,6 +94,10 @@ export function onboardingFeatureIcon(name, { brandIconUrl } = {}) {
       tone: 'brand',
       body: '<path d="M6 3.5h12v17l-6-4-6 4z"></path>',
     },
+    diffView: {
+      tone: 'info',
+      body: '<rect x="3.5" y="4.5" width="7" height="15" rx="1"></rect><rect x="13.5" y="4.5" width="7" height="15" rx="1"></rect>',
+    },
     settings: {
       tone: 'neutral',
       body: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path><circle cx="16" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle>',
@@ -308,6 +312,7 @@ export function tourDialogMarkup({ mascotUrl, brandIconUrl }) {
                   <li class="feature">${onboardingFeatureIcon('focus')}<div><strong>Enter fullscreen review focus</strong><p>Hide GitLab chrome, widen the diff, and leave with <kbd>Esc</kbd> or the focus button.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache related MR packages</strong><p>Fetch changed and related Go packages at the MR head, with progress and completion states.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('bookmark')}<div><strong>Keep local MR bookmarks</strong><p>Open the fourth control to revisit marked lines and ranges, clear current or stale entries, and recover only uniquely matched destinations after a head change.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('diffView')}<div><strong>Switch inline or side-by-side view</strong><p>The fifth control (or <kbd>Alt</kbd> <kbd>V</kbd> by default) drives GitLab's own diff-view preference, so the choice matches what GitLab shows and survives navigation.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('brand', { brandIconUrl })}<div><strong>Mark review milestones</strong><p>The mascot marks completed caches, resolved discussions, approvals, merges, and the Friday beer-kart celebration. Reduced motion stays static.</p></div></li>
               </ul>
             </section>

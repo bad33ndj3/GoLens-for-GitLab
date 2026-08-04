@@ -445,8 +445,12 @@ const html = `<!doctype html>
         document.body.dataset.focusIconRaster = String(Boolean(focus?.querySelector('img')));
         document.body.dataset.brandIconSmall = String(toggle?.querySelector('img')?.src.endsWith('/assets/icons/golens-32.png'));
         document.body.dataset.themeSurface = getComputedStyle(document.getElementById('gitlab-lens-root')).getPropertyValue('--golens-surface-panel').trim();
-        document.body.dataset.preloadLast = String(controls.querySelector('.controls')?.lastElementChild === preload);
-        document.body.dataset.bookmarkLast = String(controls.querySelector('.controls')?.lastElementChild === controls.querySelector('[data-action="bookmarks"]'));
+        const controlChildren = [...(controls.querySelector('.controls')?.children || [])];
+        const bookmarkButton = controls.querySelector('[data-action="bookmarks"]');
+        const diffViewButton = controls.querySelector('[data-action="diff-view-toggle"]');
+        document.body.dataset.preloadLast = String(controlChildren.at(-1) === preload);
+        document.body.dataset.bookmarkSecondLast = String(controlChildren.at(-2) === bookmarkButton);
+        document.body.dataset.diffViewToggleLast = String(controlChildren.at(-1) === diffViewButton);
         if (!reloaded && !sharing) {
           focus?.click();
           document.body.dataset.focusActive = String(document.documentElement.classList.contains('gitlab-lens-review-focus'));
@@ -757,9 +761,10 @@ try {
       && document.body?.dataset.bookmarkDomReconciled === 'true'
   `, profile);
   assert.match(stdout, /id="gitlab-lens-root"/, `extension shell was not injected\n${stderr}`);
-  assert.match(stdout, /data-control-count="4"/, `the four direct controls were not injected\n${stderr}`);
+  assert.match(stdout, /data-control-count="5"/, `the five direct controls were not injected\n${stderr}`);
   assert.match(stdout, /data-preload-last="false"/, `preload unexpectedly remained the bottom sidebar control\n${stderr}`);
-  assert.match(stdout, /data-bookmark-last="true"/, `bookmarks are not the bottom sidebar control\n${stderr}`);
+  assert.match(stdout, /data-bookmark-second-last="true"/, `bookmarks are not the fourth (second-to-last) sidebar control\n${stderr}`);
+  assert.match(stdout, /data-diff-view-toggle-last="true"/, `the diff-view toggle is not the bottom sidebar control\n${stderr}`);
   assert.match(stdout, /data-bookmark-reloaded="true"/, `bookmark state did not survive a real extension reload\n${stderr}`);
   assert.match(stdout, /data-bookmark-drawer="true"/, `bookmark drawer did not expose its accessible dialog\n${stderr}`);
   assert.match(stdout, /data-bookmark-dom-reconciled="true"/, `bookmark marker did not survive diff DOM replacement\n${stderr}`);

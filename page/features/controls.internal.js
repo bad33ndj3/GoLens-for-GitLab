@@ -98,6 +98,38 @@ export function bookmarkRangeLabel(record) {
     : `L${record.location.startLine}–${record.location.endLine}`;
 }
 
+// diffViewFromLocation({ search, cookie }) -> 'inline' | 'parallel', GoLens's
+// read of GitLab's own persisted diff-view preference. GitLab's diffs Vuex
+// action (setDiffViewType) writes both a `view` query-string param (via
+// history.pushState, no reload) and a `diff_view` cookie every time the user
+// switches — the query param reflects the just-applied choice immediately,
+// the cookie is what GitLab reads to pick the view on a fresh page load
+// before that load's own `view` param (if any) is present. Never guesses
+// beyond those two signals; GitLab's own default (no param, no cookie) is
+// 'inline'. Total.
+export function diffViewFromLocation({ search, cookie }) {
+  const param = new URLSearchParams(search || '').get('view');
+  if (param === 'inline' || param === 'parallel') return param;
+  const match = /(?:^|;\s*)diff_view=(inline|parallel)(?:;|$)/.exec(cookie || '');
+  return match ? match[1] : 'inline';
+}
+
+// diffViewToggleView({ view, enabled, isDiffPath }) -> the view-model for the
+// diff-view rail button. Disabled state depends only on GoLens's own
+// enablement and being on a merge-request diffs path — never on whether
+// GitLab's own preferences control has been located in the DOM yet (that
+// would flash disabled->enabled as GitLab's Vue app mounts); a toggle
+// attempt that can't find GitLab's control degrades to a toast instead, see
+// controls.js's toggleDiffView(). Total.
+export function diffViewToggleView({ view, enabled, isDiffPath }) {
+  const parallel = view === 'parallel';
+  return {
+    ariaPressed: String(parallel),
+    disabled: !enabled || !isDiffPath,
+    label: parallel ? 'Switch to inline diff view' : 'Switch to side-by-side diff view',
+  };
+}
+
 // bookmarkDrawerPosition({ bounds, innerWidth, innerHeight }) -> { left, top }
 // pixel offsets for the drawer, clamped to stay on-screen with a 12px
 // margin. `bounds` is the toolbar host's getBoundingClientRect() result (or
