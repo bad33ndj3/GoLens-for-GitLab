@@ -20,10 +20,12 @@
 // owning the counter itself.
 //
 // Known remaining duplication, deliberately not fixed by this ticket:
-//   - `normalizePath`/`parseBlobLink` below are byte-identical copies of
-//     go-navigation.js's, which still needs both for its own GitLab-API
-//     work. Ticket 27 moves the single owning copy to the gitlab-api layer;
-//     until then the copy stays private here.
+//   - `normalizePath`/`parseBlobLink`/`dirname` below are byte-identical
+//     copies of the ones platform/gitlab-api.js now owns (ticket 27). They
+//     stay private copies on purpose: this is the DOM-reading layer and
+//     that is the network layer, and importing across would add a
+//     platform→platform edge purely to dedupe ~15 lines of pure string
+//     handling. gitlab-api.js's header records the same decision.
 //   - bookmarks.js:70 keeps its own private `lineFromAnchor`, and
 //     keyboard-nav.js:94/118 + code-intel.js:418 keep their own
 //     `diffFileRoots`/`flashDestination`. Those modules were not claimed by

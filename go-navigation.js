@@ -1,7 +1,8 @@
 (() => {
-  const GO_FILE = /\.go$/i;
-  const COMMIT_SHA = /^[0-9a-f]{40}$/i;
-  const GO_DOCS_VERSION = 'go1.26.5';
+  // GO_FILE/COMMIT_SHA/GO_DOCS_VERSION moved to page/platform/gitlab-api.js
+  // (ticket 27) along with their last remaining readers; nothing in this
+  // file matches paths, commit SHAs, or builds pkg.go.dev URLs any more.
+
   // Injectable time source for throttle/debounce so tests are deterministic
   // and don't sleep. `setClock` (test-only) swaps parts of it; `resetClock`
   // restores the real implementations.
@@ -42,10 +43,11 @@
   // be cached until a `fileContextFor` call succeeds, which itself requires
   // the module.
   //
-  // `dirname` and `normalizePath`/`parseBlobLink` stay in this file (still
-  // used by its GitLab-API helpers and code-intel's `legacy.dirname`); the
-  // module carries its own private copies until ticket 27 moves the owning
-  // copy to the gitlab-api layer.
+  // `dirname`/`normalizePath`/`parseBlobLink` are now wrappers onto
+  // page/platform/gitlab-api.js (ticket 27), which owns this file's copies.
+  // diff-dom.js deliberately keeps its own private copies rather than
+  // importing them from there — see its header for why that platform→
+  // platform edge was not worth ~15 lines of pure string handling.
   async function loadDiffDomModule() {
     try {
       return await import(chrome.runtime.getURL('page/platform/diff-dom.js'));
@@ -67,6 +69,101 @@
       // the null module rather than silently answering "no diff here", which
       // would look to every feature like a page without a diff.
     });
+
+  // Bridge onto page/platform/gitlab-api.js (ticket 27),
+  // page/platform/source-loader.js (ticket 28) and page/platform/toast.js
+  // (ticket 29). Same dynamic-`import()` shape and IIFE-top-level kickoff as
+  // the diff-dom bridge above, for the same reason: this file is still a
+  // classic content script and cannot use top-level `import`.
+  //
+  // Three notes specific to these three:
+  //
+  // 1. **source-loader's deps are this file's own wrappers, not the
+  //    gitlab-api module object.** The two imports are independent promises
+  //    with no ordering guarantee; going through the wrappers (which await
+  //    their own module) means neither bridge has to wait for the other.
+  //
+  // 2. **`status()` stays in this file** and is injected into the loader.
+  //    `init()` dispatches `golens-go-status` synchronously, so a dispatcher
+  //    living behind this import would drop that first `idle` event — and
+  //    `tests/browser-smoke.mjs:268`/`:445` depend on this event. See
+  //    source-loader.js's header for the full rationale.
+  //
+  // 3. **The async wrappers `await` their module; the synchronous ones do
+  //    not** and will throw if reached before the import resolves. Every
+  //    synchronous call site is an event handler, a mounted feature's
+  //    `legacy` bag, or a test that awaits the matching `__test` ready
+  //    promise — all of them long after this sub-30ms load. The exception is
+  //    `teardown()`, which can genuinely run early and therefore
+  //    optional-chains every reset call below.
+  async function loadGitLabApiModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/gitlab-api.js'));
+    } catch {
+      return await import('./page/platform/gitlab-api.js');
+    }
+  }
+  async function loadSourceLoaderModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/source-loader.js'));
+    } catch {
+      return await import('./page/platform/source-loader.js');
+    }
+  }
+  async function loadToastModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/toast.js'));
+    } catch {
+      return await import('./page/platform/toast.js');
+    }
+  }
+
+  let gitlabApiModule = null;
+  let gitlabApi = null;
+  // Exposed via __test.gitlabApiReady (and the two below it) so tests can
+  // deterministically await the load instead of racing it; production code
+  // never awaits these itself.
+  const gitlabApiReady = loadGitLabApiModule()
+    .then((mod) => {
+      gitlabApiModule = mod;
+      gitlabApi = mod.createGitLabApi({
+        // `fetch` is deliberately not passed: the module's default already
+        // reads `globalThis.fetch` per call, which is what tests reassign.
+        getClock: () => clock,
+        getSignal: () => state.abortController?.signal,
+      });
+    })
+    .catch(() => {
+      // Both the chrome.runtime.getURL and relative import fallbacks failed
+      // (should not happen in production). The wrappers below then throw on
+      // the null module rather than silently reporting "no such file" —
+      // same failure stance as the diff-dom bridge above.
+    });
+
+  let sourceLoaderModule = null;
+  let sourceLoader = null;
+  const sourceLoaderReady = loadSourceLoaderModule()
+    .then((mod) => {
+      sourceLoaderModule = mod;
+      sourceLoader = mod.createSourceLoader({
+        workerRPC,
+        status,
+        projectContext,
+        listPackageFiles,
+        listProjectFiles,
+        fetchBlob,
+        modulePathFor,
+        mapLimit,
+      });
+    })
+    .catch(() => {});
+
+  let toastSurface = null;
+  const toastReady = loadToastModule()
+    .then((mod) => {
+      toastSurface = mod.createToast();
+    })
+    .catch(() => {});
 
   // Bridge onto page/features/keyboard-nav.js (ticket 17): the shortcut
   // coach's blocked-check, message-for-action decision, and hint DOM
@@ -159,14 +256,15 @@
           modulePathFor,
           searchProjectBlobPaths,
           projectLoadingProgress,
-          forgetStaleProjectCache({ origin, project, ref }) {
-            const projectKey = `${origin}\u0000${project}\u0000${ref}`;
-            if (!state.projectProgressListeners.has(projectKey)) state.projects.delete(projectKey);
+          // Ticket 28: both used to reach into `state.packages`/
+          // `state.projects`/`state.projectProgressListeners` directly. The
+          // source-loader instance owns those caches, and with them the
+          // "never drop a project load that still has subscribers" rule.
+          forgetStaleProjectCache(scope) {
+            sourceLoader?.forgetStaleProject(scope);
           },
           resetCaches() {
-            state.packages.clear();
-            state.projects.clear();
-            state.projectProgressListeners.clear();
+            sourceLoader?.reset();
           },
         },
       });
@@ -432,81 +530,128 @@
 
   const state = {
     enabled: false,
-    packages: new Map(),
-    projects: new Map(),
-    projectProgressListeners: new Map(),
-    modulePaths: new Map(),
-    absentSourcePaths: new Set(),
-    refsPromise: null,
-    refsKey: '',
-    refsFetchedAt: 0,
-    toastTimer: null,
     abortController: null,
-    ui: null,
   };
 
+  // GitLab-API primitives: thin wrappers onto page/platform/gitlab-api.js
+  // (ticket 27). The pure ones below are plain module exports; the network-
+  // and cache-bearing ones come off the `gitlabApi` instance built in the
+  // bridge above. `state.absentSourcePaths`/`state.modulePaths`/
+  // `state.refsPromise`/`state.refsKey`/`state.refsFetchedAt` moved into
+  // that instance with them.
   function projectContext() {
-    const parts = location.pathname.split('/').filter(Boolean);
-    const marker = parts.indexOf('-');
-    if (marker < 2) return null;
-    const project = parts.slice(0, marker).join('/');
-    return { project, projectBase: `${location.origin}/${project}` };
+    return gitlabApiModule.projectContext();
   }
 
   function normalizePath(value) {
-    return value
-      .replace(/[\u200e\u200f\u202a-\u202e]/g, '')
-      .replace(/\s*\/\s*/g, '/')
-      .trim();
+    return gitlabApiModule.normalizePath(value);
   }
 
   function dirname(path) {
-    const index = path.lastIndexOf('/');
-    return index < 0 ? '' : path.slice(0, index);
+    return gitlabApiModule.dirname(path);
   }
 
   function isProjectGoPath(path) {
-    if (!GO_FILE.test(path)) return false;
-    return !path.split('/').some((part) => part === 'vendor' || part === 'testdata');
+    return gitlabApiModule.isProjectGoPath(path);
   }
 
   function standardLibraryURL(importPath) {
-    return `https://pkg.go.dev/${importPath.split('/').map(encodeURIComponent).join('/')}@${GO_DOCS_VERSION}`;
+    return gitlabApiModule.standardLibraryURL(importPath);
   }
 
   function packageDocumentationURL(importPath) {
-    return `https://pkg.go.dev/${importPath.split('/').map(encodeURIComponent).join('/')}`;
+    return gitlabApiModule.packageDocumentationURL(importPath);
   }
 
   function documentationURL(result) {
-    if (result.status === 'builtin') return `${standardLibraryURL('builtin')}#${encodeURIComponent(result.symbol)}`;
-    return result.status === 'standardLibrary' ? standardLibraryURL(result.importPath) : packageDocumentationURL(result.importPath);
+    return gitlabApiModule.documentationURL(result);
   }
 
   function projectPackageURL(result) {
-    const context = projectContext();
-    if (!context || !COMMIT_SHA.test(result.ref || '')) return '';
-    const tree = `${context.projectBase}/-/tree/${encodeURIComponent(result.ref)}`;
-    return result.packagePath
-      ? `${tree}/${result.packagePath.split('/').map(encodeURIComponent).join('/')}`
-      : tree;
+    return gitlabApiModule.projectPackageURL(result);
   }
 
   function parseBlobLink(anchor, expectedPath = '') {
-    if (!anchor?.href) return null;
-    const url = new URL(anchor.href, location.href);
-    const marker = '/-/blob/';
-    const index = url.pathname.indexOf(marker);
-    if (index < 0) return null;
-    const rest = decodeURIComponent(url.pathname.slice(index + marker.length));
-    const normalizedExpected = normalizePath(expectedPath);
-    if (normalizedExpected && rest.endsWith(`/${normalizedExpected}`)) {
-      return { ref: rest.slice(0, -(normalizedExpected.length + 1)), path: normalizedExpected };
-    }
-    const match = rest.match(/^([0-9a-f]{40})\/(.+)$/i);
-    if (match) return { ref: match[1], path: normalizePath(match[2]) };
-    const slash = rest.indexOf('/');
-    return slash < 0 ? null : { ref: rest.slice(0, slash), path: normalizePath(rest.slice(slash + 1)) };
+    return gitlabApiModule.parseBlobLink(anchor, expectedPath);
+  }
+
+  function mapLimit(values, limit, mapper) {
+    return gitlabApiModule.mapLimit(values, limit, mapper);
+  }
+
+  function nextPageNumber(response, currentPage, entries) {
+    return gitlabApiModule.nextPageNumber(response, currentPage, entries);
+  }
+
+  function refsDisagreeWithFile(refs, fileRef) {
+    return gitlabApiModule.refsDisagreeWithFile(refs, fileRef);
+  }
+
+  function sourceRefFor(file, line, refs) {
+    return gitlabApiModule.sourceRefFor(file, line, refs);
+  }
+
+  function mergeRequestIID() {
+    return gitlabApiModule.mergeRequestIID();
+  }
+
+  // Optional-chained: also reached from `teardown()`, which can run before
+  // the import resolves. A reset against a cache that cannot have entries
+  // yet is a no-op, not an error.
+  function clearMergeRequestRefs() {
+    gitlabApi?.clearMergeRequestRefs();
+  }
+
+  async function fetchSource(path, ref, signal = undefined) {
+    await gitlabApiReady;
+    return gitlabApi.fetchSource(path, ref, signal);
+  }
+
+  async function fetchBlob(entry, ref, signal = undefined) {
+    await gitlabApiReady;
+    return gitlabApi.fetchBlob(entry, ref, signal);
+  }
+
+  async function listPackageFiles(packagePath, ref, signal = undefined) {
+    await gitlabApiReady;
+    return gitlabApi.listPackageFiles(packagePath, ref, signal);
+  }
+
+  async function listProjectFiles(ref) {
+    await gitlabApiReady;
+    return gitlabApi.listProjectFiles(ref);
+  }
+
+  async function listMergeRequestChangedFiles() {
+    await gitlabApiReady;
+    return gitlabApi.listMergeRequestChangedFiles();
+  }
+
+  async function searchProjectBlobPaths(search, ref, options = {}) {
+    await gitlabApiReady;
+    return gitlabApi.searchProjectBlobPaths(search, ref, options);
+  }
+
+  async function modulePathFor(ref, signal = undefined) {
+    await gitlabApiReady;
+    return gitlabApi.modulePathFor(ref, signal);
+  }
+
+  async function mergeRequestRefs() {
+    await gitlabApiReady;
+    return gitlabApi.mergeRequestRefs();
+  }
+
+  async function mergeRequestRefsForFile(file) {
+    await gitlabApiReady;
+    return gitlabApi.mergeRequestRefsForFile(file);
+  }
+
+  // A live `legacy` capability (page/features/mr-preload.js:67), not an
+  // internal helper \u2014 see ticket 27.
+  async function mergeRequestHeadRef() {
+    await gitlabApiReady;
+    return gitlabApi.mergeRequestHeadRef();
   }
 
   // Diff-DOM primitives: thin wrappers onto page/platform/diff-dom.js
@@ -568,47 +713,24 @@
     }));
   }
 
+  // Progress view-models: thin wrappers onto page/platform/source-loader.js
+  // (ticket 28), where they live alongside the two load flows that produce
+  // them. `projectLoadingProgress` is also handed to
+  // page/features/mr-preload.js as a `legacy` capability.
   function packageLoadingProgress(phase, completed = 0, total = 0, details = {}) {
-    const safeTotal = Math.max(0, Number.isFinite(total) ? Math.floor(total) : 0);
-    const safeCompleted = Math.min(safeTotal, Math.max(0, Number.isFinite(completed) ? Math.floor(completed) : 0));
-    const percentage = phase === 'ready'
-      ? 100
-      : phase === 'discovering'
-      ? 0
-      : phase === 'indexing' || safeTotal === 0
-      ? 90
-      : Math.round((safeCompleted / safeTotal) * 90);
-    return { phase, completed: safeCompleted, total: safeTotal, percentage, ...details };
+    return sourceLoaderModule.packageLoadingProgress(phase, completed, total, details);
   }
 
   function packageLoadingMessage(packagePath, progress) {
-    const label = packagePath || 'root package';
-    if (progress.phase === 'discovering') return `Preparing ${label}…`;
-    if (progress.phase === 'indexing') return `Indexing symbols · ${progress.percentage}% · ${progress.total} / ${progress.total} files`;
-    return `Loading ${label} · ${progress.percentage}% · ${progress.completed} / ${progress.total} files`;
+    return sourceLoaderModule.packageLoadingMessage(packagePath, progress);
   }
 
   function projectLoadingProgress(phase, completed = 0, total = 0, details = {}) {
-    const safeTotal = Math.max(0, Number.isFinite(total) ? Math.floor(total) : 0);
-    const safeCompleted = Math.min(safeTotal, Math.max(0, Number.isFinite(completed) ? Math.floor(completed) : 0));
-    const percentage = phase === 'ready'
-      ? 100
-      : phase === 'discovering'
-      ? 0
-      : phase === 'indexing' || safeTotal === 0
-      ? 95
-      : Math.round((safeCompleted / safeTotal) * 90);
-    return { phase, completed: safeCompleted, total: safeTotal, percentage, ...details };
+    return sourceLoaderModule.projectLoadingProgress(phase, completed, total, details);
   }
 
   function projectLoadingMessage(progress) {
-    if (progress.phase === 'discovering') return 'Preparing MR head cache…';
-    if (progress.phase === 'indexing') return `Caching and indexing ${progress.total} Go files…`;
-    if (progress.phase === 'ready') return 'MR head cache ready';
-    if (Number.isFinite(progress.cached) && Number.isFinite(progress.remaining)) {
-      return `${progress.cached.toLocaleString()} cached · ${progress.remaining.toLocaleString()} remaining · ${progress.percentage}%`;
-    }
-    return `Fetching project Go sources · ${progress.percentage}% · ${progress.completed} / ${progress.total} files`;
+    return sourceLoaderModule.projectLoadingMessage(progress);
   }
 
   // relatedLoadingProgress/relatedLoadingMessage (MR-related preload's own
@@ -635,10 +757,13 @@
       rpcClientPromise = import(chrome.runtime.getURL('page/platform/rpc-client.js')).then((module) => {
         rpcClient = module.createRpcClient({
           connect: () => chrome.runtime.connect({ name: 'golens-go-rpc' }),
+          // The worker restarted and lost its in-memory index, so every
+          // restored/cached result is stale. Tickets 27/28 own these caches
+          // now; `clearLoaded()` deliberately leaves in-flight loads'
+          // progress listeners attached (see source-loader.js).
           onDisconnect: () => {
-            state.packages.clear();
-            state.projects.clear();
-            state.modulePaths.clear();
+            sourceLoader?.clearLoaded();
+            gitlabApi?.clearModulePaths();
           },
         });
         rpcMethodNamespace = module.methodNamespace;
@@ -653,380 +778,20 @@
     return client[rpcMethodNamespace(method)][method](params);
   }
 
-  function authenticatedFetch(input, options = {}) {
-    const { signal = state.abortController?.signal, ...requestOptions } = options;
-    return fetch(input, {
-      credentials: 'include',
-      ...requestOptions,
-      signal,
-    });
-  }
-
-  function nextPageNumber(response, currentPage, entries) {
-    const header = response.headers.get('x-next-page');
-    if (/^\d+$/.test(header || '')) return Number(header);
-    return entries.length === 100 ? currentPage + 1 : 0;
-  }
-
-  const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
-  const FETCH_RETRY_DELAYS_MS = [200, 800, 2000];
-
-  function sleep(ms) {
-    return new Promise((resolve) => clock.setTimeout(resolve, ms));
-  }
-
-  // Retries a retryable (rate-limited/transient-server-error) response with
-  // backoff before giving up, so a single blip can't abort a whole caching
-  // job. Never retries an aborted request.
-  async function fetchWithRetry(url, options = {}) {
-    for (let attempt = 0; ; attempt++) {
-      const response = await authenticatedFetch(url, options);
-      if (response.ok || !RETRYABLE_STATUS.has(response.status) || attempt >= FETCH_RETRY_DELAYS_MS.length) return response;
-      await sleep(FETCH_RETRY_DELAYS_MS[attempt]);
-    }
-  }
-
-  async function fetchSource(path, ref, signal = undefined) {
-    const project = projectContext();
-    const url = `${project.projectBase}/-/raw/${encodeURIComponent(ref)}/${path.split('/').map(encodeURIComponent).join('/')}`;
-    if (state.absentSourcePaths.has(url)) throw new Error(`GitLab returned 404 for ${path}`);
-    const response = await fetchWithRetry(url, { signal });
-    if (response.status === 404) state.absentSourcePaths.add(url);
-    if (!response.ok) throw new Error(`GitLab returned ${response.status} for ${path}`);
-    return response.text();
-  }
-
-  async function fetchBlob({ path, blobId }, ref, signal = undefined) {
-    if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(blobId || '')) {
-      throw new Error(`GitLab did not provide a valid blob ID for ${path}`);
-    }
-    const { project } = projectContext();
-    const url = `${location.origin}/api/v4/projects/${encodeURIComponent(project)}/repository/blobs/${encodeURIComponent(blobId)}/raw`;
-    if (state.absentSourcePaths.has(url)) throw new Error(`GitLab returned 404 for ${path}`);
-    const response = await fetchWithRetry(url, { signal });
-    if (response.status === 404) state.absentSourcePaths.add(url);
-    if (!response.ok) throw new Error(`GitLab returned ${response.status} for ${path}`);
-    return { path, blobId, source: await response.text() };
-  }
-
-  function clearMergeRequestRefs() {
-    state.refsPromise = null;
-    state.refsKey = '';
-    state.refsFetchedAt = 0;
-  }
-
-  function refsDisagreeWithFile(refs, fileRef) {
-    return COMMIT_SHA.test(fileRef || '')
-      && COMMIT_SHA.test(refs?.headSha || '')
-      && refs.headSha.toLowerCase() !== fileRef.toLowerCase();
-  }
-
-  async function mergeRequestRefs() {
-    const context = projectContext();
-    const iid = location.pathname.match(/\/-\/merge_requests\/(\d+)/)?.[1];
-    const key = `${location.origin}\u0000${context?.project || ''}\u0000${iid || ''}`;
-    if (state.refsPromise && state.refsKey === key && Date.now() - state.refsFetchedAt < 15000) return state.refsPromise;
-    state.refsKey = key;
-    state.refsFetchedAt = Date.now();
-    state.refsPromise = (async () => {
-      if (!context || !iid) return {};
-      const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-      const response = await authenticatedFetch(`${location.origin}/api/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
-        },
-        body: JSON.stringify({
-          query: 'query GoLensMergeRequestRefs($fullPath: ID!, $iid: String!) { project(fullPath: $fullPath) { mergeRequest(iid: $iid) { diffRefs { baseSha headSha startSha } } } }',
-          variables: { fullPath: context.project, iid },
-        }),
-      });
-      if (!response.ok) return {};
-      const payload = await response.json();
-      return payload.data?.project?.mergeRequest?.diffRefs || {};
-    })().catch(() => ({}));
-    return state.refsPromise;
-  }
-
-  async function mergeRequestRefsForFile(file) {
-    let refs = await mergeRequestRefs();
-    if (refsDisagreeWithFile(refs, file.ref)) {
-      clearMergeRequestRefs();
-      refs = await mergeRequestRefs();
-    }
-    return refs;
-  }
-
-  function sourceRefFor(file, line, refs) {
-    if (line.side === 'old') return refs.startSha || refs.baseSha || file.ref;
-    return COMMIT_SHA.test(file.ref || '') ? file.ref : (refs.headSha || file.ref);
-  }
-
-  // Fetches a paginated repository-tree listing. When GitLab reports a total
-  // page count, the remaining pages are known upfront and fetched
-  // concurrently; GitLab.com is known to omit pagination headers, so when it
-  // doesn't the existing sequential `x-next-page`/page-size fallback is used.
-  async function fetchTreeEntries(urlFor, signal) {
-    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    const headers = csrf ? { 'X-CSRF-Token': csrf } : {};
-    const fetchPage = async (page) => {
-      const response = await fetchWithRetry(urlFor(page), { headers, signal });
-      if (!response.ok) throw new Error(`GitLab source API returned ${response.status}`);
-      const entries = await response.json();
-      if (!Array.isArray(entries)) throw new Error('GitLab returned an invalid repository tree response');
-      return { response, entries };
-    };
-    const first = await fetchPage(1);
-    const totalPagesHeader = first.response.headers.get('x-total-pages');
-    const totalPages = /^\d+$/.test(totalPagesHeader || '') ? Number(totalPagesHeader) : 0;
-    if (totalPages > 1) {
-      const remainingPages = await mapLimit(
-        Array.from({ length: totalPages - 1 }, (_value, index) => index + 2),
-        6,
-        async (page) => (await fetchPage(page)).entries,
-      );
-      return [...first.entries, ...remainingPages.flat()];
-    }
-    const entries = [...first.entries];
-    for (let page = nextPageNumber(first.response, 1, first.entries); page;) {
-      const next = await fetchPage(page);
-      entries.push(...next.entries);
-      page = nextPageNumber(next.response, page, next.entries);
-    }
-    return entries;
-  }
-
-  async function listPackageFiles(packagePath, ref, signal = undefined) {
-    const { project } = projectContext();
-    const encodedProject = encodeURIComponent(project);
-    const entries = await fetchTreeEntries(
-      (page) => `${location.origin}/api/v4/projects/${encodedProject}/repository/tree?path=${encodeURIComponent(packagePath)}&ref=${encodeURIComponent(ref)}&per_page=100&page=${page}`,
-      signal,
-    );
-    const files = entries.filter((entry) => entry.type === 'blob' && GO_FILE.test(entry.path)).map((entry) => ({ path: entry.path, blobId: entry.id || '' }));
-    if (files.length > 200) throw new Error(`Package ${packagePath || '.'} contains too many Go files`);
-    return files;
-  }
-
-  async function listProjectFiles(ref) {
-    const { project } = projectContext();
-    const encodedProject = encodeURIComponent(project);
-    const entries = await fetchTreeEntries(
-      (page) => `${location.origin}/api/v4/projects/${encodedProject}/repository/tree?recursive=true&ref=${encodeURIComponent(ref)}&per_page=100&page=${page}`,
-      undefined,
-    );
-    return entries.filter((entry) => entry.type === 'blob' && isProjectGoPath(entry.path)).map((entry) => ({ path: entry.path, blobId: entry.id || '' }));
-  }
-
-  function mergeRequestIID() {
-    return location.pathname.match(/\/-\/merge_requests\/(\d+)/)?.[1] || '';
-  }
-
-  async function listMergeRequestChangedFiles() {
-    const { project } = projectContext();
-    const mergeRequest = mergeRequestIID();
-    if (!mergeRequest) throw new Error('GitLab merge request context is unavailable.');
-    const encodedProject = encodeURIComponent(project);
-    const files = [];
-    for (let page = 1; page;) {
-      const url = `${location.origin}/api/v4/projects/${encodedProject}/merge_requests/${encodeURIComponent(mergeRequest)}/diffs?per_page=100&page=${page}`;
-      const response = await authenticatedFetch(url);
-      if (!response.ok) throw new Error(`GitLab merge request API returned ${response.status}`);
-      const entries = await response.json();
-      if (!Array.isArray(entries)) throw new Error('GitLab returned an invalid merge request diff response');
-      files.push(...entries
-        .filter((entry) => !entry.deleted_file && isProjectGoPath(entry.new_path || ''))
-        .map((entry) => entry.new_path));
-      page = nextPageNumber(response, page, entries);
-    }
-    return [...new Set(files)];
-  }
-
-  async function searchProjectBlobPaths(search, ref, { maxPages = 100, maxPaths = Infinity, signal = undefined, searchType = '' } = {}) {
-    const { project } = projectContext();
-    const encodedProject = encodeURIComponent(project);
-    const paths = new Set();
-    try {
-      for (let page = 1; page <= maxPages; page++) {
-        const parameters = new URLSearchParams({ scope: 'blobs', search, ref, per_page: '100', page: String(page) });
-        if (searchType) parameters.set('search_type', searchType);
-        const response = await authenticatedFetch(`${location.origin}/api/v4/projects/${encodedProject}/search?${parameters}`, { signal });
-        if (!response.ok) return { paths: [...paths], status: paths.size ? 'limited' : 'unavailable' };
-        const entries = await response.json();
-        if (!Array.isArray(entries)) return { paths: [...paths], status: paths.size ? 'limited' : 'unavailable' };
-        entries.filter((entry) => isProjectGoPath(entry.path || '')).forEach((entry) => paths.add(entry.path));
-        if (paths.size >= maxPaths) return { paths: [...paths].slice(0, maxPaths), status: 'limited' };
-        const nextPage = response.headers.get('x-next-page');
-        if (nextPage) {
-          page = Number(nextPage) - 1;
-          continue;
-        }
-        if (entries.length < 100) return { paths: [...paths], status: 'complete' };
-      }
-      return { paths: [...paths], status: 'limited' };
-    } catch (error) {
-      if (error?.name === 'AbortError') throw error;
-      return { paths: [...paths], status: paths.size ? 'limited' : 'unavailable' };
-    }
-  }
-
-  async function modulePathFor(ref, signal = undefined) {
-    const key = `${projectContext().project}\u0000${ref}`;
-    if (state.modulePaths.has(key)) return state.modulePaths.get(key);
-    try {
-      const source = await fetchSource('go.mod', ref, signal);
-      const modulePath = source.match(/^\s*module\s+([^\s]+)\s*$/m)?.[1] || '';
-      state.modulePaths.set(key, modulePath);
-      return modulePath;
-    } catch (error) {
-      if (error?.name === 'AbortError') throw error;
-      state.modulePaths.set(key, '');
-      return '';
-    }
-  }
-
-  async function mapLimit(values, limit, mapper) {
-    const results = new Array(values.length);
-    let next = 0;
-    async function consume() {
-      while (next < values.length) {
-        const index = next++;
-        results[index] = await mapper(values[index], index);
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(limit, values.length) }, consume));
-    return results;
-  }
-
+  // Source loading: thin wrappers onto page/platform/source-loader.js
+  // (ticket 28). `state.packages`/`state.projects`/
+  // `state.projectProgressListeners` moved into that module's instance, as
+  // did the per-key in-flight-promise de-duplication and the progress
+  // fan-out. `status()` above is injected into it rather than moving with
+  // them — see that module's header for why.
   async function loadPackage(packagePath, ref, onProgress = () => {}, signal = undefined) {
-    const context = projectContext();
-    const key = `${location.origin}\u0000${context.project}\u0000${ref}\u0000${packagePath}`;
-    const projectKey = `${location.origin}\u0000${context.project}\u0000${ref}`;
-    if (state.projects.has(projectKey)) return state.projects.get(projectKey);
-    if (state.packages.has(key)) return state.packages.get(key);
-    const promise = (async () => {
-      const reportProgress = (progress) => {
-        const message = packageLoadingMessage(packagePath, progress);
-        status('loading', message, progress);
-        onProgress(message, progress);
-      };
-      reportProgress(packageLoadingProgress('discovering'));
-      const cacheStatus = COMMIT_SHA.test(ref)
-        ? await workerRPC('packageCacheStatus', { origin: location.origin, project: context.project, ref, packagePath })
-        : { status: 'missing' };
-      if (cacheStatus.status === 'complete') {
-        const cached = await workerRPC('restorePackage', { origin: location.origin, project: context.project, ref, packagePath });
-        if (cached.status !== 'cacheMiss') {
-          const message = cached.status === 'cacheHit'
-            ? `Go intelligence restored from cache · ${cached.definitions} symbols`
-            : 'Go intelligence ready';
-          status('ready', message, packageLoadingProgress('ready'));
-          return { ...cached, cached: cached.files || 0, downloaded: 0 };
-        }
-      }
-      const entries = await listPackageFiles(packagePath, ref, signal);
-      const prepared = COMMIT_SHA.test(ref)
-        ? await workerRPC('prepareSources', { origin: location.origin, project: context.project, ref, files: entries })
-        : { total: entries.length, cached: 0, missing: entries.map((entry) => ({ ...entry, referencedFiles: 1 })) };
-      let downloaded = 0;
-      let completed = prepared.cached;
-      const progressDetails = () => ({
-        cached: prepared.cached,
-        downloaded,
-        remaining: Math.max(0, prepared.total - completed),
-      });
-      reportProgress(packageLoadingProgress('fetching', completed, prepared.total, progressDetails()));
-      const files = await mapLimit(prepared.missing, 6, async (entry) => {
-        const file = await fetchBlob(entry, ref, signal);
-        const referencedFiles = entry.referencedFiles || 1;
-        downloaded += referencedFiles;
-        completed += referencedFiles;
-        reportProgress(packageLoadingProgress('fetching', completed, prepared.total, progressDetails()));
-        return file;
-      });
-      reportProgress(packageLoadingProgress('indexing', completed, prepared.total, progressDetails()));
-      const modulePath = await modulePathFor(ref, signal);
-      const result = await workerRPC('cachePackage', { origin: location.origin, project: context.project, ref, packagePath, modulePath, entries, files });
-      status('ready', `Go intelligence ready · ${result.definitions} symbols`, packageLoadingProgress('ready', prepared.total, prepared.total));
-      return { ...result, cached: prepared.cached, downloaded };
-    })().catch((error) => {
-      state.packages.delete(key);
-      status('error', error.message);
-      throw error;
-    });
-    state.packages.set(key, promise);
-    return promise;
+    await sourceLoaderReady;
+    return sourceLoader.loadPackage(packagePath, ref, onProgress, signal);
   }
 
   async function loadProject(ref, progress = () => {}) {
-    const context = projectContext();
-    const key = `${location.origin}\u0000${context.project}\u0000${ref}`;
-    if (state.projects.has(key)) {
-      state.projectProgressListeners.get(key)?.add(progress);
-      return state.projects.get(key);
-    }
-    const listeners = new Set([progress]);
-    state.projectProgressListeners.set(key, listeners);
-    const promise = (async () => {
-      const reportProgress = (update, message = projectLoadingMessage(update)) => {
-        for (const listener of listeners) listener(message, update);
-        status(update.phase === 'ready' ? 'ready' : 'loading', message, update);
-      };
-      reportProgress(projectLoadingProgress('discovering'));
-      const cached = await workerRPC('restoreProject', { origin: location.origin, project: context.project, ref });
-      if (cached.status !== 'cacheMiss') {
-        const message = cached.status === 'cacheHit'
-          ? `Go project intelligence restored from cache · ${cached.packages} packages`
-          : 'Go project intelligence ready';
-        reportProgress(projectLoadingProgress('ready'), message);
-        return cached;
-      }
-      const entries = await listProjectFiles(ref);
-      const prepared = COMMIT_SHA.test(ref)
-        ? await workerRPC('prepareSources', { origin: location.origin, project: context.project, ref, files: entries })
-        : { total: entries.length, cached: 0, missing: entries.map((entry) => ({ ...entry, referencedFiles: 1 })) };
-      let downloaded = 0;
-      let completed = prepared.cached;
-      const progressDetails = () => ({
-        cached: prepared.cached,
-        downloaded,
-        remaining: Math.max(0, prepared.total - completed),
-      });
-      reportProgress(projectLoadingProgress('fetching', completed, prepared.total, progressDetails()));
-      const files = await mapLimit(prepared.missing, 6, async (entry) => {
-        const file = await fetchBlob(entry, ref);
-        const referencedFiles = entry.referencedFiles || 1;
-        downloaded += referencedFiles;
-        completed += referencedFiles;
-        reportProgress(projectLoadingProgress('fetching', completed, prepared.total, progressDetails()));
-        return file;
-      });
-      reportProgress(projectLoadingProgress('indexing', prepared.total, prepared.total, progressDetails()));
-      const modulePath = await modulePathFor(ref);
-      const result = await workerRPC('cacheProject', { origin: location.origin, project: context.project, ref, modulePath, entries, files });
-      reportProgress(projectLoadingProgress('ready', prepared.total, prepared.total, progressDetails()), `Go project intelligence ready · ${result.packages} packages`);
-      return result;
-    })().catch((error) => {
-      state.projects.delete(key);
-      status('error', error.message);
-      throw error;
-    }).finally(() => {
-      state.projectProgressListeners.delete(key);
-    });
-    state.projects.set(key, promise);
-    return promise;
-  }
-
-  async function mergeRequestHeadRef() {
-    const ref = (await mergeRequestRefs()).headSha || '';
-    if (!COMMIT_SHA.test(ref)) {
-      state.refsPromise = null;
-      state.refsKey = '';
-      state.refsFetchedAt = 0;
-      throw new Error('Unable to determine the MR head commit.');
-    }
-    return ref;
+    await sourceLoaderReady;
+    return sourceLoader.loadProject(ref, progress);
   }
 
   // mergeSearchStatus/relatedReadyMessage/implementationSearchTerms and
@@ -1037,89 +802,45 @@
   // page/features/mr-preload.js") now defines these same five names as
   // thin async adapters onto the mounted module's handle.
 
-  // ensureUI() -> the toast-only shadow host. Shrunk from its former
-  // popover+toast markup (ticket 21): the popover DOM is now entirely
-  // private to page/features/code-intel.js, in its own shadow host (see
-  // that module's own header comment on the toast-surface decision — this
-  // host stays here because keyboard-nav.js/bookmarks.js/project-search.js/
-  // code-intel.js all still reach it as a shared capability).
-  function ensureUI() {
-    if (state.ui?.isConnected) return state.ui.shadowRoot;
-    const host = document.createElement('div');
-    host.id = 'golens-go-toast-root';
-    const shadow = host.attachShadow({ mode: 'open' });
-    shadow.innerHTML = `
-      <style>
-        :host { all:initial; position:fixed; z-index:var(--golens-z-popover); inset:0; pointer-events:none; font:12px/1.45 var(--golens-font-sans); color-scheme:dark; }
-        * { box-sizing:border-box; }
-        kbd { display:inline-flex; min-width:17px; min-height:17px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
-        .toast { position:fixed; right:18px; bottom:18px; display:none; width:min(390px,calc(100vw - 36px)); padding:var(--golens-space-3); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-md); background:var(--golens-surface-raised); color:var(--golens-text-primary); box-shadow:var(--golens-shadow-md); pointer-events:auto; }
-        .toast.show { display:grid; }
-        .toast[data-kind="message"] { width:auto; max-width:360px; padding:var(--golens-space-2) var(--golens-space-3); }
-        .toast[data-kind="message"] .toast-label,.toast[data-kind="message"] .toast-binding,.toast[data-kind="message"] .toast-actions { display:none; }
-        .toast-label { margin:0 0 3px; color:var(--golens-primary-hover); font:700 9px/1.3 var(--golens-font-mono); letter-spacing:.06em; text-transform:uppercase; }
-        .toast-content { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-3); align-items:center; }
-        .toast-message { color:var(--golens-text-primary); line-height:1.45; }
-        .toast-binding { min-height:24px; padding:3px 7px; white-space:nowrap; }
-        .toast-actions { display:flex; gap:var(--golens-space-2); justify-content:flex-end; margin-top:var(--golens-space-2); }
-        .toast-actions button { padding:4px 7px; border:1px solid transparent; border-radius:var(--golens-radius-xs); background:transparent; color:var(--golens-text-secondary); font:650 10px/1.3 var(--golens-font-sans); cursor:pointer; }
-        .toast-actions button:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
-        .toast-actions button:active { background:var(--golens-surface-pressed); transform:translateY(1px); }
-        .toast-actions button:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:1px; }
-      </style>
-      <section class="toast" data-kind="message" role="status" aria-live="polite"><p class="toast-label">Shortcut tip</p><div class="toast-content"><div class="toast-message"></div><kbd class="toast-binding"></kbd></div><div class="toast-actions"><button type="button" data-action="shortcut-tip-dismiss">Got it</button><button type="button" data-action="shortcut-tip-disable">Turn tips off</button></div></section>
-    `;
-    document.body.append(host);
-    state.ui = host;
-    shadow.querySelector('[data-action="shortcut-tip-dismiss"]').addEventListener('click', hideToast);
-    shadow.querySelector('[data-action="shortcut-tip-disable"]').addEventListener('click', async () => {
-      const saved = await globalThis.GoLensShortcutCoach?.setEnabled?.(false);
-      toast(saved ? 'Shortcut tips turned off. You can re-enable them in settings.' : 'Could not update shortcut tip settings.');
-    });
-    return shadow;
-  }
+  // Toast surface: thin wrappers onto page/platform/toast.js (ticket 29).
+  // The shadow host, its markup/CSS, the 2600ms/8000ms auto-hide timers and
+  // `state.toastTimer`/`state.ui` all moved into that module's instance.
+  // The surface stays shared (keyboard-nav.js/bookmarks.js/
+  // project-search.js/code-intel.js all reach it); only its implementation
+  // moved. code-intel.js's popover remains a separate shadow host of its
+  // own (ticket 21).
+  //
+  // `toast`/`showShortcutCoachHint` are also this file's public
+  // `showToast`/`showShortcutCoachHint` exports, and `isToastShowing` its
+  // `legacyToast.isShowing` capability. All three degrade rather than throw
+  // if reached before the import resolves — a dropped notification is not
+  // worth crashing a keyboard action over, and `showShortcutCoachHint`
+  // already had a false return for "did not show".
 
   // sourceLocationForTarget through hidePopover (popover DOM, rendering,
   // and hit-test presentation, ~600 lines) moved to
   // page/features/code-intel.js/.internal.js (ticket 21).
 
   function hideToast() {
-    clearTimeout(state.toastTimer);
-    state.toastTimer = null;
-    state.ui?.shadowRoot.querySelector('.toast')?.classList.remove('show');
+    toastSurface?.hideToast();
   }
 
   function toast(message) {
-    const element = ensureUI().querySelector('.toast');
-    clearTimeout(state.toastTimer);
-    element.dataset.kind = 'message';
-    element.querySelector('.toast-message').textContent = message;
-    element.classList.add('show');
-    state.toastTimer = setTimeout(hideToast, 2600);
+    toastSurface?.toast(message);
   }
 
   // isToastShowing()/showShortcutCoachHint() are exposed on this module's
   // public surface (ticket 17) as capabilities page/features/keyboard-nav.js
-  // is given at mount, since the coach hint reuses this same `.toast`
-  // element (dataset.kind distinguishes 'message' from 'shortcut') and the
-  // element itself stays here rather than becoming a second toast surface.
-  // keyboard-nav.js now owns the blocked-check and the message-for-action
-  // decision (formerly shortcutCoachBlocked()/SHORTCUT_COACH_MESSAGES here);
-  // this function only renders a hint it is handed, message included.
+  // is given at mount, since the coach hint reuses the same `.toast` element
+  // (dataset.kind distinguishes 'message' from 'shortcut'). keyboard-nav.js
+  // owns the blocked-check and the message-for-action decision; the surface
+  // only renders a hint it is handed, message included.
   function isToastShowing() {
-    return Boolean(state.ui?.shadowRoot.querySelector('.toast')?.classList.contains('show'));
+    return toastSurface?.isToastShowing() ?? false;
   }
 
   function showShortcutCoachHint(hint) {
-    if (!hint?.message) return false;
-    const element = ensureUI().querySelector('.toast');
-    clearTimeout(state.toastTimer);
-    element.dataset.kind = 'shortcut';
-    element.querySelector('.toast-message').textContent = hint.message;
-    element.querySelector('.toast-binding').textContent = hint.displayBinding;
-    element.classList.add('show');
-    state.toastTimer = setTimeout(hideToast, 8000);
-    return true;
+    return toastSurface?.showShortcutCoachHint(hint) ?? false;
   }
 
   // Ticket 26: the diff-root selector and this walk live in
@@ -1255,8 +976,6 @@
     state.enabled = false;
     state.abortController?.abort();
     state.abortController = null;
-    clearTimeout(state.toastTimer);
-    state.toastTimer = null;
     state.diffObserver?.disconnect();
     state.diffObserver = null;
     setCodeIntelEnabled(false);
@@ -1267,16 +986,15 @@
     document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('visibilitychange', refreshMergeRequestRefs, true);
     rpcClient?.dispose({ reason: 'Go intelligence request cancelled' });
-    state.packages.clear();
-    state.projects.clear();
-    state.projectProgressListeners.clear();
-    state.modulePaths.clear();
-    state.refsPromise = null;
-    state.refsKey = '';
-    state.refsFetchedAt = 0;
+    // Tickets 27/28/29 own this state now. Every call is optional-chained:
+    // `teardown()` is synchronous and can run before the platform imports
+    // resolve, and a reset against caches that cannot have entries yet is a
+    // no-op, not an error.
+    sourceLoader?.reset();
+    gitlabApi?.clearModulePaths();
+    gitlabApi?.clearMergeRequestRefs();
     projectSearchHandle?.close({ restorePopover: false });
-    state.ui?.remove();
-    state.ui = null;
+    toastSurface?.destroy();
   }
 
   function refreshMergeRequestRefs() {
@@ -1319,6 +1037,6 @@
     // `navigationAction` capability (page/main.js) reaches
     // `.navigationAction(action)` through this.
     get codeIntel() { return codeIntelHandle; },
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, fileContextFor, codeCellFor, lineContextFor, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, onKeyDown, showShortcutCoachHint, setClock, diffDomReady, keyboardNavReady, mrPreloadReady, projectSearchReady, bookmarksReady, codeIntelReady },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, fileContextFor, codeCellFor, lineContextFor, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, onKeyDown, showShortcutCoachHint, setClock, diffDomReady, gitlabApiReady, sourceLoaderReady, toastReady, keyboardNavReady, mrPreloadReady, projectSearchReady, bookmarksReady, codeIntelReady },
   };
 })();

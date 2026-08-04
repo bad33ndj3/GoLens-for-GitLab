@@ -21,6 +21,12 @@ test('renders a compact, dismissible shortcut tip and can disable future tips', 
   // page/features/keyboard-nav.js) — it renders whatever message it is
   // handed, which is now this test's job to supply.
   const helpers = globalThis.GoLensGoNavigation.__test;
+  // Ticket 29: the toast shadow host now lives in page/platform/toast.js,
+  // reached through go-navigation.js's dynamic `import()` bridge. This test
+  // calls showShortcutCoachHint() immediately after evaluating the file, so
+  // it has to await the bridge; production callers (keyboard-nav.js) only
+  // reach it from a key handler, long after.
+  await helpers.toastReady;
   assert.equal(helpers.showShortcutCoachHint({ actionID: 'semanticJump', message: 'Open the selected symbol directly from the keyboard.', displayBinding: 'Ctrl+F12' }), true);
 
   const shadow = window.document.getElementById('golens-go-toast-root').shadowRoot;

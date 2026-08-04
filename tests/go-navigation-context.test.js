@@ -23,6 +23,12 @@ before(async () => {
   // `import()` bridge. Await it here instead of racing it — production never
   // does, because every wrapper is reached long after the load resolves.
   await helpers.diffDomReady;
+  // Tickets 27/28/29: the GitLab-API layer, the source loader and the toast
+  // surface are behind their own dynamic `import()` bridges too. The
+  // synchronous wrappers (normalizePath/parseBlobLink/nextPageNumber/…)
+  // throw until these resolve, so await them here rather than racing them;
+  // production only reaches them from event handlers and mounted features.
+  await Promise.all([helpers.gitlabApiReady, helpers.sourceLoaderReady, helpers.toastReady]);
 });
 
 test('normalizes GitLab file-title spacing and bidi markers', () => {
