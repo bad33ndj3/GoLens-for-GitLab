@@ -11,7 +11,7 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { GoSemanticSourceCache } from '../../go-semantic-cache.js';
+import { GoSemanticSourceCache } from '../../worker/source-cache.js';
 import { FakeIndexedDB } from './fake-indexeddb.mjs';
 
 const SMOKE = process.env.GOLENS_BENCH_SCALE === 'smoke';

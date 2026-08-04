@@ -1,7 +1,7 @@
-import { Language, Parser } from './vendor/web-tree-sitter.js';
-import { GoSemanticSourceCache, isCommitSHA } from './go-semantic-cache.js';
-import { GoSemanticIndex, INDEX_FORMAT_VERSION } from './go-semantic-core.js';
-import { syncSelfHostedContentScripts } from './gitlab-host-access.js';
+import { Language, Parser } from '../vendor/web-tree-sitter.js';
+import { GoSemanticSourceCache, isCommitSHA } from './source-cache.js';
+import { GoSemanticIndex, INDEX_FORMAT_VERSION } from './index-core.js';
+import { syncSelfHostedContentScripts } from '../gitlab-host-access.js';
 
 const INDEX_DATABASE_NAME = 'golens-go-semantic-index';
 const INDEX_DATABASE_VERSION = 1;
@@ -112,9 +112,9 @@ function asset(name) {
 async function semanticIndex() {
   if (!indexPromise) {
     const initialization = (async () => {
-      await Parser.init({ locateFile: () => asset('./vendor/web-tree-sitter.wasm') });
+      await Parser.init({ locateFile: () => asset('../vendor/web-tree-sitter.wasm') });
       const parser = new Parser();
-      parser.setLanguage(await Language.load(asset('./vendor/tree-sitter-go.wasm')));
+      parser.setLanguage(await Language.load(asset('../vendor/tree-sitter-go.wasm')));
       return new GoSemanticIndex(parser);
     })();
     indexPromise = initialization.catch((error) => {

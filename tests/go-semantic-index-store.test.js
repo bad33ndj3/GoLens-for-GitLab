@@ -11,7 +11,7 @@ let GoSemanticIndexStore;
 
 before(async () => {
   globalThis.self ??= { addEventListener() {}, postMessage() {} };
-  ({ GoSemanticIndexStore } = await import('../go-semantic-worker.js?index-store-test'));
+  ({ GoSemanticIndexStore } = await import('../worker/dispatch.js?index-store-test'));
 });
 
 // Every behavioural test below runs once against the in-memory `Map`

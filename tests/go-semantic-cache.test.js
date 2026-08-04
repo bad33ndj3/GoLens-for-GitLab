@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { GoSemanticSourceCache, isCommitSHA } from '../go-semantic-cache.js';
+import { GoSemanticSourceCache, isCommitSHA } from '../worker/source-cache.js';
 import { FakeIndexedDB } from './benchmarks/fake-indexeddb.mjs';
 
 function blobID(source) {

@@ -22,7 +22,7 @@ before(async () => {
       pending.delete(message.id);
     },
   };
-  ({ routeMethod } = await import('../go-semantic-worker.js?worker-test'));
+  ({ routeMethod } = await import('../worker/dispatch.js?worker-test'));
 });
 
 function request(method, params) {

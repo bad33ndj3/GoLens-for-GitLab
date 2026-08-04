@@ -19,7 +19,7 @@
 
 import assert from 'node:assert/strict';
 import { Language, Parser } from 'web-tree-sitter';
-import { GoSemanticIndex } from '../../go-semantic-core.js';
+import { GoSemanticIndex } from '../../worker/index-core.js';
 import { buildSyntheticProject } from './fixtures.mjs';
 
 // Override with GOLENS_BENCH_SCALE=smoke for a fast sanity pass (used by

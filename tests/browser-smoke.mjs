@@ -91,7 +91,7 @@ async function sendExtensionTabMessage(port, pageURL, messageType, deadline) {
   try {
     while (Date.now() < deadline) {
       const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json()).catch(() => []);
-      const worker = targets.find((candidate) => candidate.type === 'service_worker' && candidate.url.endsWith('/go-semantic-worker.js'));
+      const worker = targets.find((candidate) => candidate.type === 'service_worker' && candidate.url.endsWith('/worker/dispatch.js'));
       if (!worker?.webSocketDebuggerUrl) {
         await delay(50);
         continue;

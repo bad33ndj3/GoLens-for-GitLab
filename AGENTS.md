@@ -27,11 +27,9 @@ GoLens for GitLab is a dependency-light Manifest V3 browser extension.
   (`GoLensBookmarks`, `GoLensShortcuts`, `GoLensShortcutCoach`) because `settings.js` and the page
   graph both need them and neither can import the other. Do not add new ones. The intended end state
   is that these two contracts disappear; nothing has been done toward that yet.
-- `go-semantic-core.js` contains the parser-backed Go symbol index, `go-semantic-cache.js` its
-  IndexedDB source cache; `go-semantic-worker.js` exposes both through the extension service worker.
-  The intended end state moves these three into a `worker/` directory as `index-core`,
-  `source-cache`, and `dispatch`; that move has not happened, so their current root paths are what
-  `manifest.json` and every import still use.
+- `worker/index-core.js` contains the parser-backed Go symbol index, `worker/source-cache.js` its
+  IndexedDB source cache; `worker/dispatch.js` exposes both through the extension service worker
+  (`manifest.json`'s `background.service_worker`).
 - `popup.*` defines compact active-review controls; `settings.*` defines the tabbed settings iframe;
   `extension-cache-ui.js` is the cache-control widget both share and `gitlab-host-access.js` the
   self-hosted-origin approval shared by `settings.js` and the service worker. `golens-theme.css`,
@@ -88,7 +86,7 @@ GitLab navigation can replace the current merge request without reinjecting cont
 
 The four page controls, from top to bottom, turn GoLens on or off, enter or leave fullscreen review focus, cache related Go packages for the MR head, and open MR-local bookmarks. Hover a Go identifier for its signature and documentation. Plain-click selects its loaded-diff occurrences; Cmd-click on macOS or Ctrl-click elsewhere resolves definitions, usages, or interface implementations, and `Cmd/Ctrl+F12` performs the same action for the selected occurrence by default. Configurable shortcuts move between occurrences, hunks, files, bookmarks, and in-diff semantic history; settings can apply GoLens, VS Code, IntelliJ IDEA, or non-modal Vim-style keymaps before editing individual actions. Contextual shortcut tips may teach a configured binding after the equivalent manual action, with local learning state, a session and time cooldown, and a synced enablement preference. `Cmd/Ctrl+P` focuses GitLab's file search and `Shift+F` clears it by default. The compact toolbar popup owns global enablement, active-project cache status, full-project caching, and the settings entry point. Its gear opens the large tabbed `settings.html` extension iframe inside `#golens-settings-root`; that surface owns review preferences, shortcuts, self-hosted origin approval, cache management, and tour replay.
 
-Keep source access same-origin and commit-pinned. `page/platform/gitlab-api.js` and `source-loader.js` fetch through the signed-in GitLab session and `page/platform/rpc-client.js` sends semantic work to `go-semantic-worker.js`; the worker parses with checked-in Tree-sitter assets and persists source snapshots in IndexedDB. `chrome.storage.sync.enabled` owns the global preference. `chrome.storage.local.golensOnboardingVersion` owns per-install onboarding state. Versioned `golensBookmark:` records own minimal MR-local bookmark locations and hashed recovery context; they never contain source excerpts. Popup-to-tab messages are received in `bootstrap.js`, not in the module graph: a listener registered inside `page/` is absent for the first ~15-30ms after page load and again for every unmount/import/mount gap of an SPA re-mount, so messages landing there are silently lost. `bootstrap.js` holds them until a handle exists, then dispatches. Cache statistics and clearing are worker messages.
+Keep source access same-origin and commit-pinned. `page/platform/gitlab-api.js` and `source-loader.js` fetch through the signed-in GitLab session and `page/platform/rpc-client.js` sends semantic work to `worker/dispatch.js`; the worker parses with checked-in Tree-sitter assets and persists source snapshots in IndexedDB. `chrome.storage.sync.enabled` owns the global preference. `chrome.storage.local.golensOnboardingVersion` owns per-install onboarding state. Versioned `golensBookmark:` records own minimal MR-local bookmark locations and hashed recovery context; they never contain source excerpts. Popup-to-tab messages are received in `bootstrap.js`, not in the module graph: a listener registered inside `page/` is absent for the first ~15-30ms after page load and again for every unmount/import/mount gap of an SPA re-mount, so messages landing there are silently lost. `bootstrap.js` holds them until a handle exists, then dispatches. Cache statistics and clearing are worker messages.
 
 Follow GitLab pagination headers when present and retain the documented page-size fallback because GitLab.com can omit some pagination headers. A directory safety limit must fail explicitly rather than silently indexing a partial package. Keep production packages and external `_test` packages in separate semantic namespaces even though their files share a directory. Build constraints and dot imports remain explicit safe limitations: return missing or ambiguous results instead of guessing.
 
@@ -100,7 +98,7 @@ Treat the Help reference as the complete user-facing feature inventory, includin
 
 ## Coding Style & Naming Conventions
 
-Use modern JavaScript modules where supported, two-space indentation, semicolons, single quotes, and `camelCase` identifiers. Use `UPPER_SNAKE_CASE` for module constants and descriptive kebab-case asset names such as `golens-icon.png`. Everything under `page/` uses real `import`/`export`; there is no bundler, so an import path must resolve as written at runtime. Keep browser integration in the feature and platform shells and semantic logic DOM-independent in `go-semantic-core.js`. There is no automatic formatter; match surrounding code and keep changes narrowly scoped.
+Use modern JavaScript modules where supported, two-space indentation, semicolons, single quotes, and `camelCase` identifiers. Use `UPPER_SNAKE_CASE` for module constants and descriptive kebab-case asset names such as `golens-icon.png`. Everything under `page/` uses real `import`/`export`; there is no bundler, so an import path must resolve as written at runtime. Keep browser integration in the feature and platform shells and semantic logic DOM-independent in `worker/index-core.js`. There is no automatic formatter; match surrounding code and keep changes narrowly scoped.
 
 ## Testing Guidelines
 
