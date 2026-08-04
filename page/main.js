@@ -130,6 +130,12 @@ export function mount(ctx = {}) {
           // listener.
           minimizeProjectSearch: () => projectSearchHandle?.minimize?.(),
           handleCodeIntelEscape: (event) => codeIntelHandle?.handleEscape?.(event),
+          // GitHub issue #5's diff-view toggle: controls.js owns the DOM
+          // interaction with GitLab's own preferences dropdown; this
+          // closure reaches its handle the same way runLegacyNavigationAction
+          // above reaches bookmarksHandle — a feature -> feature edge would
+          // be forbidden without it.
+          toggleDiffView: () => controlsHandle?.toggleDiffView?.() === true,
         },
       },
       {
@@ -257,6 +263,7 @@ export function mount(ctx = {}) {
             watchForRapidDiffs: () => undefined,
             triggerPitstopMoment: () => requestMoment('pitstop'),
             schedulePageReconcile: () => session.schedulePageReconcile(),
+            toast: (message) => session.toast.toast(message),
           },
         },
       },

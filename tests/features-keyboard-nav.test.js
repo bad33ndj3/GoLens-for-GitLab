@@ -256,6 +256,38 @@ test('manually clicking the native file search offers the coach, matching the le
   handle.unmount();
 });
 
+test('keydown dispatch: toggleDiffView (Alt+V) calls ctx.toggleDiffView, not runLegacyNavigationAction/navigationAction, and only when it reports true is the shortcut consumed', async () => {
+  const window = buildFixture();
+  const calls = [];
+  const legacyToast = fakeLegacyToast();
+  let result = true;
+  const handle = mount({
+    overlays: fakeOverlayRegistry(),
+    settings: fakeSettings({ shortcutBindings: shortcutSettings.defaultBindings() }),
+    legacyToast,
+    runLegacyNavigationAction: () => { throw new Error('toggleDiffView must not fall through to runLegacyNavigationAction'); },
+    navigationAction: () => { throw new Error('toggleDiffView must not fall through to navigationAction'); },
+    toggleDiffView: () => { calls.push('toggleDiffView'); return result; },
+    shortcutCoach: { consider: async () => null },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  window.document.body.tabIndex = -1;
+  window.document.body.focus();
+  const first = new window.KeyboardEvent('keydown', { key: 'v', code: 'KeyV', altKey: true, bubbles: true, cancelable: true });
+  window.document.body.dispatchEvent(first);
+  assert.deepEqual(calls, ['toggleDiffView']);
+  assert.equal(first.defaultPrevented, true);
+
+  result = false;
+  const second = new window.KeyboardEvent('keydown', { key: 'v', code: 'KeyV', altKey: true, bubbles: true, cancelable: true });
+  window.document.body.dispatchEvent(second);
+  assert.deepEqual(calls, ['toggleDiffView', 'toggleDiffView']);
+  assert.equal(second.defaultPrevented, false, 'toggleDiffView() reporting false leaves the shortcut unconsumed');
+
+  handle.unmount();
+});
+
 test('hunk navigation: falls back to scanning changed rows when no explicit hunk markup exists, and reports an empty toast when nothing is loaded', async () => {
   const window = buildFixture();
   window.document.body.innerHTML = `
