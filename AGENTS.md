@@ -25,9 +25,13 @@ GoLens for GitLab is a dependency-light Manifest V3 browser extension.
 - `bookmark-store.js` and `shortcut-settings.js` are legacy classic content scripts, injected by the
   manifest ahead of `bootstrap.js`. They are the only sanctioned `globalThis` contracts
   (`GoLensBookmarks`, `GoLensShortcuts`, `GoLensShortcutCoach`) because `settings.js` and the page
-  graph both need them and neither can import the other. Do not add new ones.
+  graph both need them and neither can import the other. Do not add new ones. The intended end state
+  is that these two contracts disappear; nothing has been done toward that yet.
 - `go-semantic-core.js` contains the parser-backed Go symbol index, `go-semantic-cache.js` its
   IndexedDB source cache; `go-semantic-worker.js` exposes both through the extension service worker.
+  The intended end state moves these three into a `worker/` directory as `index-core`,
+  `source-cache`, and `dispatch`; that move has not happened, so their current root paths are what
+  `manifest.json` and every import still use.
 - `popup.*` defines compact active-review controls; `settings.*` defines the tabbed settings iframe;
   `extension-cache-ui.js` is the cache-control widget both share and `gitlab-host-access.js` the
   self-hosted-origin approval shared by `settings.js` and the service worker. `golens-theme.css`,

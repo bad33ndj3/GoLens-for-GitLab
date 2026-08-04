@@ -20,4 +20,10 @@ Boundaries sections for the full file list and the dependency rules.
 └── *.js, *.css, *.html     (worker, popup, settings, and legacy content scripts, flat at root)
 ```
 
+Root is not a dumping ground but it is not empty either: `bootstrap.js` stays there by design, the
+extension-page scripts (`popup.js`, `settings.js`, `extension-cache-ui.js`, `gitlab-host-access.js`)
+have no page-graph equivalent, and the three `go-semantic-*.js` worker files plus the two legacy
+content scripts are there pending moves that have been decided but not executed. `AGENTS.md` marks
+which is which.
+
 Use the glossary vocabulary from `CONTEXT.md` in issues, proposals, tests, and hypotheses. Explicitly surface any conflict with an ADR rather than silently overriding it.

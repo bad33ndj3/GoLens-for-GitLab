@@ -443,6 +443,29 @@ letterlijk deze sectie's "solo tweemaal groen"-claim. Op deze machine is `npm ru
 dus niet betrouwbaar reproduceerbaar groen te krijgen zolang 37 openstaat — behandel een groene
 run als gunstig toeval, niet als bevestiging, tot 37 is opgelost.
 
+## Batch 5 (25) — uitgevoerd 2026-08-04
+
+`README.md`/`AGENTS.md`/`docs/agents/domain.md` hervalideerd tegen de boom ná 22. Alleen `AGENTS.md`
+en `domain.md` gewijzigd; README bleek al correct (de veertien shortcut-defaults regel voor regel
+vergeleken met `shortcut-settings.js:3-16`). De ticket-03-dependency-regels staan nu in `AGENTS.md`
+§Module Boundaries, dus niet langer alleen in `.scratch/`. Alle zeven npm-scripts uitgevoerd behalve
+`release` (tagt en pusht — via lezing geverifieerd); details in ticket 25.
+
+Twee bevindingen die de rest van deze operatie raken:
+
+- **Ticket 03 §2's worker-hernoeming (`worker/dispatch|index-core|source-cache`) en §6's "de
+  `globalThis.GoLens*`-contracten verdwijnen" zijn nooit uitgevoerd en door geen enkel ticket
+  geclaimd.** 06/07 trimden alleen de worker-surfaces; `bookmark-store.js`/`shortcut-settings.js`
+  staan nog als classic content scripts in `manifest.json`, en `page/main.js:192` +
+  `settings.js` leunen op hun globals. `AGENTS.md` documenteert beide expliciet als *intended end
+  state, not yet done* — de docs beschrijven de werkelijke boom. Wie dit alsnog wil doen heeft twee
+  nieuwe tickets nodig; ze vallen binnen deze map's destination (de vijf legacy-bestanden) maar
+  buiten de blocking-graph van 05–22.
+- **map.md's ticket-10-correctie is nog steeds waar**: `settings.js:80`/`:90`/`:131` schrijven
+  `shortcutBindings` rechtstreeks naar `chrome.storage.sync`, buiten `page/platform/settings-store.js`
+  om. Staat nu als benoemde uitzondering in `AGENTS.md` §Module Boundaries met "do not add new
+  writers", niet als opgelost weggeschreven.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,
