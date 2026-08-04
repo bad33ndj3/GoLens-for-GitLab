@@ -126,6 +126,51 @@ blijven staan zoals ze geschreven zijn; dit is de correctielijst.
   ticket 13–21 claimt de go-test-file-rows-feature. Bij ticket 22 moet blijken of dat een gemiste
   slice is of bewust legacy-restant.
 
+## Batch 1 (27–29) — uitgevoerd 2026-08-04, commit d295410
+
+Tickets 27, 28 en 29 staan op `resolved`; 30–36 blijven `proposed` en hebben dezelfde
+sign-off nodig. `go-navigation.js` ging van 1324 naar ~1000 regels. Vier besluiten die
+buiten de tickets vielen en bij ticket 22 opnieuw langs moeten:
+
+- **`status()` blijft in `go-navigation.js`.** Ticket 28 vroeg om de `golens-go-status`-dispatch
+  mee te verhuizen; dat kan niet. `init()` vuurt `status('idle', ...)` synchroon, de
+  import-bridge resolvet pas een microtask later, dus een dispatcher achter de bridge laat dat
+  eerste event vallen — en juist dat event is live (browser-smoke.mjs:283/:460). `status` gaat nu
+  als dependency de source-loader in. Derde keer dat dit event ons bijna te grazen nam; laat het
+  de laatste zijn.
+- **Platform-services krijgen late-bound accessors, geen gecapturede waarden.**
+  `createGitLabApi({ getClock, getSignal })`, en `fetch` valt per call terug op
+  `globalThis.fetch`. Drie bestaande gedragingen eisen dit (tests herschrijven `globalThis.fetch`
+  mid-test, `setClock` wisselt na constructie, `state.abortController` wordt bij elke init
+  vervangen). Zelfde idioom als `createLegacyDebounceIdle(getClock)`. Vermoedelijk het patroon
+  voor elke volgende platform-service met een verwisselbare dependency.
+- **`normalizePath`/`parseBlobLink`/`dirname` blijven gedupliceerd** tussen `diff-dom.js` en
+  `gitlab-api.js`. Ontdubbelen zou een platform→platform-edge introduceren voor ~15 regels pure
+  string-afhandeling. Beide module-headers leggen het besluit vast.
+- **De toast gebruikt kale `setTimeout`, niet de verwisselbare `clock`** (ticket 29 stelde
+  `createToast({ clock })` voor). Doorlussen zou `setClock` nieuw invloed geven op toast-timing.
+  De features bereiken de toast ook nog steeds via de `legacyToast`-capability; directe injectie
+  is 36/22-werk.
+
+**De import-bridges introduceren een laadvenster, en de faalhouding verschilt per laag.** Tussen
+IIFE-start en bridge-resolve gooien de synchrone gitlab-api-wrappers, await'en de async wrappers,
+en no-op'en de toast-wrappers stil (een toast is nooit load-bearing). Teardown-bereikbare resets
+optional-chainen altijd. Alle huidige call-sites van de synchrone groep liggen na de load, dus in
+productie onbereikbaar — maar bij ticket 22, als de bridges verdwijnen, moet dit venster
+verdwijnen en niet stilletjes van vorm veranderen. De source-loader-bridge is om dezelfde reden
+*geketend* achter de gitlab-api-bridge in plaats van ermee te racen: zijn ingespoten deps zijn
+go-navigation.js's synchrone wrappers.
+
+**Correctie op de flakiness-regel hieronder.** Het settings-overlay-scenario van de browser-smoke
+is rood, en niet door deze wijziging: een baseline-run op HEAD (9c62a28, ticket 26) faalt identiek
+— zelfde fingerprint (skeleton-fixture gerenderd, `data-golens-skeleton-remounted="true"`, geen
+`#golens-settings-root`, dan timeout). Ook uitgesloten dat het een stille bridge-failure was:
+tijdelijke `console.error` in alle drie de nieuwe `.catch()`-handlers gaf nul treffers over drie
+runs. De regel "twee keer solo falen is echt kapot" gaat over *hetzelfde* scenario dat tweemaal
+faalt — daar bleek hier ook aan voldaan, maar de oorzaak ligt vóór batch 1. **Dit scenario is nog
+niet opgelost en hoort een eigen ticket te krijgen; batch 1 heeft het niet veroorzaakt en lost het
+niet op.**
+
 ## Fan-out-regels voor 14–21 (file-ownership)
 
 De feature-carve-outs snijden uit twee hub-bestanden; max één agent per hubbestand tegelijk.
@@ -223,9 +268,9 @@ aanmaakt.
   - **Ticket 22 is set to `blocked` below pending new tickets for this work** (proposed
     immediately below); its own checklist is unchanged and still correct once those land.
 
-- **Proposed tickets to close the gap above (not yet approved — 05-22's breakdown was
-  user-approved per the "Not yet specified" note; this expansion needs the same sign-off
-  before any code):**
+- **Proposed tickets to close the gap above.** 26–29 zijn inmiddels goedgekeurd en
+  `resolved` (zie de batch-1-sectie hierboven); **30–36 blijven `proposed`** en hebben nog
+  steeds sign-off nodig voordat er code voor geschreven wordt:
   - Platform (what every `legacy` bag actually needs, so first):
     - **26 — `page/platform/diff-dom.js`**: the diff-DOM primitive group above, verbatim
       behaviour. Home for `fileContextGeneration`'s cache-bump too, or documents why it

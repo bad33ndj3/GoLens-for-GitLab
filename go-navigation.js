@@ -142,8 +142,13 @@
 
   let sourceLoaderModule = null;
   let sourceLoader = null;
-  const sourceLoaderReady = loadSourceLoaderModule()
-    .then((mod) => {
+  // Chained behind `gitlabApiReady`, not raced with it: the deps handed to
+  // `createSourceLoader` below include this file's *synchronous* wrappers
+  // (`projectContext`, `mapLimit`), which dereference `gitlabApiModule`
+  // directly. If this bridge won the race, the first `loadPackage()` — which
+  // only awaits `sourceLoaderReady` — would throw on a null module.
+  const sourceLoaderReady = Promise.all([gitlabApiReady, loadSourceLoaderModule()])
+    .then(([, mod]) => {
       sourceLoaderModule = mod;
       sourceLoader = mod.createSourceLoader({
         workerRPC,
@@ -156,14 +161,23 @@
         mapLimit,
       });
     })
-    .catch(() => {});
+    .catch(() => {
+      // Same stance as the gitlab-api bridge above: `sourceLoader` stays null
+      // and the wrappers throw on it rather than silently reporting "nothing
+      // to load".
+    });
 
   let toastSurface = null;
   const toastReady = loadToastModule()
     .then((mod) => {
       toastSurface = mod.createToast();
     })
-    .catch(() => {});
+    .catch(() => {
+      // Deliberately the *other* stance from the two bridges above: every
+      // toast wrapper optional-chains, so a failed load costs the user their
+      // toasts and nothing else. A toast is never load-bearing — throwing
+      // here would take down the navigation action that wanted to show one.
+    });
 
   // Bridge onto page/features/keyboard-nav.js (ticket 17): the shortcut
   // coach's blocked-check, message-for-action decision, and hint DOM

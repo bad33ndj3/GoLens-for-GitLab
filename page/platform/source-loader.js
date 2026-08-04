@@ -35,12 +35,17 @@
 // ## Dependencies come from go-navigation.js's wrappers
 //
 // `createSourceLoader` takes the GitLab-API functions it needs as plain
-// deps rather than importing platform/gitlab-api.js itself. go-navigation.js
-// loads both modules through two independent `import()` bridges with no
-// ordering guarantee between them, and passing its own already-defined
-// wrapper functions removes any need for one. It also keeps this module
-// honest as a unit under test: nothing here reaches the network except
-// through something the caller handed it.
+// deps rather than importing platform/gitlab-api.js itself. That keeps this
+// module honest as a unit under test: nothing here reaches the network
+// except through something the caller handed it.
+//
+// It does *not* remove the ordering constraint between the two bridges, and
+// an earlier version of this comment wrongly claimed it did. Some of those
+// wrappers (`projectContext`, `mapLimit`) are synchronous and dereference
+// go-navigation.js's gitlab-api module handle directly, so calling into
+// `loadPackage`/`loadProject` before the gitlab-api bridge has resolved
+// throws. go-navigation.js therefore chains this bridge behind that one
+// rather than racing them.
 
 // --- Progress view-models (pure) ------------------------------------------
 //
