@@ -25,6 +25,17 @@ dependency-regelverificatie over de hele import-graph. Het **herhuisvesten van h
 dat vandaag nog in `go-navigation.js`'s orkestratielaag zit (`init`/`teardown`/`onKeyDown`/
 `runNavigationAction`/`diffObserver`/`refreshMergeRequestRefs`) is ticket 36, niet deze.
 
+**Bevindingen batch 3 (2026-08-04):** 31, 34 en 36's onderzoek (zie hun eigen tickets) wijst hun
+resterende implementatiewerk hierheen toe, niet naar een aparte ronde: 31's `reconcilePage`/
+`leaveMergeRequestPage`/SPA-detectie-verhuizing naar `page/lifecycle`; 34's aansluiten van
+`runNavigationAction`/`reconcileGoTestFileRows`/`legacy.isEnabled` op lifecycle's al-gebouwde
+enable-fanout (met de activatie-latch als apart, behouden signaal); 36's volledige
+`go-navigation.js`-orkestratieslice (init/teardown/onKeyDown/runNavigationAction/diffObserver/
+`__test`-bag-herleiding). 35's vier message-types kunnen pas zonder dubbele responder naar
+`bootstrap.js` verhuizen zodra content.js's eigen handler hier verdwijnt. Dit bevestigt 22's
+premisse-correctie (zie boven): het "slopen"-werk en het "herhuisvesten van resterend levend
+gedrag"-werk zijn in de praktijk niet los te knippen — allebei landen in deze ticket.
+
 - [ ] Geen globalThis-contract tussen modules meer; legacy-bestanden verwijderd
 - [ ] Manifest bevat alleen bootstrap (+ ongewijzigde externe scripts) en WAR voor `page/*`
 - [ ] Dependency-regels (ticket 03 §3) geverifieerd over de hele import-graph

@@ -49,18 +49,52 @@ Escape-routing en een MutationObserver verplaatsen.
 **Blocked by:** 31 — SPA reconcile loop (beslissing); 34 — derived-enabled-owner (beslissing);
 26; 27; 28; 29 (de slice is pas zichtbaar als die vier eruit zijn).
 
-**Status:** ready-for-agent
+**Status:** resolved — geen eigen module; slice gaat op in ticket 22, zie `## Resultaat`
 
-- [ ] Beslist en gemotiveerd of deze slice een eigen huisvesting krijgt of opgaat in 31/34's uitkomst
+## Resultaat
+
+*(2026-08-04, batch 3)* 31 en 34 zijn nu beslecht (zie hun eigen `## Answer`), dus deze ticket kon
+zijn eigen vraag toetsen: "vereist het herhuisvesten van elke regel in de tabel hierboven dat
+`go-navigation.js` verdwijnt, of kan het los?" Rij voor rij:
+
+- **`init()`/`teardown()`** roepen `enableBookmarks()`/`setCodeIntelEnabled(true)` (en hun
+  tegenhangers) aan — die reiken naar de **volledig-gebrugde** `bookmarksHandle`/`codeIntelHandle`
+  die dit bestand zelf mount (zie de "Bridge onto page/features/…"-commentaren). `page/lifecycle`
+  heeft alleen toegang tot de **inerte** tweede instanties (geen `ctx.legacy`, `page/main.js`). Zou
+  `init`/`teardown` vandaag al naar lifecycle verhuizen, dan schakelt dat bookmarks en code-intel
+  stilzwijgend uit — een gedragsverandering, niet toegestaan.
+- **`state.abortController`** voedt `gitlabApi`'s `getSignal`-closure (regel ~133) — een
+  module-lokale in dit bestand; verplaatsen zonder het bestand zelf te verplaatsen betekent de
+  closure opnieuw bedraden op een nieuwe plek terwijl de rest van `gitlabApi`'s constructie hier
+  blijft staan. Geen zelfstandige stap.
+- **`teardown()`**'s opruiming raakt `rpcClient`/`sourceLoader`/`gitlabApi`/`projectSearchHandle`/
+  `toastSurface` — stuk voor stuk module-lokale variabelen van dit bestand, niet geïmporteerd.
+- **De 35-regel `__test`-bag** wordt geconsumeerd door `tests/go-navigation-context.test.js`,
+  `tests/benchmarks/diff-dom.bench.mjs` en de `content-*`-tests — elke entry herleiden naar een
+  nieuwe eigenaar is precies het werk dat pas zin heeft als het bestand daadwerkelijk verdwijnt
+  (anders bestaan er straks twee bags).
+
+**Conclusie: elke rij vereist dat `go-navigation.js` weg is, niet alleen dat 31/34 beslecht zijn.**
+Dat is een ander resultaat dan de veronderstelde geldige uitkomst "36 lost op in 31+34" — het lost
+niet op in de *beslissingen* van 31/34, het lost op in **ticket 22's uitvoering**: 22 is de enige
+plek waar `go-navigation.js` daadwerkelijk verdwijnt, dus de herhuisvesting van deze orkestratieslice
+(inclusief de Escape-routing, de diff-observer, `runNavigationAction` en de `__test`-bag-herleiding)
+hoort bij dat werk, niet als voorafgaande, losse stap. Ticket 22's checklist ("Geen
+globalThis-contract meer; legacy-bestanden verwijderd") dekt dit al impliciet; deze ticket sluit
+zonder eigen module en zonder eigen code-wijziging.
+
+- [x] Beslist en gemotiveerd of deze slice een eigen huisvesting krijgt of opgaat in 31/34's
+  uitkomst — antwoord: geen van beide, gaat op in **ticket 22's uitvoering** (zie `## Resultaat`)
 - [ ] Escape-routing: beide branches in dezelfde prioriteitsvolgorde, inclusief de
-  `composedPath()`-guard op invoervelden/dialogen
+  `composedPath()`-guard op invoervelden/dialogen — **verplaatst naar ticket 22**
 - [ ] `runNavigationAction`'s enable-gate en de drie bookmark-acties gedragsgelijk; `page/main.js`'s
-  `runLegacyNavigationAction`-capability werkt zonder globalThis
+  `runLegacyNavigationAction`-capability werkt zonder globalThis — **verplaatst naar ticket 22**
 - [ ] Diff-observer bumpt de `fileContextGeneration` van ticket 26's `bumpFileContextGeneration()`,
-  met de bookmark-marker-filter intact
+  met de bookmark-marker-filter intact — **verplaatst naar ticket 22**
 - [ ] `teardown()`'s volledige opruiming behouden (abort, timers, observer, caches, RPC-dispose,
-  toast-host) — geen enkele overgeslagen
+  toast-host) — geen enkele overgeslagen — **verplaatst naar ticket 22**
 - [ ] Elke `__test`-entry herleid naar zijn nieuwe eigenaar of aantoonbaar overbodig; de tests die
-  erop leunen groen
-- [ ] RPC-clientconstructie via `page/platform/rpc-client.js` (09), niet lokaal
-- [ ] `npm run check` groen; browser-smoke solo groen
+  erop leunen groen — **verplaatst naar ticket 22**
+- [ ] RPC-clientconstructie via `page/platform/rpc-client.js` (09), niet lokaal — **verplaatst naar
+  ticket 22**
+- [ ] `npm run check` groen; browser-smoke solo groen — **verplaatst naar ticket 22**

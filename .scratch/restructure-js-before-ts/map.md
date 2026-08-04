@@ -209,6 +209,46 @@ nog onbeantwoord en verwijst naar een aparte ronde — niets daarin geraakt aang
   als de instructie in ticket 30 vroeg — alleen de implementatie erachter
   (`createControls`/`setEnabled`/preload-machine) is verhuisd naar `controlsHandle`.
 
+## Batch 3 (34–36) — onderzoeksbatch, uitgevoerd 2026-08-04, geen productiecode gewijzigd
+
+Batch-planning zei "34 enabled-owner, 35 message-types, 36 go-navigation-orchestratie; 36 is
+geblokkeerd door 31+34; geldige uitkomst is 'lost op in 31+34'". Bij uitvoering bleek dat 34's
+eigen `## Answer` (net als 31's) letterlijk "Nog te beantwoorden — aparte ronde" zei — dus eerst
+die twee ontwerpvragen beantwoorden, dan pas 34/35/36 kunnen implementeren.
+
+- **31's antwoord: `page/lifecycle`, niet een nieuwe feature.** Ticket 03 §2 zegt het al
+  ("Owns `reconcilePage`. Not a feature."); een losse `mr-page-reconciler.js` zou de verboden
+  `feature → feature`-rand overtreden om andere features te reconcilen. Precisering: lifecycle's
+  huidige `NAV_POLL_MS`-poll (ticket 11's inerte stub) is niet hetzelfde mechanisme als
+  content.js's event- + MutationObserver-gebaseerde detectie — die laatste moet overleven ("exact
+  ongewijzigd gedrag"), de poll wordt vervangen, niet andersom.
+- **34's antwoord: `page/lifecycle/index.js:54-70`'s `settings.subscribe('enabled', …)`-fanout
+  is al gebouwd en is de eigenaar.** Bekrachtigd, geen nieuw mechanisme. Precisering die het
+  ticket zelf niet had: `go-navigation.js`'s `state.enabled` is geen tweede kopie van de
+  instelling maar een **activatie-latch** ("is de feature live gemount op déze MR-pagina", alleen
+  gezet door `init()`/`teardown()`) — samenvoegen met de instelling zou `runNavigationAction`'s
+  gate laten verschuiven en is dus een gedragsverandering, niet toegestaan onder dit ticket.
+- **36's onderzoek: elke rij in zijn orkestratieslice-tabel vereist dat `go-navigation.js`
+  daadwerkelijk verdwijnt**, niet alleen dat 31/34 beslist zijn — `init`/`teardown` reiken naar de
+  volledig-gebrugde bookmarks-/code-intel-handles die dit bestand zelf mount (lifecycle heeft
+  alleen de inerte tweede instanties), `state.abortController`/`rpcClient`/`sourceLoader`/
+  `gitlabApi`/`toastSurface` zijn stuk voor stuk module-lokale variabelen, en de 35-regel
+  `__test`-bag wordt door drie testbestanden geconsumeerd. **Conclusie wijkt af van de
+  veronderstelde uitkomst:** 36 lost niet op in 31+34's *beslissingen* — het lost op in **ticket
+  22's uitvoering**, samen met 31's reconcile-verhuizing.
+- **35 bleek bij toetsing ook geblokkeerd op content.js's verwijdering**, niet alleen op 34:
+  content.js's eigen message-handler moet weg om "twee responders op één type" te vermijden, maar
+  content.js is waar de enige *werkende* `controlsHandle`-instantie leeft (`page/main.js` mount
+  alleen de inerte). Blocked-by van 35 uitgebreid met 22.
+
+**Resultaat: geen van de drie tickets kon in deze batch geïmplementeerd worden** — alle drie hun
+resterende werk wijst naar ticket 22, dat daarmee zowel het "bridges slopen"-werk als het
+"resterend levend gedrag herhuisvesten"-werk draagt (22's eigen premisse-correctie hierboven zei
+dit al voor de hub-bestanden in het algemeen; batch 3 bevestigt het specifiek voor 31/34/36).
+Tickets 31, 34 en 36 staan op `resolved` (ontwerpvraag beantwoord, geen eigen module/implementatie
+nodig); 35 staat op `blocked` (op 22). Batch 4 (22, 25) is daarmee groter dan gepland: het bevat nu
+ook 31/34/35/36's resterende, hier gedocumenteerde implementatiewerk.
+
 ## Fan-out-regels voor 14–21 (file-ownership)
 
 De feature-carve-outs snijden uit twee hub-bestanden; max één agent per hubbestand tegelijk.
