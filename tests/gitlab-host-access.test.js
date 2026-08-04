@@ -14,18 +14,28 @@ import {
 
 const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 
+// Stateful fake: getRegisteredContentScripts reflects whatever the most
+// recent register/unregister call actually did, the way chrome.scripting
+// behaves (and, with persistAcrossSessions:true, keeps behaving across a
+// service-worker restart) — needed so tests can tell "we attempted to
+// register" apart from "chrome.scripting currently has this registered".
 function fakeChromeAPI({ origins, registerContentScripts } = {}) {
   const calls = [];
+  let registration = null;
   return {
     calls,
     permissions: { async getAll() { return { origins }; } },
     runtime: { getManifest: () => manifest },
     scripting: {
-      async getRegisteredContentScripts() { return [{ id: DYNAMIC_CONTENT_SCRIPT_ID }]; },
-      async unregisterContentScripts(options) { calls.push(['unregister', options]); },
+      async getRegisteredContentScripts() { return registration ? [registration] : []; },
+      async unregisterContentScripts(options) {
+        calls.push(['unregister', options]);
+        registration = null;
+      },
       async registerContentScripts(scripts) {
         calls.push(['register', scripts]);
         if (registerContentScripts) return registerContentScripts(scripts);
+        registration = { id: scripts[0].id, matches: scripts[0].matches };
       },
     },
   };
@@ -119,23 +129,36 @@ test('reports a successful sync through getHostAccessSyncStatus', async () => {
   assert.deepEqual(status.matches, matches);
 });
 
-test('refreshHostAccessStatus resyncs before reporting, so a terminated-and-restarted service worker still answers correctly', async () => {
-  // getHostAccessSyncStatus alone would answer from whatever this module instance
-  // last recorded; an MV3 service worker can be killed and restarted between syncs,
-  // losing that in-memory state. refreshHostAccessStatus must recompute rather than
-  // recall, regardless of what a prior sync (in this same test process) left behind.
+test('refreshHostAccessStatus reads live chrome.scripting registration, so a persisted registration survives a service-worker restart without needing to resync', async () => {
+  // persistAcrossSessions:true means chrome keeps a successful registration across an MV3
+  // service-worker restart even though this module's in-memory lastSyncStatus is gone. This
+  // chromeAPI's "chrome.scripting" already has the registration from a run before this test
+  // ever calls syncSelfHostedContentScripts against it, standing in for that restart.
+  const chromeAPI = fakeChromeAPI({ origins: ['https://gitlab.example.com/*'] });
+  await syncSelfHostedContentScripts(chromeAPI);
+  const registerCallsAfterSync = chromeAPI.calls.filter(([kind]) => kind === 'register').length;
+
+  const status = await refreshHostAccessStatus(chromeAPI);
+  assert.deepEqual(status.matches, ['https://gitlab.example.com/*']);
+  // A status read must not itself register/unregister anything: it answers from chrome's
+  // current registration, it does not perform a fresh sync (which would risk leaving the
+  // origin unregistered if a re-register attempt failed midway through a mere status check).
+  assert.equal(chromeAPI.calls.filter(([kind]) => kind === 'register').length, registerCallsAfterSync);
+});
+
+test('refreshHostAccessStatus reports a granted-but-not-yet-registered origin as inactive, and carries the last sync failure reason', async () => {
+  const neverSynced = fakeChromeAPI({ origins: ['https://gitlab.example.com/*'] });
+  const beforeAnySync = await refreshHostAccessStatus(neverSynced);
+  assert.deepEqual(beforeAnySync.matches, [], 'granted permission alone must not read as an active registration');
+
   const failing = fakeChromeAPI({
     origins: ['https://gitlab.example.com/*'],
     registerContentScripts: () => { throw new Error('scripting.registerContentScripts failed: boom'); },
   });
+  await assert.rejects(syncSelfHostedContentScripts(failing));
   const failedStatus = await refreshHostAccessStatus(failing);
   assert.match(failedStatus.error, /boom/);
   assert.deepEqual(failedStatus.matches, []);
-
-  const healthy = fakeChromeAPI({ origins: ['https://gitlab.example.com/*'] });
-  const healthyStatus = await refreshHostAccessStatus(healthy);
-  assert.equal(healthyStatus.error, null);
-  assert.deepEqual(healthyStatus.matches, ['https://gitlab.example.com/*']);
 });
 
 test('filters GitLab.com and wildcard declarations from approved origin listings', () => {

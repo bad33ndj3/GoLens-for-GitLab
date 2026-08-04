@@ -96,12 +96,25 @@ export function syncSelfHostedContentScripts(chromeAPI = globalThis.chrome) {
   return operation;
 }
 
-// The status a caller reads (e.g. the settings host-access UI) must be
-// current even when nothing in this module instance has synced yet: an MV3
-// service worker terminates after ~30s idle and loses lastSyncStatus on
-// restart, so a status request re-syncs (registration is idempotent) instead
-// of trusting whatever this fresh instance happens to already know.
+// What chrome.scripting actually has registered right now, independent of
+// this module instance's memory: registerContentScripts was called with
+// persistAcrossSessions:true, so the browser keeps this answer correct across
+// an MV3 service-worker restart with no re-sync required. Reading it (instead
+// of re-running performContentScriptSync on every status check) also means a
+// status query can never itself unregister-then-fail-to-reregister an origin.
+async function getRegisteredSelfHostedMatches(chromeAPI) {
+  if (!chromeAPI?.scripting?.getRegisteredContentScripts) return [];
+  const registered = await chromeAPI.scripting.getRegisteredContentScripts({ ids: [DYNAMIC_CONTENT_SCRIPT_ID] });
+  return registered[0]?.matches || [];
+}
+
+// The three states the settings host-access UI shows per origin: `matches`
+// reflects live browser registration (so "active" is only ever true once
+// chrome.scripting actually has it, not merely once we last attempted to
+// register it), and `error` is the reason from the most recent sync attempt,
+// success or failure — set by performContentScriptSync's startup call,
+// permissions.onAdded/onRemoved, or an explicit add/remove from settings.js.
 export async function refreshHostAccessStatus(chromeAPI = globalThis.chrome) {
-  await syncSelfHostedContentScripts(chromeAPI).catch(() => undefined);
-  return getHostAccessSyncStatus();
+  const matches = await getRegisteredSelfHostedMatches(chromeAPI);
+  return { matches, error: lastSyncStatus.error };
 }
