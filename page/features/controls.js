@@ -33,12 +33,25 @@ import {
   bookmarkButtonView,
   bookmarkDrawerPosition,
   bookmarkRangeLabel,
+  diffViewFromLocation,
+  diffViewToggleView,
   isMergeRequestDiffPath,
   isMergeRequestPath,
   preloadButtonView,
   preloadCompleteMessage,
   toggleButtonView,
 } from './controls.internal.js';
+
+// GitLab's own diff-preferences dropdown (app/assets/javascripts/diffs/
+// components/settings_dropdown.vue) — reused unchanged by both the classic
+// diffs app and Rapid Diffs (rapid_diffs/app/view_settings.js mounts the same
+// component through diff_app_controls.vue), so one selector chain covers
+// both. `js-show-diff-settings` is the component's own `:toggle-class`, a
+// long-lived Cypress/RSpec test hook rather than a styling class, which
+// makes it the more stable of the two signals across GitLab releases.
+const DIFF_SETTINGS_TOGGLE_SELECTOR = '.js-show-diff-settings, [aria-label="Preferences"]';
+const DIFF_VIEW_RETRY_MS = 20;
+const DIFF_VIEW_MAX_RETRIES = 8;
 
 export function mount(ctx) {
   const settings = ctx.settings;
@@ -60,6 +73,7 @@ export function mount(ctx) {
   let preloadRunID = 0;
   let fullPreload = { status: 'idle', message: '', progress: null };
   let fullPreloadRunID = 0;
+  let diffViewRunID = 0;
 
   function inReviewFocus() {
     return doc.documentElement.classList.contains('gitlab-lens-review-focus');
@@ -185,6 +199,8 @@ export function mount(ctx) {
         .bookmark-count { position:absolute; right:-4px; bottom:-4px; min-width:15px; height:15px; padding:0 3px; border:2px solid var(--golens-surface-panel); border-radius:999px; background:var(--golens-primary); color:var(--golens-text-inverse); font:800 8px/11px var(--golens-font-mono); font-variant-numeric:tabular-nums; }
         .bookmark-count[hidden], .bookmark-stale[hidden] { display:none; }
         .bookmark-stale { position:absolute; top:2px; right:2px; width:7px; height:7px; border:1px solid var(--golens-surface-panel); border-radius:50%; background:var(--golens-warning,#d99530); }
+        .diff-view-toggle { color:var(--golens-info); }
+        .diff-view-toggle[aria-pressed="true"] { border-color:var(--golens-info); background:var(--golens-info-soft); color:var(--golens-info-hover); }
         @keyframes preload-sweep { from { transform:translateX(-110%); } to { transform:translateX(250%); } }
         @media (prefers-reduced-motion:reduce) { button,button img,.preload-fill { transition:none; } button:active:not(:disabled) { transform:none; } .preload-toggle.is-indeterminate .preload-fill { width:100%; animation:none; opacity:.45; } }
       </style>
@@ -204,12 +220,21 @@ export function mount(ctx) {
           <span class="bookmark-count" aria-hidden="true" hidden></span>
           <span class="bookmark-stale" aria-hidden="true" hidden></span>
         </button>
+        <button class="diff-view-toggle" data-action="diff-view-toggle" title="Switch to side-by-side diff view" aria-label="Switch to side-by-side diff view" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="7" height="15" rx="1"></rect><rect x="13.5" y="4.5" width="7" height="15" rx="1"></rect></svg>
+        </button>
       </div>
       `;
     mountControlsInAiPanels(controlsHost);
     wireControls(shadow);
     ensureBookmarkSubscription();
     renderBookmarkControl(shadow);
+    // Read fresh on every createControls() call (including the remount a
+    // successful toggle causes via bootstrap.js's location.href poll), not
+    // just from later renderControlState() calls — otherwise a freshly
+    // (re)mounted rail would show the static aria-pressed="false" baked
+    // into the template above regardless of GitLab's actual current view.
+    renderDiffViewControl(shadow);
   }
 
   function ensureBookmarkSubscription() {
@@ -399,6 +424,70 @@ export function mount(ctx) {
     });
     shadow.querySelector('[data-action="preload"]').addEventListener('click', preloadMergeRequest);
     shadow.querySelector('[data-action="bookmarks"]').addEventListener('click', showBookmarkDrawer);
+    shadow.querySelector('[data-action="diff-view-toggle"]').addEventListener('click', () => toggleDiffView());
+  }
+
+  // --- diff view toggle (GitHub issue #5) ---------------------------------
+  //
+  // Drives GitLab's own inline/side-by-side preference through its own
+  // preferences dropdown (see DIFF_SETTINGS_TOGGLE_SELECTOR's header
+  // comment) rather than forking its diff renderer — DESIGN.md lists owning
+  // or rewriting that renderer as an explicit non-goal. GitLab's own
+  // setDiffViewType Vuex action then does the rest: it commits the new
+  // state (live re-render, no reload), writes the `diff_view` cookie, and
+  // pushes a `view=` query param onto the URL via history.pushState —
+  // which bootstrap.js's 200ms location.href poll picks up as a navigation
+  // and remounts this whole module graph, so the button's aria-pressed
+  // recomputes correctly from the new URL on the next createControls() call
+  // without this module tracking the outcome itself. A failed lookup (GitLab
+  // DOM not in the expected shape) degrades to a toast and leaves GitLab's
+  // state untouched — no cookie/URL write of our own, so there is nothing to
+  // desync if the click sequence doesn't land.
+  function diffSettingsToggleElement() {
+    return doc.querySelector(DIFF_SETTINGS_TOGGLE_SELECTOR);
+  }
+
+  // Scoped to the toggle's own listbox (GlCollapsibleListbox links the two
+  // through aria-controls/aria-owns) when that's resolvable, so a second
+  // open listbox elsewhere on the page — the file-browser filter, a
+  // reviewer picker, a compare-version dropdown — can never be mistaken for
+  // GitLab's diff-preferences menu. Falls back to a document-wide scan for
+  // GitLab layouts where that link isn't present.
+  function diffViewListboxOption(toggle, targetView) {
+    const label = targetView === 'parallel' ? 'side-by-side' : 'inline';
+    const listboxID = toggle?.getAttribute('aria-controls') || toggle?.getAttribute('aria-owns');
+    const scope = (listboxID && doc.getElementById(listboxID)) || doc;
+    return [...scope.querySelectorAll('[role="option"]')]
+      .find((option) => option.textContent.trim().toLowerCase() === label);
+  }
+
+  function selectDiffViewOption(runID, toggle, targetView, attemptsLeft) {
+    if (runID !== diffViewRunID) return;
+    const option = diffViewListboxOption(toggle, targetView);
+    if (option) { option.click(); return; }
+    if (attemptsLeft <= 0) {
+      // Leave GitLab's UI exactly as it was: close the dropdown we opened
+      // rather than stranding it open when nothing matched.
+      diffSettingsToggleElement()?.click();
+      legacy.toast?.('Could not switch diff view — GitLab’s preferences menu did not open as expected.');
+      return;
+    }
+    clock.setTimeout(() => selectDiffViewOption(runID, toggle, targetView, attemptsLeft - 1), DIFF_VIEW_RETRY_MS);
+  }
+
+  function toggleDiffView() {
+    if (!enabled || !isMergeRequestDiffPath(win.location.pathname, win.location.search)) return false;
+    const toggle = diffSettingsToggleElement();
+    if (!toggle) {
+      legacy.toast?.('Diff view preferences control not found on this GitLab page.');
+      return false;
+    }
+    const currentView = diffViewFromLocation({ search: win.location.search, cookie: doc.cookie });
+    const targetView = currentView === 'parallel' ? 'inline' : 'parallel';
+    const runID = ++diffViewRunID;
+    toggle.click();
+    selectDiffViewOption(runID, toggle, targetView, DIFF_VIEW_MAX_RETRIES);
+    return true;
   }
 
   function setPreloadState(status, { message = '', progress = null } = {}) {
@@ -445,6 +534,19 @@ export function mount(ctx) {
     focus.setAttribute('aria-pressed', view.focusAriaPressed);
     renderPreloadState(shadow, enabled);
     renderBookmarkControl(shadow);
+    renderDiffViewControl(shadow);
+  }
+
+  function renderDiffViewControl(shadow) {
+    const button = shadow.querySelector('[data-action="diff-view-toggle"]');
+    if (!button) return;
+    const diffView = diffViewFromLocation({ search: win.location.search, cookie: doc.cookie });
+    const isDiffPath = isMergeRequestDiffPath(win.location.pathname, win.location.search);
+    const view = diffViewToggleView({ view: diffView, enabled, isDiffPath });
+    button.setAttribute('aria-pressed', view.ariaPressed);
+    button.disabled = view.disabled;
+    button.title = view.label;
+    button.setAttribute('aria-label', view.label);
   }
 
   async function preloadMergeRequest() {
@@ -588,6 +690,10 @@ export function mount(ctx) {
     leaveReviewFocus,
     createControls,
     refreshPreloadStatus,
+    // Reached by page/features/keyboard-nav.js's own `toggleDiffView`
+    // shortcut branch through a page/main.js capability, the same
+    // feature-can't-reach-feature-directly shape as runLegacyNavigationAction.
+    toggleDiffView,
     // Message-routed by bootstrap.js as `golens-cache-invalidated`'s action
     // (ticket 22/35): content.js's old handler for that message called
     // `globalThis.GoLensGoNavigation.invalidateCacheState()` (the real
@@ -614,10 +720,12 @@ export function mount(ctx) {
       controlsMounted = false;
       preload = { status: 'idle', message: '', progress: null };
       fullPreload = { status: 'idle', message: 'Not cached', progress: null };
+      diffViewRunID++;
     },
     unmount() {
       if (unmounted) return;
       unmounted = true;
+      diffViewRunID++;
       doc.removeEventListener('fullscreenchange', onFullscreenChange);
       win.removeEventListener('focus', onFocus);
       doc.removeEventListener('visibilitychange', onVisibilityChange);
