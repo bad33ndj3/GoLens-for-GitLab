@@ -19,7 +19,8 @@ gemotiveerd door het ontbreken van injectable deps).
 
 **Blocked by:** geen.
 
-**Status:** proposed
+**Status:** ready-for-agent — vrijgegeven door de user op 2026-08-04. Alleen dit ticket; 27-36
+blijven `proposed` tot dezelfde sign-off.
 
 - [ ] Elke functienaam/-signatuur/-gedrag identiek overgenomen (geen DOM-selector-wijzigingen)
 - [ ] `fileContextFor`'s cache-semantiek (generation-gebaseerde invalidatie) behouden
