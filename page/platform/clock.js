@@ -1,6 +1,6 @@
 // platform/clock — the one test seam for time. Hides timer scheduling
 // (setTimeout/clearTimeout/requestIdleCallback) behind a small factory so
-// features never touch globals directly. Per ticket 04 §2:
+// features never touch globals directly. Contract:
 //   createClock() -> { now(), setTimeout(fn, ms) -> cancel, debounceIdle(fn, opts) -> debounced }
 
 export function createClock() {
@@ -50,25 +50,22 @@ export function createClock() {
   return { now, setTimeout, debounceIdle };
 }
 
-// --- Legacy bridge (ticket 08) --------------------------------------------
+// --- Legacy bridge -----------------------------------------------------------
 //
-// Ticket 22 update: both `go-navigation.js` and `content.js`, described
-// throughout this section in the past tense, are deleted.
-// `createLegacyDebounceIdle` survives unchanged — `page/lifecycle/
-// mr-session.js` is its only caller now, using it exactly the way
-// content.js's `schedulePageReconcile` did (a real, synchronously-resolved
-// import, no dynamic-`import()` bridge needed any more since mr-session.js
-// is a real ES module).
+// Both `go-navigation.js` and `content.js` are deleted. `createLegacyDebounceIdle`
+// survives unchanged — `page/lifecycle/mr-session.js` is its only caller now,
+// using it exactly the way content.js's `schedulePageReconcile` did (a real,
+// synchronously-resolved import, no dynamic-`import()` bridge needed any more
+// since mr-session.js is a real ES module).
 //
-// go-navigation.js and content.js are classic (non-module) content scripts,
+// go-navigation.js and content.js were classic (non-module) content scripts,
 // each with its own local, test-swappable `clock` object (`defaultClock()`
 // / `setClock()`), not an instance from `createClock()` above. Their
 // `debounceIdle(fn, delayMs)` bodies were byte-identical duplicates of each
-// other — that duplicate algorithm is what this ticket centralizes.
+// other — that duplicate algorithm is what this centralizes.
 //
 // It deliberately does NOT reuse `createClock()`'s `debounceIdle` above,
-// because the two interfaces are incompatible in a way ticket 04 §2 didn't
-// anticipate:
+// because the two interfaces are incompatible:
 //   - `createClock().setTimeout` returns a *cancel closure*; the legacy
 //     `clock.setTimeout` returns a raw timer id consumed by a separate
 //     `clock.clearTimeout(id)` — swapping one shape for the other would

@@ -1,8 +1,6 @@
 // page/features/controls.internal.js — pure decision core for
-// page/features/controls.js (ticket 30; contract per ticket 04 §1's
-// internal-seam convention, mirrored from generated-files.internal.js). No
-// DOM, no chrome.*, no timers: these functions only compute view-models or
-// classify already-read data.
+// page/features/controls.js. No DOM, no chrome.*, no timers: these functions
+// only compute view-models or classify already-read data.
 
 // isMergeRequestPath(pathname) -> true for any merge-request path, mirrors
 // content.js's isMergeRequest(). Total.
@@ -11,10 +9,8 @@ export function isMergeRequestPath(pathname) {
 }
 
 // isMergeRequestDiffPath(pathname, search) -> true for a merge-request diffs
-// tab, byte-identical to content.js's former isMergeRequestDiff() (ticket 22:
-// rapid-diffs opt-in — enableRapidDiffs/watchForRapidDiffs — moved into this
-// module directly, its only remaining caller, per ticket 31's deferral).
-// Total.
+// tab. The rapid-diffs opt-in (enableRapidDiffs/watchForRapidDiffs) moved
+// into this module directly, as its only remaining caller. Total.
 export function isMergeRequestDiffPath(pathname, search) {
   return /\/-\/merge_requests\/\d+\/diffs(?:$|\/|\?)/.test(`${pathname || ''}${search || ''}`);
 }

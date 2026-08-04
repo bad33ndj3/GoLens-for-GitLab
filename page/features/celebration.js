@@ -1,51 +1,35 @@
 // page/features/celebration.js — hides: native MR action detection
 // (approve/merge/resolve/create), celebration/discussion status polling
-// cadence, and the mascot-moment overlay (ticket 14; boundary from ticket 03
-// §2, interface from ticket 04 §3 — "fully autonomous once mounted", no
-// methods on the handle beyond unmount()). Pure decision core in
+// cadence, and the mascot-moment overlay. Pure decision core in
 // celebration.internal.js; this shell owns the click listener, the two
-// GitLab REST fetches, the poll timers, and the overlay's shadow DOM — same
-// shape as generated-files.js (ticket 13) and settings-overlay.js (ticket
-// 16).
+// GitLab REST fetches, the poll timers, and the overlay's shadow DOM.
 //
-// "eigen fetches" (map.md's ticket-14 note): mergeRequestCelebrationStatus/
-// mergeRequestDiscussionStatus used to live on go-navigation.js, reached
-// through the globalThis.GoLensGoNavigation bridge. Unlike ticket 19's
-// mr-preload (whose package/project traversal shares go-navigation.js's
-// paginated fetch helpers with not-yet-migrated hover/click resolution),
-// these two calls are small, self-contained GitLab REST endpoints with no
+// mergeRequestCelebrationStatus/mergeRequestDiscussionStatus used to live on
+// go-navigation.js, reached through the globalThis.GoLensGoNavigation bridge.
+// These two calls are small, self-contained GitLab REST endpoints with no
 // other caller — duplicating their ~15 lines of fetch/pagination logic here
 // is cheaper than a legacy bridge, so go-navigation.js's copies are deleted
-// outright (see this ticket's report for the line-count).
+// outright.
 //
 // Mount-once lifetime, not pageKey-tracked: bootstrap.js remounts the whole
-// page/main.js module graph on every location.href change (a deviation
-// ticket 16 already documented for settings-overlay), so this module's own
-// mount()/unmount() cycle already is content.js's former enter/leave-
+// page/main.js module graph on every location.href change, so this module's
+// own mount()/unmount() cycle already is content.js's former enter/leave-
 // merge-request-page boundary — there is no separate reconcile-on-navigation
 // step to write here. Documented behavior deviation from content.js's
 // original: switching tabs within the SAME merge request (e.g. Overview ->
 // Changes) now also tears down and re-fetches the celebration/discussion
 // baseline and cancels any in-flight post-click poll, where content.js's own
-// pageKey check kept both alive across such a same-MR navigation. Accepted
-// per the same "any href change" deviation; not fixable within one feature's
-// file-ownership (would need lifecycle-level state across remounts, outside
-// ticket 04 §3's contract).
+// pageKey check kept both alive across such a same-MR navigation. This
+// behavior change is accepted as part of the module restructuring.
 //
-// Cross-feature pitstop trigger: content.js's own (not-yet-migrated) preload
-// UI calls requestMoment('pitstop') when a preload completes. Ticket 03 §3
-// bars feature -> feature calls, and there is no message route for this
-// (every page/lifecycle/internal.js FEATURE_ROUTES entry has a real external
-// sender today, per that file's own comment) — so, mirroring rpc-client.js's
-// `methodNamespace` export and overlay-registry.js's module-scope-singleton
-// pattern, this module exports a bare `requestMoment(kind)` that forwards to
-// whichever instance is currently mounted (there is only ever one: this
-// feature is not dual-mounted the way ticket 19's mr-preload is). Ticket 22:
-// `page/main.js` imports it statically alongside `mount` and hands it to
-// `page/features/controls.js`'s `legacy.triggerPitstopMoment` capability
-// (content.js, the former caller, is deleted). A call while nothing is
-// mounted (page-load race, SPA remount gap) is a silent no-op — a dropped
-// pitstop moment in that window, not a crash.
+// Cross-feature pitstop trigger: content.js's own preload UI calls
+// requestMoment('pitstop') when a preload completes. Feature -> feature calls
+// are forbidden by the module architecture, and there is no message route for
+// this — so this module exports a bare `requestMoment(kind)` that forwards to
+// whichever instance is currently mounted (there is only ever one). `page/main.js`
+// imports it statically alongside `mount` and hands it to
+// `page/features/controls.js`'s `legacy.triggerPitstopMoment` capability. A call
+// while nothing is mounted (page-load race, SPA remount gap) is a silent no-op.
 import { createClock } from '../platform/clock.js';
 import { createOverlayRegistry } from '../platform/overlay-registry.js';
 import {
@@ -411,11 +395,10 @@ export function mount(ctx = {}) {
   doc.addEventListener('click', onNativeMergeRequestActionClick, true);
 
   // The settings overlay used to flush a queued mascot moment on its own
-  // close path; that path moved to page/features/settings-overlay.js (ticket
-  // 16), which has no business knowing about this module's celebration
-  // state. This module watches the overlay registry's open -> closed
-  // transition instead, same as content.js does for onboarding's still-legacy
-  // close path.
+  // close path; that path moved to page/features/settings-overlay.js, which
+  // has no business knowing about this module's celebration state. This module
+  // watches the overlay registry's open -> closed transition instead, same as
+  // content.js does for onboarding's still-legacy close path.
   const unsubscribeOverlays = overlays.subscribe((open) => {
     if (open || unmounted) return;
     const moment = queuedMoment;

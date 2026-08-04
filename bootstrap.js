@@ -1,19 +1,17 @@
 // bootstrap.js — thin content script that loads the real ES-module page
-// skeleton (ticket 05, prototype verdict in ticket 04 §7). Its only job is
-// `import(chrome.runtime.getURL('page/main.js'))` and mounting it; the
-// module graph underneath does the actual work.
+// skeleton. Its only job is `import(chrome.runtime.getURL('page/main.js'))`
+// and mounting it; the module graph underneath does the actual work.
 //
 // SPA navigation: the isolated world does not reliably observe page-world
 // `pushState` calls, so re-mounting after an in-page GitLab navigation is
-// driven by polling `location.href` (per ticket 04 §7's prototype finding),
-// not by hooking `history`.
+// driven by polling `location.href`, not by hooking `history`.
 //
-// Message seam (ticket 16). This file is a classic content script, so its
+// Message seam. This file is a classic content script, so its
 // `chrome.runtime.onMessage` listener exists from the moment the script is
 // evaluated. The module graph does not: it is reachable only through an async
 // `import()`, so a listener registered *inside* it is absent for the first
 // ~15-30ms after page load and, again, for the whole unmount/import/mount gap
-// of every SPA re-mount. Ticket 16's first attempt registered there and lost
+// of every SPA re-mount. An earlier attempt registered there and lost
 // every message that landed in those windows — in production, a popup click
 // during page load did nothing, silently. So registration lives here, and
 // messages are held until a handle exists (`withHandle`).
@@ -37,11 +35,10 @@
   // response for it either — see internal.js's routeMessage, which routes it
   // to lifecycle's own `enabled`-fanout, not a feature).
   //
-  // Ticket 22/35: the three preload/cache-status types below are claimed
-  // here now that content.js (their sole former responder) is deleted —
-  // claimed in the same change its own responder was removed, per map.md's
-  // message-seam rule ("two responders on one message means one of them
-  // loses").
+  // The three preload/cache-status types below are claimed here now that
+  // content.js (their sole former responder) is deleted — claimed in the same
+  // change its own responder was removed, per map.md's message-seam rule
+  // ("two responders on one message means one of them loses").
   const RESPONDED_TYPES = [
     'golens-show-settings',
     'golens-close-settings',
@@ -93,11 +90,10 @@
   }
 
   // Mirrors, exactly, the envelopes content.js/go-navigation.js produced for
-  // these message types before their features moved (ticket 16 for the first
-  // four; ticket 22/35 for the three preload/cache-status ones). `outcome` is
-  // the feature handle's return value, or `undefined` when the module graph
-  // failed to load — the one case content.js could never produce, and the
-  // only one that reports a load failure rather than a page-type problem.
+  // these message types before their features moved. `outcome` is the feature
+  // handle's return value, or `undefined` when the module graph failed to
+  // load — the one case content.js could never produce, and the only one that
+  // reports a load failure rather than a page-type problem.
   //
   // The first four types are kind-discriminated action-result messages
   // (map.md's message-seam rule: a feature handle returns a `kind` from a

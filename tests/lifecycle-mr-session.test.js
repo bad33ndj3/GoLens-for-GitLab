@@ -1,6 +1,5 @@
 // page/lifecycle/mr-session.js — the SPA reconcile loop, the merge-request
-// activation latch, and the diff-invalidation observer (ticket 22, folding
-// in ticket 31's SPA-reconcile carve-out). This file replaces:
+// activation latch, and the diff-invalidation observer. This file replaces:
 //   - tests/content-reconcile-debounce.test.js (content.js's debounced
 //     schedulePageReconcile via its MutationObserver-driven whole-document
 //     reconcile pass) — same assertions, new access path.

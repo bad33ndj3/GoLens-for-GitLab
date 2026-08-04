@@ -1,12 +1,8 @@
-// Ticket 27: page/platform/gitlab-api.js as a unit — `fetch` and `clock`
-// injected, no real network calls and no real waiting anywhere.
-//
-// tests/go-navigation-context.test.js covers these same behaviours through
-// go-navigation.js's wrappers and keeps doing so (that is the "wrappers are
-// still wired up" check). What this file adds is what only the module can
-// answer: that the caches, the retry policy and the two pagination
-// strategies survive without a `state` object around them, and that the
-// injected seams are read late rather than captured at construction.
+// page/platform/gitlab-api.js as a unit — `fetch` and `clock` injected,
+// no real network calls and no real waiting anywhere. This suite covers
+// unit-level behavior: that the caches, the retry policy and the two
+// pagination strategies work correctly, and that the injected seams are
+// read late rather than captured at construction.
 
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';

@@ -20,12 +20,10 @@ import {
   waitForDiffUpdate,
 } from '../page/platform/diff-dom.js';
 
-// Ticket 26: these primitives moved out of go-navigation.js unchanged.
-// tests/go-navigation-context.test.js still covers them through that file's
-// `__test` bag (the wrappers must keep behaving identically); this suite
-// covers the module directly, including the pieces the wrappers do not
-// expose — `computeFileContext`, `diffFileRoots`, `rapidFileData`,
-// `flashDestination`, and `bumpFileContextGeneration`'s cache contract.
+// These primitives moved out of go-navigation.js unchanged. This suite covers
+// the module directly, including the pieces that are not otherwise tested —
+// `computeFileContext`, `diffFileRoots`, `rapidFileData`, `flashDestination`,
+// and `bumpFileContextGeneration`'s cache contract.
 
 const SHA = 'a'.repeat(40);
 

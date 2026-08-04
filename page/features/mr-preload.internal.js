@@ -1,23 +1,19 @@
 // page/features/mr-preload.internal.js — pure decision core for
-// page/features/mr-preload.js (ticket 19; contract per ticket 04 §1's
-// internal-seam convention, mirrored from generated-files.internal.js). No
-// DOM, no chrome.*, no timers, no fetch, no worker RPC: these functions only
-// turn already-fetched data (changed files, package relations, search
-// results) into plans and progress/status view-models. Not part of the
-// module's public interface — the dependency rules bar other modules from
-// importing this file directly.
+// page/features/mr-preload.js. No DOM, no chrome.*, no timers, no fetch, no
+// worker RPC: these functions only turn already-fetched data (changed files,
+// package relations, search results) into plans and progress/status
+// view-models. Not part of the module's public interface — the dependency
+// rules bar other modules from importing this file directly.
 //
-// planPreload is ticket 04 §3's named pure core ("planPreload(diffState) ->
-// [{ packagePath, action }]"). The real algorithm is inherently incremental
-// — which packages to load in the 'dependencies' and 'candidates' phases
-// depends on package-relation data the shell can only get by first asking
-// the worker to load the 'changed' phase's packages — so planPreload is
-// called once per phase with a `diffState.kind`-discriminated input built
-// from whatever the shell has learned so far, rather than once up front for
-// the whole run. Every entry's `action` is 'load': preloading only ever
-// decides *which packages*, never a second kind of action, but the shape
-// stays `{ packagePath, action }` per ticket 04 §3 for forward compatibility
-// with a future non-load action.
+// planPreload(diffState) -> [{ packagePath, action }]. The real algorithm is
+// inherently incremental — which packages to load in the 'dependencies' and
+// 'candidates' phases depends on package-relation data the shell can only
+// get by first asking the worker to load the 'changed' phase's packages — so
+// planPreload is called once per phase with a `diffState.kind`-discriminated
+// input built from whatever the shell has learned so far, rather than once up
+// front for the whole run. Every entry's `action` is 'load': preloading only
+// ever decides *which packages*, never a second kind of action, but the shape
+// stays consistent for forward compatibility with future actions.
 
 // dirname(path) -> the path with its final '/segment' removed, or '' when
 // path has no '/'. Deliberate duplicate of go-navigation.js's own dirname:

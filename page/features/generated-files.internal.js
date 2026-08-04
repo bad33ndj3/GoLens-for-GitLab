@@ -1,9 +1,8 @@
 // page/features/generated-files.internal.js — pure decision core for
-// page/features/generated-files.js (ticket 13; contract per ticket 04 §1's
-// internal-seam convention, mirrored from page/lifecycle/internal.js). No
-// DOM, no chrome.*, no timers: these functions only classify already-read
-// data. Not part of the module's public interface — the dependency rules
-// bar other modules from importing this file directly.
+// page/features/generated-files.js. No DOM, no chrome.*, no timers: these
+// functions only classify already-read data. Not part of the module's public
+// interface — the dependency rules bar other modules from importing this
+// file directly.
 
 // normalizeRepositoryPath(path) -> path with bidi marks stripped, trimmed,
 // internal whitespace around slashes collapsed, and no leading/trailing

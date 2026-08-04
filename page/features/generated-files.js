@@ -1,15 +1,12 @@
 // page/features/generated-files.js — hides: generated-file detection, row
-// hiding, and the full-file button (ticket 13; boundary from ticket 03 §2,
-// interface from ticket 04 §3). The FIRST feature slice carved out of
+// hiding, and the full-file button. The first feature slice carved out of
 // content.js; the pattern set here — mount(ctx) -> { unmount }, pure
 // decision core in generated-files.internal.js, DOM/timers/subscriptions
-// in this shell, fully self-contained once mounted (no reconcile() on the
-// handle, matching features/celebration's "fully autonomous once mounted"
-// contract from 04 §3) — is what tickets 14-21 repeat.
+// in this shell, fully self-contained once mounted — was repeated across
+// all features.
 //
-// Reacts to settings.subscribe('hideGeneratedFiles') per ticket 04 §3. Also
-// (read-only) subscribes to 'enabled': `enabled` is lifecycle's owned key
-// (ticket 03 §5), but every module may subscribe to a foreign key, it just
+// Reacts to settings.subscribe('hideGeneratedFiles'). Also (read-only)
+// subscribes to 'enabled': this module may subscribe to foreign keys, it just
 // never writes one — this module never calls ctx.settings.set().
 //
 // Self-contained page-change observation: page/lifecycle's own

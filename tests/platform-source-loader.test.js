@@ -1,8 +1,7 @@
-// Ticket 28: page/platform/source-loader.js as a unit. Every dependency is
-// injected — no worker, no network, no `document`. `status` is a spy rather
-// than a real `golens-go-status` CustomEvent dispatch; that dispatch stays
-// in go-navigation.js on purpose (see the module header), and the browser
-// smoke is what proves the event still reaches the page.
+// page/platform/source-loader.js as a unit. Every dependency is injected —
+// no worker, no network, no `document`. `status` is a spy rather than a real
+// `golens-go-status` CustomEvent dispatch; the browser smoke is what proves
+// the event still reaches the page.
 
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';

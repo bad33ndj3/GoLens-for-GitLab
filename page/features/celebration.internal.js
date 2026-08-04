@@ -1,7 +1,5 @@
 // page/features/celebration.internal.js — pure decision core for
-// page/features/celebration.js (ticket 14; contract per ticket 04 §1's
-// internal-seam convention, mirrored from generated-files.internal.js). No
-// DOM, no chrome.*, no timers, no `fetch`.
+// page/features/celebration.js. No DOM, no chrome.*, no timers, no `fetch`.
 
 // isGitLabPage/isMergeRequestPath: deliberate duplicates of content.js's own
 // isGitLab()/isMergeRequest() (same duplication precedent as

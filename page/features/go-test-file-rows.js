@@ -1,11 +1,8 @@
 // page/features/go-test-file-rows.js — marks `_test.go` rows in the
-// merge-request file tree (ticket 33; boundary from ticket 03 §2, interface
-// from ticket 04 §3). The gap map.md flagged under tickets 13/22 ("Geen
-// enkel ticket 13-21 claimt de go-test-file-rows-feature"). Carved out of
-// content.js following the generated-files.js precedent (ticket 13): pure
-// decision core in go-test-file-rows.internal.js, DOM/timers/subscriptions
-// in this shell, fully self-contained once mounted (no reconcile() on the
-// handle).
+// merge-request file tree. Carved out of content.js following the
+// generated-files.js pattern: pure decision core in go-test-file-rows.internal.js,
+// DOM/timers/subscriptions in this shell, fully self-contained once mounted
+// (no reconcile() on the handle).
 //
 // Self-contained page-change observation, same as generated-files.js and
 // discussion-line-link.js: its own MutationObserver plus the same event set

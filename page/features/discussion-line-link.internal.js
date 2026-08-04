@@ -1,7 +1,5 @@
 // page/features/discussion-line-link.internal.js — pure decision core for
-// page/features/discussion-line-link.js (ticket 32; contract per ticket 04
-// §1's internal-seam convention, mirrored from generated-files.internal.js).
-// No DOM, no chrome.*, no timers.
+// page/features/discussion-line-link.js. No DOM, no chrome.*, no timers.
 
 // isMergeRequestPath(pathname) -> true for any merge-request path (overview
 // or a sub-tab), mirrors content.js's former isMergeRequest(). Total.

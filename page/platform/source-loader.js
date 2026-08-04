@@ -1,8 +1,8 @@
 // platform/source-loader — "make package/project sources available to the
-// worker, once" (ticket 28). Owns the two cache-orchestration flows that
-// used to live in go-navigation.js: `loadPackage` and `loadProject`, plus
-// the three caches they coordinate through (`packages`, `projects`, and the
-// per-project set of progress listeners).
+// worker, once". Owns the two cache-orchestration flows that used to live in
+// go-navigation.js: `loadPackage` and `loadProject`, plus the three caches
+// they coordinate through (`packages`, `projects`, and the per-project set of
+// progress listeners).
 //
 // The shape of both flows is the same and is the reason this is one module
 // rather than two: check the worker's cache → restore on a hit → otherwise
@@ -13,38 +13,20 @@
 //
 // ## `status` is injected, not owned here — read this before "fixing" it
 //
-// Ticket 28 lists `status()` (the `golens-go-status` CustomEvent dispatch)
-// as moving into this module. It is instead an injected dependency. This was
-// a deliberate deviation at the time, documented the way
-// platform/rpc-client.js documents its own (`onDisconnect`/
-// `dispose({reason})`): go-navigation.js's `init()` fired `status('idle', …)`
-// **synchronously**, and this module was reached through a dynamic
-// `import()` bridge, so a dispatch living here would have landed inside the
-// load window and been dropped. `tests/browser-smoke.mjs:268` registers the
-// listener that sets `document.body.dataset.goStatus`, and `:445` gates the
-// whole implementations-popover scenario on it reaching `'ready'` — this
-// event is live, and map.md's correction list records it already having
-// been mistaken for a dead contract once.
-//
-// Ticket 22 update: `status()` now lives in `page/lifecycle/mr-session.js`
-// (go-navigation.js is deleted) and is still injected here, for the same
-// reason restated in mr-session.js's own header — its dispatch must stay
-// reachable as a plain function call from wherever activation happens, not
-// bound to this module's own import timing. Injecting it also keeps the
-// original stated reason for wanting a factory ("zodat tests ze kunnen
-// stubben"): an injected `status` is strictly easier to assert on than a
-// dispatched DOM event.
+// The `golens-go-status` CustomEvent dispatch is injected as a dependency.
+// This is a deliberate design: `page/lifecycle/mr-session.js` owns the
+// status dispatch and calls it synchronously on activation. By injecting it
+// here, tests can easily assert on the status updates, and activation can
+// dispatch synchronously without depending on this module's import timing.
 //
 // ## Dependencies are injected, not imported
 //
 // `createSourceLoader` takes the GitLab-API functions it needs as plain
 // deps rather than importing platform/gitlab-api.js itself. That keeps this
 // module honest as a unit under test: nothing here reaches the network
-// except through something the caller handed it. `page/lifecycle/
-// mr-session.js` is the one caller now, and — being a real ES module — it
-// constructs its `gitlabApi` instance before this module, so there is no
-// import-ordering race left to document (ticket 22; the two-bridge-race this
-// section used to describe was a go-navigation.js/content.js-era concern).
+// except through something the caller handed it. `page/lifecycle/mr-session.js`
+// is the one caller now, and — being a real ES module — it constructs its
+// `gitlabApi` instance before this module.
 
 // --- Progress view-models (pure) ------------------------------------------
 //

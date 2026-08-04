@@ -1,30 +1,27 @@
 // page/lifecycle/mr-session.js — the merge-request activation latch, the SPA
 // reconcile loop, the diff-invalidation observer, and the platform-service
-// instances every feature's `legacy` capability bag is built from (ticket 22,
-// folding in tickets 31/34/36's deferred implementation work — see map.md's
-// "Batch 3" section and 22's own file for the full trace).
+// instances every feature's `legacy` capability bag is built from.
 //
 // Carved out of two legacy classic-content-script files, both now deleted:
 //   - go-navigation.js's orchestration slice: init()/teardown() (the
 //     activation latch — "is GoLens live on *this* merge-request page",
 //     distinct from the `enabled` chrome.storage setting page/lifecycle's own
-//     settings.subscribe fanout already owns, per ticket 34's answer),
+//     settings.subscribe fanout already owns),
 //     state.diffObserver + isBookmarkOnlyMutation, refreshMergeRequestRefs,
 //     status()'s `golens-go-status` dispatch, and the gitlab-api/
 //     source-loader/toast/rpc-client instances every bridge built.
 //   - content.js's SPA-detection layer: reconcilePage()/
 //     leaveMergeRequestPage(), the turbo:load/pjax:end/popstate/
 //     visibilitychange/body-MutationObserver quintet, and its own debounce
-//     (ticket 08's createLegacyDebounceIdle).
+//     logic (createLegacyDebounceIdle).
 //
-// Ticket 31's answer: this lives in page/lifecycle (ticket 03 §2 already
-// says lifecycle "owns reconcilePage. Not a feature."), not a
-// `page/features/mr-page-reconciler.js` — a standalone feature reconciling
-// *other* features' mount state would be the forbidden feature -> feature
-// edge. `page/lifecycle`'s own `NAV_POLL_MS` poll (ticket 11's inert stub) is
-// a *different* mechanism (module-graph remount scheduling) and is untouched
-// by this file; this file replaces nothing there, it only starts producing
-// real reconcile behavior where none existed while features were unmigrated.
+// This lives in page/lifecycle (lifecycle owns reconcilePage; not a feature),
+// not a `page/features/mr-page-reconciler.js` — a standalone feature
+// reconciling *other* features' mount state would be the forbidden feature ->
+// feature edge. `page/lifecycle`'s own `NAV_POLL_MS` poll (module-graph
+// remount scheduling) is a *different* mechanism and is untouched by this
+// file; this file only starts producing real reconcile behavior where none
+// existed while features were unmigrated.
 //
 // createMrSession(deps) -> session, where deps carries every accessor this
 // file cannot construct itself:
@@ -135,10 +132,9 @@ export function createMrSession({
 
   // status(kind, message, progress) -> dispatches `golens-go-status`
   // synchronously. tests/browser-smoke.mjs:268/:445 depend on this firing
-  // without an intervening microtask on activation — this event has nearly
-  // been dropped three times during this restructure (see map.md's batch-1
-  // notes). session.activate() below calls this as its first statement,
-  // before any `await`, and this function itself never awaits anything.
+  // without an intervening microtask on activation. session.activate() below
+  // calls this as its first statement, before any `await`, and this function
+  // itself never awaits anything.
   function status(kind, message, progress) {
     doc.dispatchEvent(new CustomEvent('golens-go-status', {
       detail: { kind, message, ...(progress ? { progress } : {}) },
@@ -210,7 +206,7 @@ export function createMrSession({
     gitlabApi.clearMergeRequestRefs();
   }
 
-  // --- SPA reconcile loop (ticket 31), carved out of content.js -----------
+  // --- SPA reconcile loop, carved out of content.js -----------
   const pageState = { active: false, key: '', reconcileCount: 0 };
 
   async function disableGoLens() {

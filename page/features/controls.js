@@ -1,33 +1,26 @@
 // page/features/controls.js — toolbar (enable/focus/preload/bookmarks
 // buttons) + preload state machine + review-focus/fullscreen + bookmark
-// drawer, carved out of content.js (ticket 30; boundary from ticket 03 §2,
-// interface from ticket 04 §3).
+// drawer, carved out of content.js.
 //
-// One module, not two (the "controls-shell vs bookmark-drawer" split this
-// ticket flagged as an open question): the drawer's trigger button lives
-// inside the toolbar's own shadow root, one bookmarks.subscribe() callback
-// drives both the toolbar badge and the open drawer, and closing the drawer
-// reaches back into the toolbar to reset aria-expanded. Splitting them would
-// require a new cross-module seam for exactly the kind of coupling ticket 30
-// itself forbids introducing (no new globalThis contracts) — so they stay
-// one feature.
+// One module, not two: the drawer's trigger button lives inside the toolbar's
+// own shadow root, one bookmarks.subscribe() callback drives both the toolbar
+// badge and the open drawer, and closing the drawer reaches back into the
+// toolbar to reset aria-expanded. Splitting them would require a new
+// cross-module seam for exactly the kind of coupling the module architecture
+// forbids (no new globalThis contracts) — so they stay one feature.
 //
-// Ticket 22: this is now the only mounted instance (content.js, its former
-// self-mount, is deleted). `page/main.js` builds a full `legacy` bag from its
-// own imports and `page/lifecycle/mr-session.js` — the bookmark drawer
-// consumes page/features/bookmarks.js's handle exactly as before, through
-// `legacy.bookmarks()` (a late-bound accessor onto page/main.js's own
-// `bookmarksHandle` variable, same idiom as batch 1's platform-services
-// decision — never a globalThis bridge). `legacy.init`/`legacy.teardown` are
-// `page/lifecycle/mr-session.js`'s `activate`/`deactivate` — the merge-request
-// activation latch (ticket 34's answer: a concept distinct from the
-// `enabled` chrome.storage setting lifecycle's own `settings.subscribe`
-// fanout applies via `setEnabled` below).
+// This is now the only mounted instance. `page/main.js` builds a full
+// `legacy` bag from its own imports and `page/lifecycle/mr-session.js` — the
+// bookmark drawer consumes page/features/bookmarks.js's handle exactly as
+// before, through `legacy.bookmarks()` (a late-bound accessor onto
+// page/main.js's own `bookmarksHandle` variable). `legacy.init`/`legacy.teardown`
+// are `page/lifecycle/mr-session.js`'s `activate`/`deactivate` — the
+// merge-request activation latch, a concept distinct from the `enabled`
+// chrome.storage setting.
 //
 // rapid-diffs opt-in (enableRapidDiffs/watchForRapidDiffs) moved into this
-// module directly (ticket 22, folding in ticket 31's deferral): this is now
-// their only caller, so they no longer need a `legacy` capability — see
-// their own definitions below.
+// module directly: this is now their only caller, so they no longer need a
+// `legacy` capability — see their own definitions below.
 //
 // Every DOM lookup below goes through the module-scoped `host`/`drawerHost`
 // references, never `document.getElementById('gitlab-lens-root')` or
@@ -72,12 +65,10 @@ export function mount(ctx) {
     return doc.documentElement.classList.contains('gitlab-lens-review-focus');
   }
 
-  // Rapid-diffs opt-in (ticket 22, moved out of content.js — ticket 31 had
-  // deferred it, deliberately keeping it out of scope for ticket 30):
-  // byte-identical to content.js's former isMergeRequestDiff()/
-  // enableRapidDiffs()/watchForRapidDiffs(). This module is now the only
-  // caller, so the two DOM-touching functions live here directly instead of
-  // through a `legacy` capability.
+  // Rapid-diffs opt-in: byte-identical to content.js's former
+  // isMergeRequestDiff()/enableRapidDiffs()/watchForRapidDiffs(). This module
+  // is now the only caller, so the two DOM-touching functions live here
+  // directly instead of through a `legacy` capability.
   function enableRapidDiffs() {
     if (!isMergeRequestDiffPath(win.location.pathname, win.location.search)) return false;
     const optIn = [...doc.querySelectorAll('button')].find((button) =>

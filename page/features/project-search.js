@@ -1,31 +1,24 @@
 // page/features/project-search.js — hides: the "search complete project"
-// modal's DOM, its paging/progress state machine, and blob-path search
-// (ticket 20; boundary from ticket 03 §2, interface from ticket 04 §3).
+// modal's DOM, its paging/progress state machine, and blob-path search.
 // Carved out of go-navigation.js's former searchCompleteProject()/
 // openFullSearch()/runFullSearch()/minimizeFullSearch()/restoreFullSearch()/
 // cancelFullSearch(). Pure decision core in project-search.internal.js;
 // DOM/messaging/paging orchestration in this shell.
 //
 // mount(ctx) -> { unmount, open(result, pointer), close(opts), minimize() }.
-// `minimize` is a 4th method beyond ticket 20's literal `{unmount, open,
-// close}` text — see its own doc comment on the returned handle below for
-// why go-navigation.js's Escape handler needs it.
+// `minimize` is a 4th method beyond the core `{unmount, open, close}` text —
+// see its own doc comment on the returned handle below for why go-navigation.js's
+// Escape handler needs it.
 //
-// Ticket 20's real entanglement, same shape ticket 19 (mr-preload) hit: the
-// original functions shared go-navigation.js's blob-path search
-// (searchProjectBlobPaths), package loader/cache (loadPackage, itself
-// routed through workerRPC -> platform/rpc-client per ticket 09), and the
-// popover-rendering functions (showResult/pinPopover/hidePopover/toast) —
-// all of which are also used by hover/click resolution, which hasn't
-// migrated out of go-navigation.js yet (later ticket). Ticket 03 §3's
-// escape hatch applies exactly as it did for mr-preload: `ctx.legacy` is a
-// capability bag of go-navigation.js's own bound functions, injected by the
-// self-bridge go-navigation.js installs for itself (see its "Bridge onto
-// page/features/project-search.js" comment) — not by page/lifecycle, which
-// has no access to go-navigation.js's closures. When page/main.js mounts
-// this feature for message routing, `ctx` carries no `legacy` bag; every
-// method below degrades to an `unavailable`/`not-open` result instead of
-// crashing (mirrors mr-preload.js's `legacy` guard).
+// The original functions shared go-navigation.js's blob-path search
+// (searchProjectBlobPaths), package loader/cache (loadPackage), and the
+// popover-rendering functions — all of which are also used by hover/click
+// resolution, which hasn't migrated out of go-navigation.js yet. `ctx.legacy`
+// is a capability bag of go-navigation.js's own bound functions, injected by
+// the self-bridge go-navigation.js installs for itself — not by page/lifecycle,
+// which has no access to go-navigation.js's closures. When page/main.js mounts
+// this feature for message routing, `ctx` carries no `legacy` bag; every method
+// below degrades to an `unavailable`/`not-open` result instead of crashing.
 //
 // Modal DOM is entirely private to this module: its own shadow host
 // (`#golens-project-search-root`), created lazily on the first open() (not

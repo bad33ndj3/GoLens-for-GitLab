@@ -1,7 +1,5 @@
 // page/features/code-intel.internal.js — pure decision core for
-// page/features/code-intel.js (ticket 21; contract per ticket 04 §1's
-// internal-seam convention, mirrored from bookmarks.internal.js/
-// project-search.internal.js). No DOM, no chrome.*, no timers, no fetch, no
+// page/features/code-intel.js. No DOM, no chrome.*, no timers, no fetch, no
 // worker RPC: these functions only turn already-resolved data (a worker
 // query result, a caret hit-test, a diff cell's text) into identifiers,
 // classification, and presentation strings. Not part of the module's public
@@ -155,13 +153,13 @@ export function shouldShowReferencesOnHover(result) {
 }
 
 // classify(result) -> { kind } — the closed, documented set of query-result
-// outcomes `showResult()` branches on (ticket 04 §5), pulled 1:1 out of its
-// former 11-way `if/else if` chain on the worker's own wire-level
-// `result.status` (ticket 04 §2: those wire statuses are the query methods'
-// own documented `kind` set and are NOT renamed here). This `kind` is the
-// *UI-outcome* discriminator the shell's rendering dispatch switches on;
-// `'unrecognized'` is the former chain's `else return false` catch-all — a
-// closed set member like any other, never a guess, never a thrown exception.
+// outcomes `showResult()` branches on, pulled 1:1 out of its former 11-way
+// `if/else if` chain on the worker's own wire-level `result.status`. The
+// wire statuses are the query methods' own documented `kind` set and are NOT
+// renamed here. This `kind` is the *UI-outcome* discriminator the shell's
+// rendering dispatch switches on; `'unrecognized'` is the former chain's
+// `else return false` catch-all — a closed set member like any other, never
+// a guess, never a thrown exception.
 export function classify(result) {
   switch (result?.status) {
     case 'resolved': return { kind: 'resolved' };

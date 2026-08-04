@@ -1,16 +1,13 @@
 // page/features/settings-overlay.internal.js — pure decision core for
-// page/features/settings-overlay.js (ticket 16; contract per ticket 04 §1's
-// internal-seam convention, mirrored from generated-files.internal.js). No
-// DOM, no chrome.*, no timers. This feature is nearly all imperative shell
-// (DOM creation, message listening, registry claim/release) — there just
-// isn't much decision logic to pull out, so this file stays small rather
-// than manufacturing structure to match generated-files.internal.js's size.
+// page/features/settings-overlay.js. No DOM, no chrome.*, no timers. This
+// feature is nearly all imperative shell (DOM creation, message listening,
+// registry claim/release) — there just isn't much decision logic to pull out,
+// so this file stays small.
 
 // isGitLabPage({ hasGitlabGlobal, hasCsrfMeta, hasAppShell }) -> whether the
 // current document looks like a real GitLab page, mirroring content.js's own
-// isGitLab() heuristic (duplicated per generated-files.internal.js's
-// isMergeRequestDiff precedent: a one-line, unlikely-to-drift predicate, not
-// worth a shared platform module for one ticket's sake). Total.
+// isGitLab() heuristic (duplicated per precedent: a one-line, unlikely-to-drift
+// predicate, not worth a shared platform module). Total.
 export function isGitLabPage({ hasGitlabGlobal, hasCsrfMeta, hasAppShell }) {
   return Boolean(hasGitlabGlobal || (hasCsrfMeta && hasAppShell));
 }

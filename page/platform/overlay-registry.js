@@ -1,9 +1,7 @@
-// platform/overlay-registry — hides which module currently has a
-// page-level overlay open. Replaces go-navigation.js's direct DOM read of
-// content.js-owned `#golens-onboarding-root` / `#golens-settings-root`
-// (ticket 02 §4's near-cycle: two ways to observe content.js's overlay
-// state, only one of them visible through the `GoLensGoNavigation` API
-// surface). Per ticket 04 §2:
+// platform/overlay-registry — hides which module currently has a page-level
+// overlay open. Replaces go-navigation.js's direct DOM read of
+// content.js-owned `#golens-onboarding-root` / `#golens-settings-root`.
+// Contract:
 //   createOverlayRegistry() -> { claim(name) -> release, isAnyOpen() -> boolean, subscribe(fn) -> unsubscribe }
 //
 // State lives at module scope, not inside the returned object, so every
@@ -13,10 +11,10 @@
 // and go-navigation.js (which only ever reads `isAnyOpen()`) are two
 // separate classic content scripts, each reaching this module through its
 // own dynamic `import()`. Both run in the same per-frame isolated world,
-// so the platform-import bootstrap (ticket 04 §7) resolves both imports to
-// one cached ES module instance — no `globalThis` contract needed to share
-// this state, and `createOverlayRegistry()` takes no deps because of it:
-// it is inherently a page-wide singleton, not a per-caller instance.
+// so the module bootstrap resolves both imports to one cached ES module
+// instance — no `globalThis` contract needed to share this state, and
+// `createOverlayRegistry()` takes no deps because of it: it is inherently
+// a page-wide singleton, not a per-caller instance.
 //
 // `claim`/`release` are counted per name (not a plain set membership), so
 // a caller that calls `claim(name)` again before releasing the first claim

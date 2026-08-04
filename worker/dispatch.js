@@ -94,10 +94,10 @@ const MUTATING_METHODS = new Set([
   'clearCache', 'cachePackage', 'cacheProject', 'cacheMergeRequest', 'indexPackage', 'indexProject',
   'restorePackage', 'restoreProject', 'restoreMergeRequest', 'disposeProject', 'prepareSources',
 ]);
-// Storage-only status reads: side-effect-free since cache reads were made
-// batched and non-mutating (ticket 02), so they must not wait behind an
-// in-flight caching job's mutation queue at all — not even without
-// extending it, which is all removing them from MUTATING_METHODS would
+// Storage-only status reads: side-effect-free since cache reads are
+// batched and non-mutating, so they must not wait behind an in-flight
+// caching job's mutation queue at all — not even without extending it,
+// which is all removing them from MUTATING_METHODS would
 // achieve. Resolution and search deliberately keep waiting on the queue
 // (they are simply absent from MUTATING_METHODS, same as before): project
 // caching interleaves staging, indexing and writing, and a query that

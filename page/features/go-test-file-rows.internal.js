@@ -1,6 +1,5 @@
 // page/features/go-test-file-rows.internal.js — pure decision core for
-// page/features/go-test-file-rows.js (ticket 33; contract per ticket 04 §1's
-// internal-seam convention). No DOM, no chrome.*, no timers.
+// page/features/go-test-file-rows.js. No DOM, no chrome.*, no timers.
 //
 // normalizeRepositoryPath is a deliberate duplicate of
 // generated-files.internal.js's copy of the same function — same rationale

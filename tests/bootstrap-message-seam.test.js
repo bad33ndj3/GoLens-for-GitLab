@@ -1,9 +1,8 @@
-// Ticket 16. bootstrap.js is a classic content script, so its
-// chrome.runtime.onMessage listener exists from the moment the script runs;
-// the module graph behind it only exists after an async import(). These tests
-// pin the two things that broke the first attempt at this ticket: messages
-// that arrive before (or during) a mount must not be dropped, and the response
-// must reflect what the feature actually did.
+// bootstrap.js is a classic content script, so its chrome.runtime.onMessage
+// listener exists from the moment the script runs; the module graph behind it
+// only exists after an async import(). These tests ensure that messages
+// arriving before (or during) a mount are not dropped, and the response
+// reflects what the feature actually did.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -76,8 +75,8 @@ test('bootstrap answers the settings and onboarding messages, and only those', (
 
   // Every claimed type must be a real route to a feature page/main.js mounts.
   // Claiming a type a legacy file already answered synchronously would put
-  // two responders on one message (both legacy files are deleted as of
-  // ticket 22, so this is now the only responder for any of these).
+  // two responders on one message (legacy files are deleted, so this is now
+  // the only responder for any of these).
   const answerableFeatures = ['settings-overlay', 'onboarding', 'controls'];
   for (const type of RESPONDED_TYPES) {
     const route = routeMessage({ type });

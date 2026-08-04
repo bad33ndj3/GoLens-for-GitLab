@@ -1,7 +1,6 @@
 // page/features/discussion-line-link.js — the "View in changes" link GoLens
-// adds to overview-page line discussions (ticket 32; boundary from ticket 03
-// §2, interface from ticket 04 §3). Carved out of content.js following the
-// generated-files.js precedent (ticket 13): pure decision core in
+// adds to overview-page line discussions. Carved out of content.js following
+// the generated-files.js pattern: pure decision core in
 // discussion-line-link.internal.js, DOM/timers/subscriptions in this shell,
 // fully self-contained once mounted (no reconcile() on the handle).
 //

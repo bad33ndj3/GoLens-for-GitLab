@@ -1,19 +1,17 @@
-// platform/gitlab-api — the one place that talks to GitLab over HTTP
-// (ticket 27). Everything below used to live in go-navigation.js and was
-// handed to the `legacy` capability bags of bookmarks (18), mr-preload (19),
-// project-search (20) and code-intel (21). Hides: credentialed fetch, the
-// retry/backoff policy, the two pagination strategies, and three caches
-// (absent source paths, resolved module paths, and the merge-request diff
-// refs with their 15s TTL).
+// platform/gitlab-api — the one place that talks to GitLab over HTTP.
+// Everything below used to live in go-navigation.js and was handed to the
+// `legacy` capability bags of bookmarks, mr-preload, project-search and
+// code-intel. Hides: credentialed fetch, the retry/backoff policy, the two
+// pagination strategies, and three caches (absent source paths, resolved
+// module paths, and the merge-request diff refs with their 15s TTL).
 //
-// Shape, per ticket 04 §2: a `createGitLabApi(deps)` factory for everything
-// that touches the network or the caches, plus plain named exports for the
-// pure helpers (path/URL manipulation, page-context readers) that have
-// neither state nor injectable dependencies — the same split
-// platform/diff-dom.js makes, and for the same reason: there is nothing to
-// inject into `normalizePath`.
+// Shape: a `createGitLabApi(deps)` factory for everything that touches the
+// network or the caches, plus plain named exports for the pure helpers
+// (path/URL manipulation, page-context readers) that have neither state nor
+// injectable dependencies — the same split platform/diff-dom.js makes, and
+// for the same reason: there is nothing to inject into `normalizePath`.
 //
-// ## Deviations from ticket 27's literal wording, and why
+// ## Implementation notes
 //
 // 1. **`fetch`, `clock` and the abort signal are injected as *late-bound*
 //    accessors, not values.** `createGitLabApi({ fetch, getClock, getSignal })`
@@ -36,12 +34,11 @@
 //    retry loop's only use of the injected clock.
 //
 // 3. **`normalizePath`/`parseBlobLink`/`dirname` are duplicated in
-//    platform/diff-dom.js** rather than imported from here. diff-dom's
-//    header comment used to say ticket 27 would move "the single owning
-//    copy" here and let it import. It deliberately does not: diff-dom is the
+//    platform/diff-dom.js** rather than imported from here. diff-dom is the
 //    DOM-reading layer and this is the network layer, and making the former
 //    depend on the latter adds a platform→platform edge purely to dedupe
-//    ~15 lines of pure string handling. The copies stay; both sides say so.
+//    ~15 lines of pure string handling. The copies stay; both sides document
+//    this decision.
 
 const GO_FILE = /\.go$/i;
 const COMMIT_SHA = /^[0-9a-f]{40}$/i;

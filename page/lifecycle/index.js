@@ -1,29 +1,22 @@
-// page/lifecycle — the imperative shell that wires features (ticket 03 §2,
-// interface ticket 04 §3). Not a feature itself: it hides `enabled`-gating,
-// `chrome.runtime.onMessage` routing, and mount/unmount ordering behind one
-// entry point:
+// page/lifecycle — the imperative shell that wires features. Not a feature
+// itself: it hides `enabled`-gating, `chrome.runtime.onMessage` routing, and
+// mount/unmount ordering behind one entry point:
 //   start({ platform, features }) -> { stop() }
 //
-// Ticket 22 (folding in ticket 31's answer): this module used to also poll
-// `location.href` itself (ticket 11's inert stub, documented at the time as
-// "a different mechanism than content.js's event+MutationObserver
-// detection, for reconciling the mounted feature set without a full module
-// remount, once features exist to reconcile"). Ticket 31 settled that
-// question the other way: `page/lifecycle/mr-session.js`'s reconcile loop
-// (content.js's former event+MutationObserver detection, survived verbatim)
-// is what now does this job, and does it per-navigation without waiting on
-// any poll interval — so the poll here was superseded, not merely made
-// redundant, and is removed rather than left running alongside it.
-// bootstrap.js's own separate `location.href` poll (full module-graph
-// remount scheduling) is a different mechanism and is untouched.
+// This module used to poll `location.href` itself, but
+// `page/lifecycle/mr-session.js`'s reconcile loop now does this job, doing
+// it per-navigation without waiting on any poll interval. The old poll here
+// was superseded (not merely redundant) and is removed. bootstrap.js's own
+// separate `location.href` poll (full module-graph remount scheduling) is a
+// different mechanism and is untouched.
 import { routeMessage } from './internal.js';
 
 // start({ platform, features, runtime }) -> { stop() }
 //
 // - `platform`: bag of already-constructed platform services (e.g. `{ clock,
 //   settings }`) merged into every feature's `ctx`, plus per-feature
-//   `capabilities` (ticket 04 §1's "accept dependencies, don't create them").
-//   Lifecycle never constructs platform services itself.
+//   `capabilities` (accept dependencies, don't create them). Lifecycle never
+//   constructs platform services itself.
 // - `features`: array of `{ name, mount(ctx) -> handle, capabilities? }`,
 //   mounted in array order; `stop()` unmounts in the reverse order (resource
 //   teardown mirrors acquisition).
@@ -46,11 +39,10 @@ export function start({ platform = {}, features = [], runtime } = {}) {
     for (const { handle } of mounted) handle.setEnabled?.(enabled);
   }
 
-  // `enabled`-gating: lifecycle owns the `enabled` key (ticket 03 §5).
-  // Applied once the settings store resolves; guarded against `stop()`
-  // racing ahead of `ready()`. Read-only here: lifecycle does not write
-  // `enabled` back to storage — content.js still owns that write until its
-  // toggle UI migrates (ticket 03: legacy behavior unchanged).
+  // `enabled`-gating: lifecycle owns the `enabled` key. Applied once the
+  // settings store resolves; guarded against `stop()` racing ahead of `ready()`.
+  // Read-only here: lifecycle does not write `enabled` back to storage —
+  // content.js still owns that write (legacy behavior).
   let unsubscribeEnabled = null;
   if (platform.settings) {
     platform.settings.ready().then(() => {
@@ -68,8 +60,8 @@ export function start({ platform = {}, features = [], runtime } = {}) {
   // this module graph is only reachable through an async `import()`: a
   // listener registered in here does not exist yet during the first ~15-30ms
   // after page load, nor during the unmount/mount gap of an SPA re-mount, and
-  // every message arriving in those windows was silently lost (found by
-  // ticket 16's browser-smoke failure).
+  // every message arriving in those windows was silently lost before this
+  // indirection was added.
   function dispatch(message) {
     const route = routeMessage(message);
     if (route.kind === 'lifecycle' && route.action === 'setEnabled') {

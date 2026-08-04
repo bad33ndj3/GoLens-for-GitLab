@@ -1,7 +1,6 @@
 // page/features/code-intel.js — hides: hover/click resolution and its
 // debouncing, the popover DOM and its render functions, occurrence
-// highlighting in the diff view, and reference/implementation navigation
-// (ticket 21; boundary from ticket 03 §2, interface from ticket 04 §3).
+// highlighting in the diff view, and reference/implementation navigation.
 // Carved out of go-navigation.js's hover/click handlers, `showResult` and
 // its rendering helpers, `resolveAt`/`findReferencesAt`/
 // `findImplementationsAt`, and the occurrence-highlighting functions. Pure
@@ -11,45 +10,32 @@
 // mount(ctx) -> { unmount, setEnabled(bool), navigationAction(name) ->
 // boolean, ...six self-bridge-only extras — see the return statement below }.
 //
-// Same entanglement shape ticket 18/19/20 already documented: this module
-// needs a `legacy` capability bag — diff-DOM primitives (fileContextFor/
-// lineContextFor/codeCellFor/diffFileRoots), package/project loading and
-// worker RPC (loadPackage/preloadMergeRequest/mergeRequestRefsForFile/
-// mergeRequestIID/sourceRefFor/dirname/workerRPC), URL builders
-// (projectContext/documentationURL/projectPackageURL), the shared "reveal a
-// location in the diff" primitives also used by bookmarks.js
+// This module needs a `legacy` capability bag — diff-DOM primitives
+// (fileContextFor/lineContextFor/codeCellFor/diffFileRoots), package/project
+// loading and worker RPC (loadPackage/preloadMergeRequest/
+// mergeRequestRefsForFile/mergeRequestIID/sourceRefFor/dirname/workerRPC),
+// URL builders (projectContext/documentationURL/projectPackageURL), the
+// shared "reveal a location in the diff" primitives also used by bookmarks.js
 // (visibleDiffRootForDefinition/navigateToLocation), the shared toast
 // surface (toast), the shortcut-coach bridge (offerShortcutCoach), the
 // frame-throttle clock (requestFrame), and project-search's modal opener
-// (openFullSearch). Ticket 22: `page/main.js` builds this bag directly from
+// (openFullSearch). `page/main.js` builds this bag directly from
 // `page/platform/diff-dom.js`/`gitlab-api.js`, `page/lifecycle/mr-session.js`'s
 // shared instances, and late-bound accessors onto the mr-preload/
-// project-search handles — no more go-navigation.js self-bridge, this is
-// the only mounted instance (the "second, capability-less instance for
-// message-routing consistency" this comment used to describe no longer
-// exists as a distinct thing).
+// project-search handles — this is the only mounted instance.
 //
-// Toast-surface decision (ticket 21): the shared instance
-// page/lifecycle/mr-session.js now owns, reached through `legacy.toast`.
-// Ticket 17 already established the toast host as a
-// shared surface across features precisely because giving each feature its
-// own toast element risks two toasts showing at once; moving it into
-// code-intel.js now would additionally make keyboard-nav.js, bookmarks.js,
-// and project-search.js — three *sibling* features, none of them code-intel
-// — depend on this module's private DOM, which ticket 03's dependency rules
-// forbid (feature -> feature is not allowed the way feature -> legacy-global
-// is, since go-navigation.js is not itself a migrated feature yet). Grepping
-// the remaining `toast(...)`/`legacy.toast(...)` call sites after this
-// ticket: go-navigation.js itself no longer calls it directly (code-intel.js
-// now owns every call site that used to live there), but three other
-// consumers still reach it through go-navigation.js — keyboard-nav.js's
-// `legacyToast` capability, project-search.js's `legacy.toast`, and
-// bookmarks.js's `legacy.toast` — plus code-intel.js's own new call sites
-// below (`legacy.toast(...)`, forwarding to the same shared element). So the
-// surface now has 4 consumers, up from ticket 17's ~15 (most of the rest
-// migrated out with bookmarks/mr-preload/project-search); it stays put until
-// go-navigation.js itself becomes an ES module (ticket 22+), same
-// disposition ticket 17 already recorded.
+// Toast-surface decision: the shared instance page/lifecycle/mr-session.js
+// now owns, reached through `legacy.toast`. The toast host is a shared
+// surface across features precisely because giving each feature its own toast
+// element risks two toasts showing at once; moving it into code-intel.js would
+// additionally make keyboard-nav.js, bookmarks.js, and project-search.js —
+// three sibling features, none of them code-intel — depend on this module's
+// private DOM, which the module architecture forbids (feature -> feature calls
+// are not allowed). go-navigation.js itself no longer calls it directly
+// (code-intel.js now owns every call site that used to live there), but
+// multiple other consumers still reach it through go-navigation.js. The
+// surface will stay in place until go-navigation.js itself becomes an ES
+// module.
 //
 // Popover DOM (`#golens-go-intelligence-root`) is now fully private to this
 // module — physically split out of go-navigation.js's former single shared

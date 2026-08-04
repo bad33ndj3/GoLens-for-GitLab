@@ -1,11 +1,11 @@
 // platform/diff-dom — the diff-DOM primitives every feature reads GitLab's
-// merge-request diff through (ticket 26). These used to live in
-// go-navigation.js and were handed to all four carved-out `legacy` bags
-// (bookmarks — ticket 18, code-intel — ticket 21, and through code-intel
-// indirectly mr-preload/project-search). They are pure DOM readers with no
-// injectable dependencies, so this module deliberately exports plain named
-// functions instead of ticket 04 §2's `createX(deps)` factory — there is
-// nothing to inject and no per-instance state worth constructing.
+// merge-request diff through. These used to live in go-navigation.js and
+// were handed to all four carved-out `legacy` bags (bookmarks, code-intel,
+// and through code-intel indirectly mr-preload/project-search). They are
+// pure DOM readers with no injectable dependencies, so this module
+// deliberately exports plain named functions instead of a `createX(deps)`
+// factory — there is nothing to inject and no per-instance state worth
+// constructing.
 //
 // The one piece of state, `fileContextFor`'s generation-keyed cache, lives
 // at module scope rather than inside a returned object, the same idiom (and
@@ -19,17 +19,16 @@
 // the cache is stale; it calls `bumpFileContextGeneration()` here instead of
 // owning the counter itself.
 //
-// Known remaining duplication, deliberately not fixed by this ticket:
+// Known remaining duplication, deliberately not fixed:
 //   - `normalizePath`/`parseBlobLink`/`dirname` below are byte-identical
-//     copies of the ones platform/gitlab-api.js now owns (ticket 27). They
-//     stay private copies on purpose: this is the DOM-reading layer and
-//     that is the network layer, and importing across would add a
-//     platform→platform edge purely to dedupe ~15 lines of pure string
-//     handling. gitlab-api.js's header records the same decision.
+//     copies of the ones platform/gitlab-api.js owns. They stay private
+//     copies on purpose: this is the DOM-reading layer and that is the
+//     network layer, and importing across would add a platform→platform edge
+//     purely to dedupe ~15 lines of pure string handling. gitlab-api.js's
+//     header records the same decision.
 //   - bookmarks.js:70 keeps its own private `lineFromAnchor`, and
 //     keyboard-nav.js:94/118 + code-intel.js:418 keep their own
-//     `diffFileRoots`/`flashDestination`. Those modules were not claimed by
-//     ticket 26 and are left untouched.
+//     `diffFileRoots`/`flashDestination`. Those modules are left untouched.
 
 const GO_FILE = /\.go$/i;
 const DIFF_ROOT_SELECTOR = 'diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]';
@@ -213,9 +212,8 @@ export async function revealLine(root, line, preferredSide = '') {
 // visibleDiffRootForDefinition/flashDestination/navigateToLocation: shared
 // "reveal a source location inside the currently-loaded diff" primitives —
 // NOT code-intel-exclusive despite having lived next to its former popover
-// code. Both bookmarks.js's `legacy.navigateToLocation` (ticket 18,
-// `reveal()`) and code-intel.js's `legacy.navigateToLocation` (ticket 21,
-// semantic-jump navigation) reach them.
+// code. Both bookmarks.js's `legacy.navigateToLocation` and code-intel.js's
+// `legacy.navigateToLocation` reach them.
 export function visibleDiffRootForDefinition(definition) {
   const matchingRoots = [...document.querySelectorAll(DIFF_ROOT_SELECTOR)];
   return matchingRoots.find((candidate) => {

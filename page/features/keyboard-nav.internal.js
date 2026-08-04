@@ -1,11 +1,9 @@
 // page/features/keyboard-nav.internal.js — pure decision core for
-// page/features/keyboard-nav.js (ticket 17; contract per ticket 04 §1's
-// internal-seam convention). No DOM, no chrome.*, no timers.
+// page/features/keyboard-nav.js. No DOM, no chrome.*, no timers.
 
 // isMergeRequestPath(pathname) -> mirrors content.js's former isMergeRequest()
-// guard on the global keydown listener. Duplicated per the onboarding.internal.js/
-// settings-overlay.internal.js precedent (a one-line, unlikely-to-drift
-// predicate, not worth a shared platform module for one ticket's sake). Total.
+// guard on the global keydown listener. Duplicated per precedent: a one-line,
+// unlikely-to-drift predicate, not worth a shared platform module. Total.
 export function isMergeRequestPath(pathname) {
   return /\/-\/merge_requests\/\d+/.test(pathname || '');
 }
@@ -74,10 +72,10 @@ export function messageForAction(actionID) {
 // isCoachBlocked({ hidden, overlayOpen, toastShowing }) -> whether the
 // shortcut coach must stay silent right now, mirroring go-navigation.js's
 // former shortcutCoachBlocked() OR-combination exactly. `overlayOpen` comes
-// from ctx.overlays.isAnyOpen() (ticket 12) rather than a DOM read of
-// another module's root; `toastShowing` comes from the legacyToast
-// capability's isShowing(), since the toast element itself still lives in
-// go-navigation.js's own shadow host. Total.
+// from ctx.overlays.isAnyOpen() rather than a DOM read of another module's
+// root; `toastShowing` comes from the legacyToast capability's isShowing(),
+// since the toast element itself still lives in go-navigation.js's own shadow
+// host. Total.
 export function isCoachBlocked({ hidden, overlayOpen, toastShowing }) {
   return Boolean(hidden || overlayOpen || toastShowing);
 }

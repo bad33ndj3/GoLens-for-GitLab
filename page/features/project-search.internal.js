@@ -1,11 +1,10 @@
 // page/features/project-search.internal.js — pure decision core for
-// page/features/project-search.js (ticket 20; contract per ticket 04 §1's
-// internal-seam convention, mirrored from mr-preload.internal.js). No DOM,
-// no chrome.*, no timers, no fetch, no worker RPC: these functions only turn
-// already-fetched data (a popover result/request, blob-search pages,
-// candidate paths) into plans, progress numbers, and kind-discriminated
-// domain outcomes. Not part of the module's public interface — the
-// dependency rules bar other modules from importing this file directly.
+// page/features/project-search.js. No DOM, no chrome.*, no timers, no fetch,
+// no worker RPC: these functions only turn already-fetched data (a popover
+// result/request, blob-search pages, candidate paths) into plans, progress
+// numbers, and kind-discriminated domain outcomes. Not part of the module's
+// public interface — the dependency rules bar other modules from importing
+// this file directly.
 
 // dirname(path) -> the directory portion of a slash-separated path, or ''
 // for a root-level path. Byte-identical to go-navigation.js's former

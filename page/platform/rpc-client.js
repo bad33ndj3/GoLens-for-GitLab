@@ -1,6 +1,6 @@
 // platform/rpc-client — the one port to the worker. Hides: {id,method,params}
 // framing, port lifecycle/reconnect, in-flight bookkeeping, the test-only
-// postMessage fallback transport. Per ticket 04 §2:
+// postMessage fallback transport. Contract:
 //   createRpcClient({ connect, onDisconnect }) -> {
 //     query: { resolveDefinition, resolveHover, findReferences,
 //              findImplementations, packageRelations },
@@ -18,14 +18,11 @@
 // outcomes stay ordinary `kind`-discriminated return values produced by the
 // worker itself and are passed through unchanged.
 //
-// `onDisconnect` is a deviation from ticket 04 §2's literal signature (which
-// lists only `connect`), added because go-navigation.js's temporary bridge
-// owns package/project promise caches that must be invalidated when the
-// worker's service instance restarts — the same notification the old inline
-// `port.onDisconnect` listener drove. It fires once per disconnect, after all
-// in-flight calls have been rejected, and never fires from `dispose()`
-// (matching today's behaviour: a caller-initiated `port.disconnect()` does
-// not invoke Chrome's `onDisconnect` listener either).
+// `onDisconnect` is called when the port disconnects, after all in-flight
+// calls have been rejected, and never fires from `dispose()` (matching
+// browser behaviour: a caller-initiated `port.disconnect()` does not invoke
+// Chrome's `onDisconnect` listener either). Added to allow proper cache
+// invalidation when the worker's service instance restarts.
 
 const METHOD_NAMESPACE = {
   resolveDefinition: 'query',
@@ -119,11 +116,10 @@ export function createRpcClient({ connect, onDisconnect } = {}) {
   const cache = namespaceOf(['cacheStats', 'projectCacheStatus', 'mergeRequestCacheStatus', 'packageCacheStatus', 'prepareSources', 'clearCache', 'cachePackage', 'cacheProject', 'cacheMergeRequest', 'restorePackage', 'restoreProject', 'restoreMergeRequest']);
   const index = namespaceOf(['indexPackage', 'indexProject', 'disposeProject']);
 
-  // `reason` lets the bridge preserve today's teardown-specific rejection
-  // text ("Go intelligence request cancelled") instead of the generic
-  // disconnect message — a second addendum to ticket 04 §2 alongside
-  // `onDisconnect`, for the same reason: the wire contract is unaffected,
-  // only the message surfaced through the existing infra-failure rejection.
+  // `reason` lets the bridge preserve teardown-specific rejection text
+  // ("Go intelligence request cancelled") instead of the generic disconnect
+  // message. The wire contract is unaffected, only the message surfaced
+  // through the existing infra-failure rejection.
   function dispose({ reason } = {}) {
     for (const call of pending.values()) {
       clearTimeout(call.timeout);

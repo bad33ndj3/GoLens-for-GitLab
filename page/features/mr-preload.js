@@ -1,35 +1,22 @@
 // page/features/mr-preload.js — hides: which packages/searches to preload
 // for the current merge request (and, separately, the whole project) and in
-// what order (ticket 03 §2; interface ticket 04 §3, handle:
-// `{ unmount, preloadMergeRequest, preloadStatus, preloadFullProject,
-// fullProjectStatus, invalidateCache }`). Pure decision core in
-// mr-preload.internal.js (`planPreload` plus the progress/status
-// view-model and search-term helpers); this shell executes the RPC calls
-// and GitLab fetches the plan implies.
+// what order. Pure decision core in mr-preload.internal.js (`planPreload`
+// plus the progress/status view-model and search-term helpers); this shell
+// executes the RPC calls and GitLab fetches the plan implies.
 //
-// Ticket 19's real entanglement: the original five functions
-// (preloadMergeRequest/mergeRequestPreloadStatus/preloadFullProject/
-// fullProjectPreloadStatus/invalidateCacheState) lived in go-navigation.js
-// sharing its worker-RPC dispatch (`workerRPC`), package/project loaders
-// (`loadPackage`/`loadProject`), and MR/GitLab-context fetch helpers
-// (`projectContext`/`mergeRequestHeadRef`/`mergeRequestIID`/
-// `listMergeRequestChangedFiles`/`modulePathFor`/`searchProjectBlobPaths`).
-// Those are also used by hover/click resolution, which hasn't migrated out
-// of go-navigation.js yet (later ticket) — so they can't move here without
-// duplicating GitLab pagination/session logic ticket 03 §3 explicitly
-// warns against, and can't be deleted from go-navigation.js either.
-// Ticket 03 §3's escape hatch ("capabilities that lifecycle injects at
-// mount") is exactly for this: `ctx.legacy` is a capability bag of
-// go-navigation.js's own bound functions, injected by the bridge
-// go-navigation.js installs for itself (see its "Bridge onto
-// page/features/mr-preload.js" comment) — not by page/lifecycle, since
-// page/lifecycle has no access to go-navigation.js's closures (that would
-// be exactly the forbidden globalThis contract ticket 03 §3 bars). When
-// page/main.js mounts this feature through page/lifecycle for message
-// routing (`golens-preload-full-project` etc., per FEATURE_ROUTES), `ctx`
-// carries no `legacy` bag; every method below degrades to an `unavailable`
-// result instead of crashing — see mount()'s `legacy` guard below and the
-// ticket's final report for why this instance stays inert today.
+// The original five functions (preloadMergeRequest/mergeRequestPreloadStatus/
+// preloadFullProject/fullProjectPreloadStatus/invalidateCacheState) lived in
+// go-navigation.js sharing its worker-RPC dispatch (`workerRPC`), package/
+// project loaders (`loadPackage`/`loadProject`), and MR/GitLab-context fetch
+// helpers. Those are also used by hover/click resolution, which hasn't migrated
+// out of go-navigation.js yet — so they can't move here without duplicating
+// GitLab pagination/session logic, and can't be deleted from go-navigation.js
+// either. `ctx.legacy` is a capability bag of go-navigation.js's own bound
+// functions, injected by the bridge go-navigation.js installs for itself — not
+// by page/lifecycle, which has no access to go-navigation.js's closures. When
+// page/main.js mounts this feature through page/lifecycle for message routing,
+// `ctx` carries no `legacy` bag; every method below degrades to an `unavailable`
+// result instead of crashing.
 import {
   dirname,
   isCommitSha,
