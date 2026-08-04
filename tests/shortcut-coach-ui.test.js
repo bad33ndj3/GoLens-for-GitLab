@@ -23,7 +23,7 @@ test('renders a compact, dismissible shortcut tip and can disable future tips', 
   const helpers = globalThis.GoLensGoNavigation.__test;
   assert.equal(helpers.showShortcutCoachHint({ actionID: 'semanticJump', message: 'Open the selected symbol directly from the keyboard.', displayBinding: 'Ctrl+F12' }), true);
 
-  const shadow = window.document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const shadow = window.document.getElementById('golens-go-toast-root').shadowRoot;
   const tip = shadow.querySelector('.toast');
   assert.equal(tip.dataset.kind, 'shortcut');
   assert.match(tip.querySelector('.toast-message').textContent, /selected symbol directly/);

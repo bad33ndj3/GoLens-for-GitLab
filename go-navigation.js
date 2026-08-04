@@ -2,25 +2,6 @@
   const GO_FILE = /\.go$/i;
   const COMMIT_SHA = /^[0-9a-f]{40}$/i;
   const GO_DOCS_VERSION = 'go1.26.5';
-  const IDENTIFIER = /[\p{L}_][\p{L}\p{N}_]*/u;
-  const GO_KEYWORDS = new Set(['break', 'default', 'func', 'interface', 'select', 'case', 'defer', 'go', 'map', 'struct', 'chan', 'else', 'goto', 'package', 'switch', 'const', 'fallthrough', 'if', 'range', 'type', 'continue', 'for', 'import', 'return', 'var']);
-  const POPOVER_DISMISS_DELAY = 450;
-  const FULL_TYPE_BODY_INITIAL_LINES = 40;
-  const SYMBOL_PRESENTATIONS = {
-    interface: { badge: 'I', label: 'Interface', className: 'interface' },
-    struct: { badge: 'S', label: 'Struct', className: 'struct' },
-    function: { badge: 'F', label: 'Function', className: 'function' },
-    method: { badge: 'M', label: 'Method', className: 'method' },
-    interfaceMethod: { badge: 'IM', label: 'Interface method', className: 'interface-method' },
-    type: { badge: 'T', label: 'Named type', className: 'type' },
-    variable: { badge: 'V', label: 'Variable', className: 'variable' },
-    field: { badge: 'FD', label: 'Field', className: 'field' },
-    constant: { badge: 'C', label: 'Constant', className: 'constant' },
-    parameter: { badge: 'P', label: 'Parameter', className: 'parameter' },
-    package: { badge: 'PKG', label: 'Package', className: 'package' },
-    builtin: { badge: 'F', label: 'Builtin function', className: 'function' },
-    external: { badge: 'Go', label: 'External Go documentation', className: 'external' },
-  };
   // Injectable time source for throttle/debounce so tests are deterministic
   // and don't sleep. `setClock` (test-only) swaps parts of it; `resetClock`
   // restores the real implementations.
@@ -36,50 +17,6 @@
   function setClock(overrides) {
     clock = overrides ? { ...defaultClock(), ...overrides } : defaultClock();
   }
-
-  // Debounced diff-reconciliation scheduler, (re)created per `init()`/torn
-  // down per `teardown()` alongside `state.diffObserver`.
-  let scheduleDiffReconciliation = null;
-
-  // Bridge onto page/platform/clock.js's `createLegacyDebounceIdle` (ticket
-  // 08 dedup — this used to be a local `debounceIdle(fn, delayMs)` here,
-  // byte-identical to content.js's copy). Same dynamic-`import()` bridge as
-  // content.js's `loadClockModule` (`chrome.runtime.getURL` in production;
-  // a relative fallback so `node --test` — where test doubles for
-  // `chrome.runtime.getURL` return non-resolvable `chrome-extension://`
-  // URLs — can still resolve the real module).
-  //
-  // go-navigation.js's `init()` must stay synchronous: it's called
-  // fire-and-forget, and tests assert synchronous side effects (attached
-  // listeners, etc.) immediately after calling it. So this load is kicked
-  // off here, at IIFE-evaluation time (not inside `init()`), giving it as
-  // much of a head start as possible, with its own `.catch()` attached
-  // directly to the promise below — an unhandled rejection during script
-  // evaluation is worse than one inside a fire-and-forget `init()` call.
-  // `init()` installs a queue-until-ready placeholder in place of the real
-  // debounced function; see the comment at its call site for the handoff.
-  async function loadClockModule() {
-    try {
-      return await import(chrome.runtime.getURL('page/platform/clock.js'));
-    } catch {
-      return await import('./page/platform/clock.js');
-    }
-  }
-  let legacyDebounceIdleFactory = null;
-  // Exposed via __test.clockReady so tests can deterministically await the
-  // load instead of racing it; production code never awaits this itself.
-  const legacyDebounceIdleReady = loadClockModule()
-    .then(({ createLegacyDebounceIdle }) => {
-      legacyDebounceIdleFactory = createLegacyDebounceIdle(() => clock);
-    })
-    .catch(() => {
-      // Both the chrome.runtime.getURL and relative import fallbacks failed
-      // (should not happen in production). Leave legacyDebounceIdleFactory
-      // null; init()'s placeholder then stays installed forever instead of
-      // ever being swapped for a real debounced function — no debounce
-      // loop, but also no crash. Deliberately silent (mirrors content.js's
-      // loadClockModule failure handling).
-    });
 
   // Bridge onto page/features/keyboard-nav.js (ticket 17): the shortcut
   // coach's blocked-check, message-for-action decision, and hint DOM
@@ -324,10 +261,11 @@
           lineAnchorFor,
           toast,
           isEnabled: () => state.enabled,
-          selectedSymbolLocation() {
-            const loc = sourceLocationForTarget(state.activeTarget);
-            return loc ? { identifier: state.activeTarget?.identifier || '', path: loc.path, side: loc.side, line: loc.line } : null;
-          },
+          // Ticket 21: the hovered target's source location is now
+          // code-intel.js's own state (`activeTarget`) — forwards to its
+          // self-bridge-only `selectedSymbolLocation()` handle method
+          // instead of reading `state.activeTarget` directly.
+          selectedSymbolLocation: () => codeIntelHandle?.selectedSymbolLocation?.() ?? null,
         },
       });
       if (pendingBookmarksEnable) {
@@ -351,6 +289,97 @@
     bookmarksHandle?.disable();
   }
 
+  // Bridge onto page/features/code-intel.js (ticket 21): hover/click
+  // resolution, the popover DOM, occurrence highlighting, and reference/
+  // implementation navigation used to be ~40 functions defined directly in
+  // this file (targetAtEvent through showResult, resolveAt/
+  // findReferencesAt/findImplementationsAt, the occurrence-highlighting
+  // group). Same escape hatch as the bookmarks/project-search/mr-preload
+  // bridges above: a `legacy` capability bag of this file's own closures
+  // (diff-DOM primitives, package/project loading, worker RPC, URL
+  // builders, diff-reveal, the shared toast surface, the shortcut-coach
+  // bridge, the frame-throttle clock, and project-search's modal opener —
+  // none of which have migrated out of this file), mounted fully capable
+  // here. page/main.js mounts a second, capability-less instance purely for
+  // message-routing consistency; every method on that instance degrades to
+  // false/null/{kind:'unavailable'} instead of crashing (see
+  // code-intel.js's own header comment).
+  async function loadCodeIntelModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/features/code-intel.js'));
+    } catch {
+      return await import('./page/features/code-intel.js');
+    }
+  }
+  let codeIntelHandle = null;
+  let pendingCodeIntelEnable = null;
+  // Exposed via __test.codeIntelReady so tests can deterministically await
+  // the load instead of racing it; production code never awaits this
+  // itself.
+  const codeIntelReady = loadCodeIntelModule()
+    .then(({ mount }) => {
+      codeIntelHandle = mount({
+        legacy: {
+          fileContextFor,
+          lineContextFor,
+          codeCellFor,
+          diffFileRoots,
+          projectContext,
+          documentationURL,
+          projectPackageURL,
+          visibleDiffRootForDefinition,
+          navigateToLocation,
+          loadPackage,
+          preloadMergeRequest,
+          mergeRequestRefsForFile,
+          mergeRequestIID,
+          sourceRefFor,
+          dirname,
+          workerRPC,
+          toast,
+          offerShortcutCoach,
+          requestFrame: (fn) => clock.requestFrame(fn),
+          openFullSearch,
+        },
+      });
+      if (pendingCodeIntelEnable !== null) {
+        codeIntelHandle.setEnabled(pendingCodeIntelEnable);
+        pendingCodeIntelEnable = null;
+      }
+    })
+    .catch(() => {
+      // Both the chrome.runtime.getURL and relative import fallbacks failed
+      // (should not happen in production). Leave codeIntelHandle null; the
+      // adapters below then permanently no-op/degrade instead of crashing
+      // on a null handle (mirrors the mr-preload/project-search/bookmarks
+      // bridges' failure handling).
+    });
+  function setCodeIntelEnabled(value) {
+    if (codeIntelHandle) codeIntelHandle.setEnabled(value);
+    else pendingCodeIntelEnable = value;
+  }
+  // Thin one-liners keeping their pre-ticket-21 names so
+  // project-search.js's and bookmarks.js's existing `legacy` capability
+  // bags (findReferencesAt/findImplementationsAt/showResult/pinPopover/
+  // hidePopover) keep working unchanged — same pattern as
+  // `openFullSearch()`'s own one-liner forward onto `projectSearchHandle`
+  // (ticket 20).
+  function findReferencesAt(target, definition, cursor = '', scopeOverride = null) {
+    return codeIntelHandle ? codeIntelHandle.findReferences(target, definition, cursor, scopeOverride) : Promise.resolve({ status: 'notFound' });
+  }
+  function findImplementationsAt(target, definition, progress = () => {}, cursor = '', scopeOverride = null) {
+    return codeIntelHandle ? codeIntelHandle.findImplementations(target, definition, progress, cursor, scopeOverride) : Promise.resolve({ status: 'notFound' });
+  }
+  function showResult(result, pointer) {
+    return codeIntelHandle ? codeIntelHandle.showResult(result, pointer) : false;
+  }
+  function pinPopover(target = null) {
+    codeIntelHandle?.pinPopover(target);
+  }
+  function hidePopover() {
+    codeIntelHandle?.hidePopover();
+  }
+
   const state = {
     enabled: false,
     packages: new Map(),
@@ -361,25 +390,9 @@
     refsPromise: null,
     refsKey: '',
     refsFetchedAt: 0,
-    hoverTimer: null,
-    popoverDismissTimer: null,
-    popoverMode: 'hidden',
-    popoverTargetKey: '',
-    pinnedPopover: false,
-    pinnedTargetKey: '',
-    activeTarget: null,
-    activeElement: null,
-    lastErrorToast: '',
     toastTimer: null,
     abortController: null,
     ui: null,
-    selectedIdentifier: '',
-    occurrences: [],
-    occurrenceIndex: -1,
-    occurrenceRefreshTimer: null,
-    diffObserver: null,
-    history: [],
-    historyIndex: -1,
   };
 
   function projectContext() {
@@ -581,6 +594,41 @@
     return lineAnchorFor(root, line, preferredSide);
   }
 
+  // visibleDiffRootForDefinition/flashDestination/navigateToLocation: shared
+  // "reveal a source location inside the currently-loaded diff" primitives —
+  // NOT code-intel-exclusive despite living next to its former popover code.
+  // Both bookmarks.js's `legacy.navigateToLocation` (ticket 18, `reveal()`)
+  // and code-intel.js's `legacy.navigateToLocation` (ticket 21, semantic-jump
+  // navigation) call this, so it stays here rather than being duplicated.
+  function visibleDiffRootForDefinition(definition) {
+    const matchingRoots = [...document.querySelectorAll('diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]')];
+    return matchingRoots.find((candidate) => {
+      const data = rapidFileData(candidate);
+      const paths = [candidate.getAttribute('data-file-path'), data.new_path, data.old_path, candidate.querySelector('[data-testid="file-title"], .file-title-name, .rd-diff-file-link')?.textContent]
+        .filter(Boolean).map(normalizePath);
+      return paths.includes(normalizePath(definition.path));
+    });
+  }
+
+  function flashDestination(target) {
+    if (!target) return;
+    target.removeAttribute('data-golens-navigation-destination');
+    void target.offsetWidth;
+    target.setAttribute('data-golens-navigation-destination', '');
+    setTimeout(() => target.removeAttribute('data-golens-navigation-destination'), 1300);
+  }
+
+  async function navigateToLocation(location, { smooth = true } = {}) {
+    const root = visibleDiffRootForDefinition(location);
+    if (!root) return false;
+    const line = await revealLine(root, location.line, location.side);
+    const target = line?.closest('tr, [role="row"]') || root;
+    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    target.scrollIntoView({ behavior: smooth && !reducedMotion ? 'smooth' : 'auto', block: 'center' });
+    flashDestination(target);
+    return true;
+  }
+
   function lineContextFor(cell) {
     const row = cell.closest('tr, [role="row"]');
     if (!row) return null;
@@ -594,122 +642,6 @@
       const position = cell.getAttribute('data-position') || candidate.getAttribute('data-position') || '';
       const label = `${anchor?.getAttribute('aria-label') || ''} ${candidate.className || ''}`;
       return { line, side: position === 'old' || (!position && /deleted|old/i.test(label)) ? 'old' : 'new' };
-    }
-    return null;
-  }
-
-  function isCodeCharacter(source, character) {
-    let state = 'code';
-    for (let index = 0; index <= character; index++) {
-      const value = source[index] || '';
-      const next = source[index + 1] || '';
-      if (state === 'lineComment') return false;
-      if (state === 'blockComment') {
-        if (value === '*' && next === '/') {
-          if (index === character || index + 1 === character) return false;
-          state = 'code';
-          index++;
-          continue;
-        }
-        if (index === character) return false;
-        continue;
-      }
-      if (state === 'string' || state === 'rune' || state === 'rawString') {
-        if (index === character) return false;
-        if (state !== 'rawString' && value === '\\') {
-          if (index + 1 === character) return false;
-          index++;
-          continue;
-        }
-        if ((state === 'rawString' && value === '`') || (state === 'string' && value === '"') || (state === 'rune' && value === "'")) state = 'code';
-        continue;
-      }
-      if (value === '/' && next === '/') {
-        if (index === character || index + 1 === character) return false;
-        state = 'lineComment';
-        continue;
-      }
-      if (value === '/' && next === '*') {
-        if (index === character || index + 1 === character) return false;
-        state = 'blockComment';
-        continue;
-      }
-      if (value === '"' || value === "'" || value === '`') {
-        if (index === character) return false;
-        state = value === '"' ? 'string' : value === "'" ? 'rune' : 'rawString';
-        continue;
-      }
-      if (index === character) return true;
-    }
-    return false;
-  }
-
-  function identifierAtCharacter(source, character) {
-    if (!isCodeCharacter(source, character)) return null;
-    if (!/[\p{L}\p{N}_]/u.test(source[character] || '')) return null;
-    let start = Math.min(character, source.length);
-    let end = start;
-    while (start > 0 && /[\p{L}\p{N}_]/u.test(source[start - 1])) start--;
-    while (end < source.length && /[\p{L}\p{N}_]/u.test(source[end])) end++;
-    const identifier = source.slice(start, end);
-    if (!IDENTIFIER.test(identifier) || identifier !== identifier.match(IDENTIFIER)?.[0] || GO_KEYWORDS.has(identifier)) return null;
-    let occurrence = 0;
-    let candidate = source.indexOf(identifier);
-    while (candidate >= 0 && candidate < start) {
-      const before = source[candidate - 1] || '';
-      const after = source[candidate + identifier.length] || '';
-      if (!/[\p{L}\p{N}_]/u.test(before)
-        && !/[\p{L}\p{N}_]/u.test(after)
-        && isCodeCharacter(source, candidate)) occurrence++;
-      candidate = source.indexOf(identifier, candidate + identifier.length);
-    }
-    return { identifier, character: start, occurrence };
-  }
-
-  function caretElementMatchesIdentifier(element, cell, identifier) {
-    if (!element || element === cell) return element === cell;
-    return (element.textContent || '').trim() === identifier;
-  }
-
-  function caretAtPoint(cell, x, y) {
-    let node;
-    let offset;
-    if (document.caretPositionFromPoint) {
-      const position = document.caretPositionFromPoint(x, y);
-      node = position?.offsetNode;
-      offset = position?.offset;
-    } else if (document.caretRangeFromPoint) {
-      const range = document.caretRangeFromPoint(x, y);
-      node = range?.startContainer;
-      offset = range?.startOffset;
-    }
-    if (!node || !cell.contains(node)) return null;
-    const range = document.createRange();
-    range.selectNodeContents(cell);
-    try { range.setEnd(node, offset); } catch { return null; }
-    const character = range.toString().length;
-    const source = cell.textContent || '';
-    const identifier = identifierAtCharacter(source, character);
-    if (!identifier) return null;
-    const element = node.nodeType === 1 ? node : node.parentElement;
-    if (!caretElementMatchesIdentifier(element, cell, identifier.identifier)) return null;
-    return { ...identifier, element: element === cell ? null : element };
-  }
-
-  function identifierFromElement(target, cell) {
-    let element = target?.nodeType === 1 ? target : target?.parentElement;
-    while (element && element !== cell) {
-      const identifier = (element.textContent || '').trim();
-      if (identifier && IDENTIFIER.test(identifier) && identifier === identifier.match(IDENTIFIER)?.[0]) {
-        const range = document.createRange();
-        range.selectNodeContents(cell);
-        try { range.setEndBefore(element); } catch { return null; }
-        const character = range.toString().length;
-        const hit = identifierAtCharacter(cell.textContent || '', character);
-        if (!hit || hit.identifier !== identifier) return null;
-        return { ...hit, element };
-      }
-      element = element.parentElement;
     }
     return null;
   }
@@ -1189,152 +1121,22 @@
   // page/features/mr-preload.js") now defines these same five names as
   // thin async adapters onto the mounted module's handle.
 
-  async function resolveAt(target, method, onProgress) {
-    const file = fileContextFor(target.cell);
-    const line = lineContextFor(target.cell);
-    const context = projectContext();
-    if (!file || !line || !context) return { status: 'unsupported', reason: 'diffContextUnavailable' };
-    const refs = await mergeRequestRefsForFile(file);
-    const sourcePath = line.side === 'old' ? file.oldPath : file.newPath;
-    const packagePath = dirname(sourcePath);
-    const ref = sourceRefFor(file, line, refs);
-    await loadPackage(packagePath, ref, onProgress);
-    const params = {
-      origin: location.origin,
-      project: context.project,
-      ref,
-      packagePath,
-      path: sourcePath,
-      line: line.line,
-      character: target.character,
-      identifier: target.identifier,
-      occurrence: target.occurrence,
-    };
-    let result = await workerRPC(method, params);
-    if (result.status === 'needsPackage') {
-      await loadPackage(result.packagePath, ref, onProgress);
-      result = await workerRPC(method, params);
-    }
-    return result;
-  }
-
-  function relatedResultScope(restored, packagePath) {
-    if (restored?.coverage === 'related') {
-      return {
-        kind: 'indexedPackages',
-        packageCount: restored.packages || 0,
-        complete: false,
-        searchStatus: restored.searchStatus || 'limited',
-      };
-    }
-    return null;
-  }
-
-  async function findReferencesAt(target, definition, cursor = '', scopeOverride = null) {
-    const file = fileContextFor(target.cell);
-    const line = lineContextFor(target.cell);
-    const context = projectContext();
-    if (!file || !line || !context) return { status: 'notFound' };
-    const refs = await mergeRequestRefsForFile(file);
-    const sourcePath = line.side === 'old' ? file.oldPath : file.newPath;
-    const packagePath = dirname(sourcePath);
-    const ref = sourceRefFor(file, line, refs);
-    await loadPackage(packagePath, ref);
-    let restored = null;
-    if (ref === refs.headSha) {
-      restored = await workerRPC('restoreMergeRequest', {
-        origin: location.origin,
-        project: context.project,
-        mergeRequest: mergeRequestIID(),
-        ref,
-      });
-    }
-    const result = await workerRPC('findReferences', {
-      origin: location.origin,
-      project: context.project,
-      ref,
-      packagePath,
-      definition,
-      pageSize: 25,
-      cursor,
-      ...((scopeOverride || relatedResultScope(restored, packagePath)) ? { scope: scopeOverride || relatedResultScope(restored, packagePath) } : {}),
-    });
-    return { ...result, request: { kind: 'references', target, definition, ref, scope: scopeOverride } };
-  }
-
-  async function findImplementationsAt(target, definition, progress = () => {}, cursor = '', scopeOverride = null) {
-    const file = fileContextFor(target.cell);
-    const line = lineContextFor(target.cell);
-    const context = projectContext();
-    if (!file || !line || !context) return { status: 'notFound' };
-    const refs = await mergeRequestRefsForFile(file);
-    const ref = sourceRefFor(file, line, refs);
-    let restored = null;
-    if (ref === refs.headSha) {
-      await preloadMergeRequest(progress);
-      restored = await workerRPC('restoreMergeRequest', {
-        origin: location.origin,
-        project: context.project,
-        mergeRequest: mergeRequestIID(),
-        ref,
-      });
-    } else {
-      await loadPackage(dirname(line.side === 'old' ? file.oldPath : file.newPath), ref, progress);
-    }
-    const packagePath = dirname(line.side === 'old' ? file.oldPath : file.newPath);
-    const result = await workerRPC('findImplementations', {
-      origin: location.origin,
-      project: context.project,
-      ref,
-      interfaceDefinition: definition,
-      pageSize: 25,
-      cursor,
-      ...((scopeOverride || relatedResultScope(restored, packagePath)) ? { scope: scopeOverride || relatedResultScope(restored, packagePath) } : {}),
-    });
-    return { ...result, request: { kind: 'implementations', target, definition, ref, scope: scopeOverride } };
-  }
-
+  // ensureUI() -> the toast-only shadow host. Shrunk from its former
+  // popover+toast markup (ticket 21): the popover DOM is now entirely
+  // private to page/features/code-intel.js, in its own shadow host (see
+  // that module's own header comment on the toast-surface decision — this
+  // host stays here because keyboard-nav.js/bookmarks.js/project-search.js/
+  // code-intel.js all still reach it as a shared capability).
   function ensureUI() {
     if (state.ui?.isConnected) return state.ui.shadowRoot;
     const host = document.createElement('div');
-    host.id = 'golens-go-intelligence-root';
+    host.id = 'golens-go-toast-root';
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `
       <style>
         :host { all:initial; position:fixed; z-index:var(--golens-z-popover); inset:0; pointer-events:none; font:12px/1.45 var(--golens-font-sans); color-scheme:dark; }
         * { box-sizing:border-box; }
-        .popover { position:fixed; display:none; width:min(460px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-lg); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); color:var(--golens-text-primary); pointer-events:auto; }
-        .popover.show { display:grid; grid-template-rows:auto minmax(0,1fr); }
-        .popover-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-2); align-items:center; min-height:46px; padding:var(--golens-space-2) var(--golens-space-3); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
-        .popover-heading { min-width:0; }
-        .popover-title { overflow:hidden; color:var(--golens-text-primary); font-size:12px; font-weight:700; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-        .location { overflow:hidden; margin-top:2px; color:var(--golens-text-muted); font:10px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
-        .popover-body { min-height:0; overflow:auto; padding:var(--golens-space-3); }
-        .symbol-badge { display:inline-flex; min-width:20px; height:20px; align-items:center; justify-content:center; padding:0 var(--golens-space-1); border:1px solid currentColor; border-radius:var(--golens-radius-xs); background:color-mix(in srgb,currentColor 7%,transparent); font:700 9px/1 var(--golens-font-mono); letter-spacing:-.02em; }
-        .symbol-interface,.symbol-interface-method { color:#c586c0; } .symbol-struct { color:#d7ba7d; } .symbol-function { color:#dcdcaa; } .symbol-method,.symbol-type { color:#4ec9b0; } .symbol-variable,.symbol-parameter,.symbol-field { color:#9cdcfe; } .symbol-constant { color:#4fc1ff; } .symbol-package { color:#fc9b6b; } .symbol-external { color:#3794ff; }
-        .header-actions { display:flex; align-items:center; gap:2px; }
-        .header-action { display:inline-flex; width:28px; height:28px; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:var(--golens-radius-sm); background:transparent; color:var(--golens-text-secondary); cursor:pointer; transition:background-color var(--golens-motion-fast),border-color var(--golens-motion-fast),color var(--golens-motion-fast),transform var(--golens-motion-fast); }
-        .header-action:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); } .header-action:active { background:var(--golens-surface-pressed); transform:translateY(1px); } .header-action:disabled { cursor:not-allowed; opacity:.45; } .header-action[hidden] { display:none; } .header-action svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
-        .copy-button .check-icon { display:none; } .copy-button[data-state="copied"] { border-color:var(--golens-success); background:var(--golens-success-soft); color:var(--golens-success); } .copy-button .copy-icon { display:block; } .copy-button[data-state="copied"] .copy-icon { display:none; } .copy-button[data-state="copied"] .check-icon { display:block; }
-        .signature-block { margin:0 0 var(--golens-space-3); overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-inset); } .signature-block[hidden] { display:none; }
-        .signature { margin:0; padding:var(--golens-space-2) var(--golens-space-3); overflow-wrap:anywhere; color:#dcdcaa; font:600 11px/1.5 var(--golens-font-mono); white-space:pre-wrap; }
-        .signature-toggle { width:100%; padding:var(--golens-space-2) var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); color:var(--golens-info-hover); font:650 10px/1.4 var(--golens-font-sans); text-align:left; cursor:pointer; } .signature-toggle:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .signature-toggle:active { background:var(--golens-surface-pressed); } .signature-toggle:disabled { cursor:not-allowed; opacity:.45; } .signature-toggle[hidden] { display:none; }
-        .docs:empty,.scope[hidden],.shortcut-hint[hidden] { display:none; }
-        .docs { margin:0 0 var(--golens-space-3); color:var(--golens-text-secondary); line-height:1.5; white-space:pre-wrap; }
-        .scope { margin:0 0 var(--golens-space-3); padding:6px 8px; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-muted); font:10px/1.4 var(--golens-font-mono); }
-        .choices { display:grid; gap:5px; }
-        .choice { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-2); width:100%; min-height:40px; align-items:center; padding:var(--golens-space-2); border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-raised); color:var(--golens-text-primary); text-align:left; cursor:pointer; transition:background-color var(--golens-motion-fast),border-color var(--golens-motion-fast),transform var(--golens-motion-fast); }
-        .choice:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); } .choice:active { background:var(--golens-surface-pressed); transform:translateY(1px); } .choice:disabled { cursor:not-allowed; opacity:.45; } .choice:focus-visible,.header-action:focus-visible,.signature-toggle:focus-visible,summary:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:1px; }
-        .choice-copy { min-width:0; } .choice-heading { display:flex; min-width:0; align-items:center; gap:7px; }
-        .choice-title { overflow:hidden; color:var(--golens-text-primary); font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
-        .choice-context { display:block; margin-top:2px; overflow:hidden; color:var(--golens-text-muted); font:10px/1.35 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
-        .choice-doc { display:block; margin-top:3px; overflow:hidden; color:var(--golens-text-secondary); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
-        .destination-icon { position:relative; display:inline-flex; width:22px; height:22px; flex:0 0 auto; align-items:center; justify-content:center; border-radius:4px; }
-        .destination-icon svg { width:15px; height:15px; } .destination-in-diff { color:var(--golens-primary); } .destination-new-tab { color:var(--golens-info); }
-        .choice:hover .destination-icon::after,.choice:focus-visible .destination-icon::after { position:absolute; z-index:2; right:-4px; bottom:calc(100% + 7px); width:max-content; max-width:180px; padding:var(--golens-space-1) var(--golens-space-2); border:1px solid var(--golens-border-strong); border-radius:var(--golens-radius-xs); background:var(--golens-surface-raised); box-shadow:var(--golens-shadow-sm); color:var(--golens-text-primary); content:attr(data-tooltip); font:10px/1.3 var(--golens-font-sans); pointer-events:none; }
-        details { margin-top:var(--golens-space-1); } summary { padding:var(--golens-space-2) var(--golens-space-1); border-radius:var(--golens-radius-xs); color:var(--golens-text-secondary); cursor:pointer; } summary:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .test-double-choices { display:grid; gap:5px; margin-top:var(--golens-space-1); }
-        .shortcut-hint { display:flex; align-items:center; gap:5px; margin:var(--golens-space-3) 0 0; color:var(--golens-text-muted); font-size:10px; } kbd { display:inline-flex; min-width:17px; min-height:17px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
-        .loading-progress { display:grid; gap:var(--golens-space-2); margin:0 0 var(--golens-space-3); padding:var(--golens-space-2) var(--golens-space-3); border:1px solid color-mix(in srgb,var(--golens-primary) 35%,var(--golens-border-subtle)); border-radius:var(--golens-radius-sm); background:var(--golens-primary-soft); } .loading-progress[hidden] { display:none; } .loading-progress-meta { display:flex; justify-content:space-between; gap:var(--golens-space-2); color:var(--golens-text-primary); font-size:10px; } .loading-progress-phase { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; } .loading-progress-count { flex:0 0 auto; color:var(--golens-primary-hover); font:700 10px/1.45 var(--golens-font-mono); font-variant-numeric:tabular-nums; } .loading-track { height:4px; overflow:hidden; border-radius:999px; background:var(--golens-surface-pressed); } .loading-track > i { display:block; width:0; height:100%; border-radius:inherit; background:var(--golens-primary); transition:width var(--golens-motion-base); }
+        kbd { display:inline-flex; min-width:17px; min-height:17px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
         .toast { position:fixed; right:18px; bottom:18px; display:none; width:min(390px,calc(100vw - 36px)); padding:var(--golens-space-3); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-md); background:var(--golens-surface-raised); color:var(--golens-text-primary); box-shadow:var(--golens-shadow-md); pointer-events:auto; }
         .toast.show { display:grid; }
         .toast[data-kind="message"] { width:auto; max-width:360px; padding:var(--golens-space-2) var(--golens-space-3); }
@@ -1348,23 +1150,11 @@
         .toast-actions button:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
         .toast-actions button:active { background:var(--golens-surface-pressed); transform:translateY(1px); }
         .toast-actions button:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:1px; }
-        @media (prefers-reduced-motion:reduce) { .header-action,.choice,.loading-track > i { transition:none; } .header-action:active,.choice:active { transform:none; } }
       </style>
-      <section class="popover" role="tooltip" aria-labelledby="golens-popover-title">
-        <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><div class="header-actions"><button class="header-action copy-button" type="button" aria-label="Copy source location" title="Copy source location" hidden><svg class="copy-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg><svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.25 3.15 3.15L13 4.6"/></svg></button><button class="header-action close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></header>
-        <div class="popover-body"><div class="loading-progress" hidden role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase"></span><span class="loading-progress-count"></span></div><div class="loading-track" role="progressbar" aria-label="Go intelligence loading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="docs"></div><div class="scope" hidden></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
-      </section>
       <section class="toast" data-kind="message" role="status" aria-live="polite"><p class="toast-label">Shortcut tip</p><div class="toast-content"><div class="toast-message"></div><kbd class="toast-binding"></kbd></div><div class="toast-actions"><button type="button" data-action="shortcut-tip-dismiss">Got it</button><button type="button" data-action="shortcut-tip-disable">Turn tips off</button></div></section>
     `;
     document.body.append(host);
     state.ui = host;
-    const popover = shadow.querySelector('.popover');
-    popover.addEventListener('pointerenter', () => pinPopover());
-    popover.addEventListener('pointerdown', () => pinPopover());
-    popover.addEventListener('focusin', () => pinPopover());
-    popover.addEventListener('keydown', onKeyDown);
-    popover.querySelector('.copy-button').addEventListener('click', (event) => copySourceLocation(event.currentTarget));
-    popover.querySelector('.close-button').addEventListener('click', hidePopover);
     shadow.querySelector('[data-action="shortcut-tip-dismiss"]').addEventListener('click', hideToast);
     shadow.querySelector('[data-action="shortcut-tip-disable"]').addEventListener('click', async () => {
       const saved = await globalThis.GoLensShortcutCoach?.setEnabled?.(false);
@@ -1373,610 +1163,9 @@
     return shadow;
   }
 
-  function sourceLocationText(sourceLocation) {
-    if (!sourceLocation?.path || !Number.isInteger(sourceLocation.line) || !Number.isInteger(sourceLocation.character)) return '';
-    if (sourceLocation.line < 1 || sourceLocation.character < 1) return '';
-    return `${sourceLocation.path}:${sourceLocation.line}:${sourceLocation.character}`;
-  }
-
-  function sourceLocationForTarget(target) {
-    if (!target?.cell || !Number.isInteger(target.character)) return null;
-    const file = fileContextFor(target.cell);
-    const line = lineContextFor(target.cell);
-    if (!file || !line) return null;
-    return {
-      path: line.side === 'old' ? file.oldPath : file.newPath,
-      line: line.line,
-      character: target.character + 1,
-      side: line.side,
-    };
-  }
-
-  function configureSourceCopy(button, sourceLocation = null) {
-    const text = sourceLocationText(sourceLocation);
-    button.hidden = !text;
-    button.dataset.copyText = text;
-    button.dataset.state = 'idle';
-    button.setAttribute('aria-label', text ? `Copy source location ${text}` : 'Copy source location');
-    button.title = text ? `Copy ${text}` : 'Copy source location';
-  }
-
-  function fallbackCopyText(text) {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
-    document.body.append(textarea);
-    textarea.select();
-    const copied = document.execCommand?.('copy') === true;
-    textarea.remove();
-    if (!copied) throw new Error('Clipboard access is unavailable.');
-  }
-
-  async function writeClipboardText(text) {
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API is unavailable.');
-      await navigator.clipboard.writeText(text);
-    } catch {
-      fallbackCopyText(text);
-    }
-  }
-
-  async function copySourceLocation(button) {
-    const text = button.dataset.copyText;
-    if (!text) return;
-    try {
-      await writeClipboardText(text);
-      button.dataset.state = 'copied';
-      button.setAttribute('aria-label', `Copied source location ${text}`);
-      button.title = `Copied ${text}`;
-      toast(`Copied ${text}`);
-      setTimeout(() => {
-        if (button.dataset.copyText !== text) return;
-        button.dataset.state = 'idle';
-        button.setAttribute('aria-label', `Copy source location ${text}`);
-        button.title = `Copy ${text}`;
-      }, 1800);
-    } catch {
-      toast('Could not copy the source location.');
-    }
-  }
-
-  function positionPopover(popover, x, y) {
-    const margin = 12;
-    const gap = 12;
-    const bounds = popover.getBoundingClientRect();
-    const width = bounds.width || Math.min(460, innerWidth - margin * 2);
-    const height = bounds.height || Math.min(420, innerHeight - margin * 2);
-    const left = Math.max(margin, Math.min(x + gap, innerWidth - width - margin));
-    const below = y + 18;
-    const top = below + height <= innerHeight - margin
-      ? below
-      : Math.max(margin, y - height - gap);
-    popover.style.left = `${left}px`;
-    popover.style.top = `${top}px`;
-  }
-
-  function destinationLineForDefinition(definition) {
-    return definition.documentationLine || definition.line;
-  }
-
-  function visibleDiffRootForDefinition(definition) {
-    const matchingRoots = [...document.querySelectorAll('diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]')];
-    return matchingRoots.find((candidate) => {
-      const data = rapidFileData(candidate);
-      const paths = [candidate.getAttribute('data-file-path'), data.new_path, data.old_path, candidate.querySelector('[data-testid="file-title"], .file-title-name, .rd-diff-file-link')?.textContent]
-        .filter(Boolean).map(normalizePath);
-      return paths.includes(normalizePath(definition.path));
-    });
-  }
-
-  function definitionDestination(definition) {
-    return visibleDiffRootForDefinition(definition)
-      ? { kind: 'inDiff', label: 'Jump in this MR diff' }
-      : { kind: 'newTab', label: 'Open in a new tab' };
-  }
-
-  function locationKey(location) {
-    return location ? `${location.path}:${location.line}:${location.side || 'new'}` : '';
-  }
-
-  function flashDestination(target) {
-    if (!target) return;
-    target.removeAttribute('data-golens-navigation-destination');
-    void target.offsetWidth;
-    target.setAttribute('data-golens-navigation-destination', '');
-    setTimeout(() => target.removeAttribute('data-golens-navigation-destination'), 1300);
-  }
-
-  async function navigateToLocation(location, { smooth = true } = {}) {
-    const root = visibleDiffRootForDefinition(location);
-    if (!root) return false;
-    const line = await revealLine(root, location.line, location.side);
-    const target = line?.closest('tr, [role="row"]') || root;
-    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    target.scrollIntoView({ behavior: smooth && !reducedMotion ? 'smooth' : 'auto', block: 'center' });
-    flashDestination(target);
-    return true;
-  }
-
-  function recordSemanticJump(source, destination) {
-    if (!source || !destination || locationKey(source) === locationKey(destination)) return;
-    const retained = state.history.slice(0, state.historyIndex + 1);
-    if (locationKey(retained.at(-1)) !== locationKey(source)) retained.push(source);
-    retained.push(destination);
-    state.history = retained.slice(-100);
-    state.historyIndex = state.history.length - 1;
-    if (state.history.length >= 3) void offerShortcutCoach('historyBack');
-  }
-
-  async function navigateHistory(direction) {
-    const nextIndex = state.historyIndex + direction;
-    if (nextIndex < 0 || nextIndex >= state.history.length) {
-      toast(direction < 0 ? 'No earlier semantic location.' : 'No later semantic location.');
-      return false;
-    }
-    if (!await navigateToLocation(state.history[nextIndex])) {
-      toast('That semantic location is no longer loaded in this diff.');
-      return false;
-    }
-    state.historyIndex = nextIndex;
-    return true;
-  }
-
-  async function openDefinition(definition, sourceLocation = null) {
-    const destinationLine = destinationLineForDefinition(definition);
-    const root = visibleDiffRootForDefinition(definition);
-    if (root) {
-      const destination = { path: definition.path, line: destinationLine, side: 'new' };
-      if (await navigateToLocation(destination)) recordSemanticJump(sourceLocation, destination);
-      return;
-    }
-    const context = projectContext();
-    const url = `${context.projectBase}/-/blob/${encodeURIComponent(definition.ref)}/${definition.path.split('/').map(encodeURIComponent).join('/')}#L${destinationLine}`;
-    window.open(url, '_blank', 'noopener');
-  }
-
-  function symbolPresentation(kind) {
-    return SYMBOL_PRESENTATIONS[kind] || SYMBOL_PRESENTATIONS.external;
-  }
-
-  function applySymbolBadge(element, kind) {
-    const presentation = symbolPresentation(kind);
-    element.className = `symbol-badge symbol-${presentation.className}`;
-    element.textContent = presentation.badge;
-    element.setAttribute('aria-label', presentation.label);
-    element.title = presentation.label;
-    return element;
-  }
-
-  function createSymbolBadge(kind) {
-    const badge = document.createElement('span');
-    badge.setAttribute('role', 'img');
-    return applySymbolBadge(badge, kind);
-  }
-
-  function renderSignature(popover, definition = null, { showFullTypeBody = false } = {}) {
-    const block = popover.querySelector('.signature-block');
-    const signature = block.querySelector('.signature');
-    const toggle = block.querySelector('.signature-toggle');
-    const typeBody = showFullTypeBody ? definition?.fullTypeBody || '' : '';
-    if (typeBody) {
-      const lines = typeBody.split('\n');
-      const compact = lines.slice(0, FULL_TYPE_BODY_INITIAL_LINES).join('\n');
-      const remaining = lines.length - FULL_TYPE_BODY_INITIAL_LINES;
-      block.hidden = false;
-      signature.textContent = compact;
-      signature.title = '';
-      toggle.hidden = remaining <= 0;
-      toggle.textContent = `Show remaining ${remaining} line${remaining === 1 ? '' : 's'}`;
-      toggle.setAttribute('aria-expanded', 'false');
-      toggle.onclick = remaining > 0 ? () => {
-        const expanded = toggle.getAttribute('aria-expanded') === 'true';
-        signature.textContent = expanded ? compact : typeBody;
-        toggle.textContent = expanded ? `Show remaining ${remaining} line${remaining === 1 ? '' : 's'}` : 'Collapse type body';
-        toggle.setAttribute('aria-expanded', String(!expanded));
-      } : null;
-      return;
-    }
-    const full = definition?.signature || '';
-    const compact = definition?.compactSignature || '';
-    block.hidden = !full;
-    signature.textContent = compact || full;
-    signature.title = compact ? full : '';
-    toggle.hidden = !compact;
-    toggle.textContent = 'Show full signature';
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.onclick = compact ? () => {
-      const expanded = toggle.getAttribute('aria-expanded') === 'true';
-      signature.textContent = expanded ? compact : full;
-      signature.title = expanded ? full : '';
-      toggle.textContent = expanded ? 'Show full signature' : 'Collapse signature';
-      toggle.setAttribute('aria-expanded', String(!expanded));
-    } : null;
-  }
-
-  function destinationIcon(destination) {
-    const icon = document.createElement('span');
-    icon.className = `destination-icon destination-${destination.kind === 'inDiff' ? 'in-diff' : 'new-tab'}`;
-    icon.dataset.tooltip = destination.label;
-    icon.setAttribute('role', 'img');
-    icon.setAttribute('aria-label', destination.label);
-    icon.title = destination.label;
-    icon.innerHTML = destination.kind === 'inDiff'
-      ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg>'
-      : '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg>';
-    return icon;
-  }
-
-  function choiceButton({ title, fullTitle = title, context = '', documentation = '', kind = '', definition = null, externalURL = '' }) {
-    const sourceLocation = sourceLocationForTarget(state.activeTarget);
-    const destination = definition ? definitionDestination(definition) : { kind: 'newTab', label: 'Open in a new tab' };
-    const button = document.createElement('button');
-    const copy = document.createElement('span');
-    const heading = document.createElement('span');
-    const titleElement = document.createElement('span');
-    button.type = 'button';
-    button.className = 'choice';
-    button.setAttribute('aria-label', `${fullTitle}. ${destination.label}`);
-    copy.className = 'choice-copy';
-    heading.className = 'choice-heading';
-    titleElement.className = 'choice-title';
-    titleElement.textContent = title;
-    if (fullTitle !== title) titleElement.title = fullTitle;
-    if (kind) heading.append(createSymbolBadge(kind));
-    heading.append(titleElement);
-    copy.append(heading);
-    if (context) {
-      const contextElement = document.createElement('span');
-      contextElement.className = 'choice-context';
-      contextElement.textContent = context;
-      contextElement.title = context;
-      copy.append(contextElement);
-    }
-    if (documentation) {
-      const docs = document.createElement('span');
-      docs.className = 'choice-doc';
-      docs.textContent = documentation;
-      docs.title = documentation;
-      copy.append(docs);
-    }
-    button.append(copy, destinationIcon(destination));
-    button.addEventListener('click', () => {
-      hidePopover();
-      if (definition) openDefinition(definition, sourceLocation);
-      else if (externalURL) window.open(externalURL, '_blank', 'noopener');
-    });
-    return button;
-  }
-
-  function implementationGroups(result) {
-    const candidates = result.status === 'implementations' ? result.candidates : [];
-    return {
-      production: candidates.filter((candidate) => !candidate.isTestDouble),
-      testDoubles: candidates.filter((candidate) => candidate.isTestDouble),
-    };
-  }
-
-  function implementationButton(candidate) {
-    const confidence = candidate.confidence === 'asserted' ? 'Explicit assertion' : 'Structural match';
-    return choiceButton({
-      title: candidate.displayName,
-      context: `${candidate.path}:${candidate.documentationLine || candidate.line} · ${confidence}`,
-      documentation: candidate.documentation?.split('\n')[0] || '',
-      kind: candidate.kind || 'type',
-      definition: candidate,
-    });
-  }
-
-  function resultScopeText(scope) {
-    if (!scope) return '';
-    if (scope.kind === 'fullProject') return `Full project · ${scope.packageCount} indexed package${scope.packageCount === 1 ? '' : 's'} · complete coverage`;
-    if (scope.kind === 'completeProjectSearch') return `Complete project code search · ${scope.packageCount} indexed package${scope.packageCount === 1 ? '' : 's'}`;
-    if (scope.kind === 'indexedPackages') return `${scope.packageCount} indexed package${scope.packageCount === 1 ? '' : 's'} · search coverage is incomplete`;
-    return `Current package${scope.packagePath ? ` · ${scope.packagePath || '.'}` : ''}`;
-  }
-
-  function absenceText(scope) {
-    if (['completeProjectSearch', 'fullProject'].includes(scope?.kind) && scope.complete) return 'Full project searched; no result exists.';
-    if (scope?.kind === 'indexedPackages') return `Not found in ${scope.packageCount} indexed packages. Search coverage is incomplete.`;
-    return 'Not found in current package.';
-  }
-
-  function resultAction(label, listener) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'choice';
-    button.textContent = label;
-    button.addEventListener('click', listener);
-    return button;
-  }
-
-  async function loadMoreResults(result, pointer, button) {
-    button.disabled = true;
-    button.textContent = 'Loading more…';
-    try {
-      const page = result.request.kind === 'references'
-        ? await findReferencesAt(result.request.target, result.request.definition, result.nextCursor, result.request.scope)
-        : await findImplementationsAt(result.request.target, result.request.definition, undefined, result.nextCursor, result.request.scope);
-      const key = result.request.kind === 'references' ? 'locations' : 'candidates';
-      showResult({ ...page, [key]: [...result[key], ...page[key]], request: result.request }, pointer);
-      pinPopover(pointer);
-    } catch (error) {
-      button.disabled = false;
-      button.textContent = 'Show more';
-      toast(error.message || 'Unable to load more semantic results.');
-    }
-  }
-
-  function showResult(result, pointer) {
-    const shadow = ensureUI();
-    const popover = shadow.querySelector('.popover');
-    const wasPinned = state.pinnedPopover;
-    const loadingProgress = popover.querySelector('.loading-progress');
-    const badge = popover.querySelector('.popover-header .symbol-badge');
-    const title = popover.querySelector('.popover-title');
-    const docs = popover.querySelector('.docs');
-    const scope = popover.querySelector('.scope');
-    const choices = popover.querySelector('.choices');
-    const location = popover.querySelector('.location');
-    const copyButton = popover.querySelector('.copy-button');
-    const shortcut = popover.querySelector('.shortcut-hint');
-    const shortcutHint = shortcut.querySelector('span');
-    loadingProgress.hidden = true;
-    popover.removeAttribute('aria-busy');
-    renderSignature(popover);
-    docs.textContent = '';
-    scope.textContent = resultScopeText(result.scope);
-    scope.hidden = !scope.textContent;
-    location.textContent = '';
-    configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
-    choices.replaceChildren();
-    shortcut.hidden = true;
-    let shouldPin = false;
-    const setHeader = (kind, heading, sourceLocation = '') => {
-      applySymbolBadge(badge, kind);
-      title.textContent = heading;
-      location.textContent = sourceLocation;
-      location.title = sourceLocation;
-    };
-    const setShortcut = (text) => {
-      shortcutHint.textContent = text;
-      shortcut.hidden = !text;
-    };
-    if (result.status === 'resolved') {
-      setHeader(result.definition.kind, result.definition.name, `${result.definition.path}:${result.definition.line}`);
-      renderSignature(popover, result.definition, { showFullTypeBody: !result.isDefinition });
-      docs.textContent = result.definition.documentation || '';
-      if (!result.isDefinition) {
-        choices.append(choiceButton({
-          title: 'Go to definition',
-          context: `${result.definition.path}:${destinationLineForDefinition(result.definition)}`,
-          definition: result.definition,
-        }));
-      }
-      setShortcut(result.isDefinition && result.definition.kind === 'interface'
-        ? 'or Ctrl + click to find implementations'
-        : result.isDefinition ? 'or Ctrl + click to find usages' : 'or Ctrl + click to go to definition');
-    } else if (result.status === 'standardLibrary' || result.status === 'packageDocumentation') {
-      const url = documentationURL(result);
-      setHeader('external', result.symbol, result.importPath);
-      renderSignature(popover, { signature: `${result.importPath}.${result.symbol}` });
-      docs.textContent = 'Documentation is available on pkg.go.dev.';
-      choices.append(choiceButton({ title: 'Open on pkg.go.dev', context: url, externalURL: url }));
-      setShortcut('or Ctrl + click to open package documentation');
-    } else if (result.status === 'projectPackage') {
-      const url = projectPackageURL(result);
-      setHeader('package', result.symbol, result.importPath);
-      renderSignature(popover, { signature: `package ${result.symbol}` });
-      docs.textContent = url
-        ? 'Open this package directory at the merge request commit.'
-        : 'The package directory is unavailable because the merge request commit could not be verified.';
-      if (url) choices.append(choiceButton({
-        title: 'Open package directory',
-        context: `${result.packagePath || '.'} · ${result.ref.slice(0, 12)}`,
-        externalURL: url,
-      }));
-      setShortcut(url ? 'or Ctrl + click to choose this package directory' : '');
-    } else if (result.status === 'builtin') {
-      const url = documentationURL(result);
-      setHeader('builtin', result.symbol, 'Go builtin');
-      renderSignature(popover, { signature: `builtin ${result.symbol}` });
-      docs.textContent = 'Documentation is available on pkg.go.dev.';
-      choices.append(choiceButton({ title: 'Open on pkg.go.dev', context: url, externalURL: url }));
-      setShortcut('or Ctrl + click to open builtin documentation');
-    } else if (result.status === 'ambiguous') {
-      setHeader('external', result.symbol, `${result.definitions.length} definitions`);
-      docs.textContent = result.reason === 'receiverOrSelector'
-        ? 'Ambiguous receiver or selector. Choose only when the intended definition is clear.'
-        : 'Multiple definitions match. Choose the definition you want to open.';
-      result.definitions.forEach((definition) => {
-        choices.append(choiceButton({
-          title: definition.compactSignature || definition.signature,
-          fullTitle: definition.signature,
-          context: `${definition.receiver ? `${definition.receiver} · ` : ''}${definition.path}:${definition.line}`,
-          kind: definition.kind,
-          definition,
-        }));
-      });
-      shouldPin = result.definitions.length > 0;
-    } else if (result.status === 'references') {
-      const count = `${result.locations.length}${result.hasMore ? '+' : ''}`;
-      setHeader(result.definition.kind, `Usages of ${result.definition.name}`, `${result.definition.path}:${result.definition.line}`);
-      renderSignature(popover, result.definition);
-      docs.textContent = result.locations.length
-        ? `${count} usage${result.locations.length === 1 && !result.hasMore ? '' : 's'} in the current search scope.`
-        : absenceText(result.scope);
-      result.locations.forEach((reference) => {
-        choices.append(choiceButton({
-          title: reference.path.split('/').pop(),
-          context: `${reference.path}:${reference.line}`,
-          definition: reference,
-        }));
-      });
-      if (result.hasMore) choices.append(resultAction('Show more', (event) => loadMoreResults(result, pointer, event.currentTarget)));
-      shouldPin = result.locations.length > 1;
-    } else if (result.status === 'implementations') {
-      const groups = implementationGroups(result);
-      setHeader('interface', `Implementations of ${result.interfaceDefinition.name}`, `${result.methodCount} required method${result.methodCount === 1 ? '' : 's'}`);
-      renderSignature(popover, result.interfaceDefinition);
-      docs.textContent = result.candidates.length
-        ? `${groups.production.length} production implementation${groups.production.length === 1 ? '' : 's'}${groups.testDoubles.length ? ` and ${groups.testDoubles.length} test double${groups.testDoubles.length === 1 ? '' : 's'}` : ''}.`
-        : absenceText(result.scope);
-      groups.production.forEach((candidate) => choices.append(implementationButton(candidate)));
-      if (groups.testDoubles.length) {
-        const details = document.createElement('details');
-        const summary = document.createElement('summary');
-        const group = document.createElement('div');
-        group.className = 'test-double-choices';
-        summary.textContent = `Test doubles (${groups.testDoubles.length})`;
-        groups.testDoubles.forEach((candidate) => group.append(implementationButton(candidate)));
-        details.append(summary, group);
-        choices.append(details);
-      }
-      if (result.hasMore) choices.append(resultAction('Show more', (event) => loadMoreResults(result, pointer, event.currentTarget)));
-      shouldPin = result.candidates.length > 0;
-    } else if (result.status === 'unsupportedImplementations') {
-      setHeader('interface', `Implementations of ${result.interfaceDefinition.name}`);
-      renderSignature(popover, result.interfaceDefinition);
-      docs.textContent = result.reason === 'buildConstraint'
-        ? 'Unsupported build constraint: GoLens cannot safely choose a platform-specific implementation set.'
-        : result.reason === 'typeSetConstraint'
-        ? 'This interface contains a type-set constraint, which the structural finder cannot evaluate safely.'
-        : 'This interface embeds a type that cannot be resolved inside the project.';
-    } else if (result.status === 'notFound') {
-      setHeader('external', result.symbol || 'Not found');
-      docs.textContent = absenceText(result.scope);
-    } else if (result.status === 'unsupported') {
-      setHeader('external', result.symbol || 'Unsupported');
-      docs.textContent = result.reason === 'buildConstraint'
-        ? 'Unsupported build constraint: GoLens cannot safely select the active declaration.'
-        : 'This semantic relationship is unsupported.';
-    } else return false;
-    const hasCompleteSearchTerms = result.request?.kind === 'references' || result.searchTerms?.length;
-    if (result.request && hasCompleteSearchTerms && result.scope?.kind !== 'fullProject' && !result.scope?.complete
-      && !['buildConstraint', 'typeSetConstraint'].includes(result.reason)) {
-      choices.append(resultAction('Search complete project', () => openFullSearch(result, pointer)));
-      shouldPin = true;
-    }
-    popover.classList.add('show');
-    positionPopover(popover, pointer.x, pointer.y);
-    if (shouldPin || wasPinned) pinPopover(pointer);
-    else setPopoverMode('passive', pointer);
-    return true;
-  }
-
-  function loadingPhaseLabel(phase) {
-    if (phase === 'discovering') return 'Preparing package';
-    if (phase === 'indexing') return 'Indexing symbols';
-    return 'Loading source files';
-  }
-
-  function showLoading(message, pointer, progress) {
-    const shadow = ensureUI();
-    const popover = shadow.querySelector('.popover');
-    const wasPinned = state.pinnedPopover;
-    const loadingProgress = popover.querySelector('.loading-progress');
-    const loadingPhase = loadingProgress.querySelector('.loading-progress-phase');
-    const loadingCount = loadingProgress.querySelector('.loading-progress-count');
-    const loadingTrack = loadingProgress.querySelector('.loading-track');
-    const badge = popover.querySelector('.popover-header .symbol-badge');
-    const title = popover.querySelector('.popover-title');
-    const docs = popover.querySelector('.docs');
-    const choices = popover.querySelector('.choices');
-    const location = popover.querySelector('.location');
-    const copyButton = popover.querySelector('.copy-button');
-    const shortcutHint = popover.querySelector('.shortcut-hint');
-    if (progress) {
-      loadingProgress.hidden = false;
-      loadingPhase.textContent = loadingPhaseLabel(progress.phase);
-      loadingCount.textContent = progress.phase === 'discovering'
-        ? '0%'
-        : `${progress.percentage}% · ${progress.completed} / ${progress.total} files`;
-      loadingTrack.setAttribute('aria-valuenow', String(progress.percentage));
-      loadingTrack.querySelector('i').style.width = `${progress.percentage}%`;
-    } else {
-      loadingProgress.hidden = true;
-    }
-    applySymbolBadge(badge, 'external');
-    title.textContent = message;
-    renderSignature(popover);
-    docs.textContent = '';
-    choices.replaceChildren();
-    location.textContent = '';
-    configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
-    shortcutHint.hidden = true;
-    popover.setAttribute('aria-busy', 'true');
-    popover.classList.add('show');
-    positionPopover(popover, pointer.x, pointer.y);
-    if (wasPinned) pinPopover(pointer);
-    else setPopoverMode('passive', pointer);
-  }
-
-  function targetKey(target) {
-    if (!target) return '';
-    return `${target.cell ? fileContextFor(target.cell)?.path : ''}:${target.cell ? lineContextFor(target.cell)?.line : ''}:${target.character ?? ''}`;
-  }
-
-  function cancelPopoverDismissal() {
-    clearTimeout(state.popoverDismissTimer);
-    state.popoverDismissTimer = null;
-  }
-
-  function setPopoverMode(mode, target = null) {
-    cancelPopoverDismissal();
-    const popover = state.ui?.shadowRoot.querySelector('.popover');
-    const key = targetKey(target);
-    if (key) state.popoverTargetKey = key;
-    state.popoverMode = mode;
-    state.pinnedPopover = mode === 'pinned';
-    if (state.pinnedPopover) state.pinnedTargetKey = key || state.popoverTargetKey;
-    else state.pinnedTargetKey = '';
-    if (!popover) return;
-    popover.dataset.mode = mode;
-    popover.setAttribute('role', state.pinnedPopover ? 'dialog' : 'tooltip');
-    if (state.pinnedPopover) popover.setAttribute('aria-modal', 'false');
-    else popover.removeAttribute('aria-modal');
-    popover.querySelector('.close-button').hidden = !state.pinnedPopover;
-  }
-
-  function clearPinnedPopover() {
-    if (state.popoverMode === 'hidden') {
-      cancelPopoverDismissal();
-      state.pinnedPopover = false;
-      state.pinnedTargetKey = '';
-      return;
-    }
-    setPopoverMode('passive');
-  }
-
-  function pinPopover(target = null) {
-    const popover = state.ui?.shadowRoot.querySelector('.popover');
-    if (!popover?.classList.contains('show')) return;
-    setPopoverMode('pinned', target);
-  }
-
-  function schedulePassivePopoverDismissal() {
-    if (state.popoverMode !== 'passive' || state.popoverDismissTimer) return false;
-    state.popoverDismissTimer = setTimeout(hidePopover, POPOVER_DISMISS_DELAY);
-    return true;
-  }
-
-  function hidePopover() {
-    cancelPopoverDismissal();
-    state.popoverMode = 'hidden';
-    state.popoverTargetKey = '';
-    state.pinnedPopover = false;
-    state.pinnedTargetKey = '';
-    const popover = state.ui?.shadowRoot.querySelector('.popover');
-    popover?.classList.remove('show');
-    if (popover) {
-      popover.dataset.mode = 'hidden';
-      popover.setAttribute('role', 'tooltip');
-      popover.removeAttribute('aria-modal');
-      popover.querySelector('.close-button').hidden = true;
-    }
-  }
+  // sourceLocationForTarget through hidePopover (popover DOM, rendering,
+  // and hit-test presentation, ~600 lines) moved to
+  // page/features/code-intel.js/.internal.js (ticket 21).
 
   function hideToast() {
     clearTimeout(state.toastTimer);
@@ -2017,15 +1206,7 @@
     return true;
   }
 
-  function targetAtEvent(event) {
-    const cell = codeCellFor(event.target);
-    if (!cell || !fileContextFor(cell)) return null;
-    const caret = caretAtPoint(cell, event.clientX, event.clientY) || identifierFromElement(event.target, cell);
-    return caret ? { ...caret, cell, x: event.clientX, y: event.clientY } : null;
-  }
-
   const DIFF_ROOT_SELECTOR = 'diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]';
-  const CODE_CELL_SELECTOR = 'td.line_content, td[class*="line-content"], [data-testid="diff-line-content"], [data-testid="rd-diff-line-content"], .rd-diff-code, .rd-diff-line-code';
 
   function diffFileRoots() {
     return [...document.querySelectorAll(DIFF_ROOT_SELECTOR)].filter((candidate) => {
@@ -2034,140 +1215,33 @@
     });
   }
 
-  function identifierBoundary(character) { return !character || !/[\p{L}\p{N}_]/u.test(character); }
+  // targetAtEvent/identifierBoundary/occurrenceRanges/paintOccurrences/
+  // refreshOccurrences/scheduleOccurrenceRefresh/clearSelectedSymbol/
+  // selectSymbol/navigateOccurrence/targetForOccurrence/
+  // targetForSelectedOccurrence moved to page/features/code-intel.js
+  // (ticket 21) — occurrence highlighting now runs off that module's own
+  // MutationObserver, not this file's diffObserver (see its own comment on
+  // that architecture change).
 
-  function occurrenceRanges(identifier) {
-    const occurrences = [];
-    if (!identifier) return occurrences;
-    for (const root of diffFileRoots()) {
-      const firstCell = root.querySelector(CODE_CELL_SELECTOR);
-      if (!firstCell || !fileContextFor(firstCell)) continue;
-      for (const cell of root.querySelectorAll(CODE_CELL_SELECTOR)) {
-        const cellSource = cell.textContent || '';
-        if (!cellSource.includes(identifier)) continue;
-        const walker = document.createTreeWalker(cell, globalThis.NodeFilter?.SHOW_TEXT || 4);
-        let node;
-        let nodeOffset = 0;
-        while ((node = walker.nextNode())) {
-          const text = node.nodeValue || '';
-          let from = 0;
-          while (from <= text.length - identifier.length) {
-            const index = text.indexOf(identifier, from);
-            if (index < 0) break;
-            const end = index + identifier.length;
-            const hit = identifierAtCharacter(cellSource, nodeOffset + index);
-            if (identifierBoundary(text[index - 1]) && identifierBoundary(text[end]) && hit?.identifier === identifier && hit.character === nodeOffset + index) {
-              const range = document.createRange();
-              range.setStart(node, index);
-              range.setEnd(node, end);
-              occurrences.push({ range, cell, row: cell.closest('tr, [role="row"]') || cell, character: hit.character, occurrence: hit.occurrence });
-            }
-            from = index + identifier.length;
-          }
-          nodeOffset += text.length;
-        }
-      }
-    }
-    return occurrences;
-  }
-
-  function paintOccurrences() {
-    const highlights = globalThis.CSS?.highlights;
-    if (!highlights || typeof globalThis.Highlight !== 'function') return;
-    highlights.delete('golens-symbol-occurrence');
-    highlights.delete('golens-symbol-current');
-    if (!state.occurrences.length) return;
-    highlights.set('golens-symbol-occurrence', new globalThis.Highlight(...state.occurrences.map(({ range }) => range)));
-    if (state.occurrenceIndex >= 0) highlights.set('golens-symbol-current', new globalThis.Highlight(state.occurrences[state.occurrenceIndex].range));
-  }
-
-  function refreshOccurrences() {
-    clearTimeout(state.occurrenceRefreshTimer);
-    state.occurrenceRefreshTimer = null;
-    const previousCell = state.occurrences[state.occurrenceIndex]?.cell;
-    state.occurrences = occurrenceRanges(state.selectedIdentifier);
-    state.occurrenceIndex = previousCell ? state.occurrences.findIndex(({ cell }) => cell === previousCell) : (state.occurrences.length ? 0 : -1);
-    if (state.occurrenceIndex < 0 && state.occurrences.length) state.occurrenceIndex = 0;
-    paintOccurrences();
-  }
-
-  function scheduleOccurrenceRefresh() {
-    if (!state.selectedIdentifier || state.occurrenceRefreshTimer) return;
-    state.occurrenceRefreshTimer = setTimeout(refreshOccurrences, 30);
-  }
-
-  function clearSelectedSymbol() {
-    state.selectedIdentifier = '';
-    state.occurrences = [];
-    state.occurrenceIndex = -1;
-    clearTimeout(state.occurrenceRefreshTimer);
-    state.occurrenceRefreshTimer = null;
-    globalThis.CSS?.highlights?.delete('golens-symbol-occurrence');
-    globalThis.CSS?.highlights?.delete('golens-symbol-current');
-  }
-
-  function selectSymbol(target) {
-    state.selectedIdentifier = target.identifier;
-    refreshOccurrences();
-    const index = state.occurrences.findIndex(({ cell, character }) => cell === target.cell && character === target.character);
-    if (index >= 0) state.occurrenceIndex = index;
-    paintOccurrences();
-    if (state.occurrences.length > 1) void offerShortcutCoach('nextOccurrence');
-  }
-
-  function navigateOccurrence(direction) {
-    if (!state.occurrences.length) {
-      toast(state.selectedIdentifier ? `No loaded occurrences of ${state.selectedIdentifier}.` : 'Click a Go symbol to select it first.');
-      return false;
-    }
-    state.occurrenceIndex = (state.occurrenceIndex + direction + state.occurrences.length) % state.occurrences.length;
-    const occurrence = state.occurrences[state.occurrenceIndex];
-    paintOccurrences();
-    occurrence.row.scrollIntoView({ behavior: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
-    flashDestination(occurrence.row);
-    toast(`${state.selectedIdentifier} · ${state.occurrenceIndex + 1} of ${state.occurrences.length}`);
-    return true;
-  }
-
-  function targetForOccurrence(occurrence, identifier) {
-    if (!occurrence) return null;
-    const bounds = occurrence.row.getBoundingClientRect();
-    const parent = occurrence.range.startContainer.parentElement;
-    const element = parent && parent !== occurrence.cell && (parent.textContent || '').trim() === identifier ? parent : null;
-    return {
-      identifier,
-      character: occurrence.character,
-      occurrence: occurrence.occurrence,
-      cell: occurrence.cell,
-      element,
-      x: bounds.left + Math.min(bounds.width / 2, 240),
-      y: bounds.top + Math.min(bounds.height / 2, 20),
-    };
-  }
-
-  function targetForSelectedOccurrence() {
-    return targetForOccurrence(state.occurrences[state.occurrenceIndex], state.selectedIdentifier);
-  }
-
+  // runNavigationAction(action) -> boolean. Shrunk to just the three
+  // bookmark actions (ticket 21): semanticJump/previousOccurrence/
+  // nextOccurrence/historyBack/historyForward moved to code-intel.js's own
+  // navigationAction(action), reached by keyboard-nav.js through a new
+  // `navigationAction` capability (page/main.js) instead of this function.
+  // keyboard-nav.js's `runLegacyNavigationAction` capability still points
+  // here, now only for the bookmark actions — see keyboard-nav.js's header
+  // comment for the split.
   function runNavigationAction(action) {
     if (!state.enabled) return false;
-    if (action === 'semanticJump') {
-      const target = targetForSelectedOccurrence();
-      if (!target) toast('Click a Go symbol to select it first.');
-      else navigateSemanticTarget(target);
-      return true;
-    }
-    if (action === 'previousOccurrence') return navigateOccurrence(-1);
-    if (action === 'nextOccurrence') return navigateOccurrence(1);
-    if (action === 'historyBack') { navigateHistory(-1); return true; }
-    if (action === 'historyForward') { navigateHistory(1); return true; }
     if (action === 'toggleBookmark') {
       // Bridge onto page/features/bookmarks.js (ticket 18): the
       // selection-or-focused-marker-or-code-intel-fallback chain now lives
       // in bookmarks.js's toggleAtSelection() — this file only still owns
       // the code-intel fallback (the currently selected occurrence's source
-      // location), since that's this file's own state.
-      const selectedTarget = sourceLocationForTarget(targetForSelectedOccurrence());
+      // location), reached through code-intel.js's own
+      // selectedOccurrenceSourceLocation() handle method (ticket 21 — that
+      // state moved out of this file along with occurrence selection).
+      const selectedTarget = codeIntelHandle?.selectedOccurrenceSourceLocation?.() ?? null;
       const fallback = selectedTarget ? { path: selectedTarget.path, side: selectedTarget.side, startLine: selectedTarget.line, endLine: selectedTarget.line } : null;
       bookmarksHandle?.toggleAtSelection(fallback);
       return true;
@@ -2177,92 +1251,19 @@
     return false;
   }
 
-  function markTarget(element) {
-    if (state.activeElement === element) return;
-    state.activeElement?.removeAttribute('data-golens-go-target');
-    state.activeElement = element || null;
-    state.activeElement?.setAttribute('data-golens-go-target', '');
-  }
+  // markTarget/throttleToFrame/handleMouseMovePoint/onMouseMove/
+  // eventIsInsideUI/dismissPinnedPopoverFromOutside/navigateSemanticTarget/
+  // onClick moved to page/features/code-intel.js (ticket 21) — hover/click
+  // detection and resolution orchestration now run entirely inside that
+  // module's own `setEnabled(true)`, not this file's `init()`.
 
-  // Throttles a per-pointer-move callback to at most once per animation
-  // frame: intermediate positions between frames are coalesced and only the
-  // latest is delivered. `.reset()` drops any pending frame reference on
-  // teardown; it doesn't cancel the browser's scheduled frame, so the
-  // callback still fires afterward — harmless, since it re-checks
-  // `state.enabled` itself.
-  function throttleToFrame(fn) {
-    let scheduled = false;
-    let latestArgs = null;
-    const throttled = (...args) => {
-      latestArgs = args;
-      if (scheduled) return;
-      scheduled = true;
-      clock.requestFrame(() => {
-        scheduled = false;
-        fn(...latestArgs);
-      });
-    };
-    throttled.reset = () => { scheduled = false; latestArgs = null; };
-    return throttled;
-  }
-
-  // The full hit-test — cell lookup, file-context resolution, caret-to-offset
-  // mapping — runs here, throttled to one call per animation frame. The
-  // 350ms `state.hoverTimer` delay below protects the semantic request, not
-  // this hit-test, and stays unchanged.
-  const handleMouseMovePoint = throttleToFrame((point) => {
-    if (!state.enabled) return;
-    const target = targetAtEvent(point);
-    const key = targetKey(target);
-    if (key === state.activeTarget?.key) {
-      cancelPopoverDismissal();
-      return;
-    }
-    clearTimeout(state.hoverTimer);
-    if (!target) {
-      state.activeTarget = null;
-      markTarget(null);
-      schedulePassivePopoverDismissal();
-      return;
-    }
-    cancelPopoverDismissal();
-    hidePopover();
-    state.activeTarget = { key, ...target };
-    markTarget(target.element);
-    state.hoverTimer = setTimeout(async () => {
-      try {
-        if (state.activeTarget?.key !== key) return;
-        showLoading(`Looking up ${target.identifier}…`, target);
-        const result = await resolveAt(target, 'resolveHover', (message, progress) => {
-          if (state.activeTarget?.key === key) showLoading(message, target, progress);
-        });
-        let displayResult = result;
-        if (shouldShowReferencesOnHover(result)) {
-          showLoading(`Finding usages of ${target.identifier}…`, target);
-          displayResult = await findReferencesAt(target, result.definition);
-        }
-        if (state.activeTarget?.key === key) showResult(displayResult, target);
-      } catch (error) {
-        if (state.activeTarget?.key === key) hidePopover();
-        const message = error.message || 'Go intelligence is unavailable.';
-        if (state.lastErrorToast !== message) {
-          state.lastErrorToast = message;
-          toast(message);
-        }
-      }
-    }, 350);
-  });
-
-  function onMouseMove(event) {
-    if (!state.enabled) return;
-    if (state.ui && event.composedPath().includes(state.ui)) {
-      pinPopover();
-      return;
-    }
-    if (state.pinnedPopover) return;
-    handleMouseMovePoint({ target: event.target, clientX: event.clientX, clientY: event.clientY });
-  }
-
+  // onKeyDown(event): document-level Escape routing. Two branches remain,
+  // in the original priority order (ticket 20's project-search-minimize
+  // check first, then the popover): the project-search-minimize check stays
+  // here verbatim (see its own comment); the popover branch now delegates
+  // to code-intel.js's own handleEscape() self-bridge-only handle method
+  // (ticket 21) — that module owns the popover state
+  // (popoverMode/selectedIdentifier) this used to read directly.
   function onKeyDown(event) {
     if (event.key !== 'Escape') return;
     if ([...event.composedPath(), document.activeElement].some((target) => target?.closest?.('input, textarea, select, [contenteditable], dialog, [role="dialog"], [aria-modal="true"]'))) return;
@@ -2279,86 +1280,7 @@
       event.stopPropagation();
       return;
     }
-    if (state.popoverMode === 'hidden') {
-      if (state.selectedIdentifier) {
-        event.preventDefault();
-        clearSelectedSymbol();
-      }
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    hidePopover();
-  }
-
-  function eventIsInsideUI(event) {
-    return Boolean(state.ui && event.composedPath().includes(state.ui));
-  }
-
-  function dismissPinnedPopoverFromOutside(event) {
-    if (!state.pinnedPopover || eventIsInsideUI(event)) return false;
-    hidePopover();
-    return true;
-  }
-
-  async function navigateSemanticTarget(target) {
-    hidePopover();
-    state.activeTarget = { key: targetKey(target), ...target };
-    markTarget(target.element);
-    try {
-      showLoading(`Looking up ${target.identifier}…`, target);
-      const result = await resolveAt(target, 'resolveDefinition', (message, progress) => showLoading(message, target, progress));
-      if (isInterfaceDeclaration(result)) {
-        const implementations = await findImplementationsAt(
-          target,
-          result.definition,
-          (message) => showLoading(message, target),
-        );
-        showResult(implementations, target);
-      }
-      else if (result.status === 'resolved' && result.isDefinition) {
-        showLoading(`Finding usages of ${target.identifier}…`, target);
-        const references = await findReferencesAt(target, result.definition);
-        if (referenceNavigationAction(references) === 'open') openDefinition(references.locations[0], sourceLocationForTarget(target));
-        else showResult(references, target);
-      }
-      else if (result.status === 'resolved') openDefinition(result.definition, sourceLocationForTarget(target));
-      else if (result.status === 'projectPackage') {
-        showResult(result, target);
-        pinPopover(target);
-      }
-      else if (result.status === 'standardLibrary' || result.status === 'packageDocumentation' || result.status === 'builtin') window.open(documentationURL(result), '_blank', 'noopener');
-      else if (['ambiguous', 'notFound', 'unsupported'].includes(result.status)) {
-        showResult(result, target);
-        pinPopover(target);
-      }
-      else toast('GoLens could not resolve this symbol safely.');
-    } catch (error) {
-      hidePopover();
-      toast(error.message || 'Go intelligence is unavailable.');
-    }
-  }
-
-  async function onClick(event) {
-    if (!state.enabled || event.button !== 0) return;
-    if (eventIsInsideUI(event)) return;
-    if (!(event.metaKey || event.ctrlKey)) {
-      dismissPinnedPopoverFromOutside(event);
-      const selection = globalThis.getSelection?.();
-      const target = (!selection || selection.isCollapsed) ? targetAtEvent(event) : null;
-      if (target) selectSymbol(target);
-      else if (!codeCellFor(event.target)) clearSelectedSymbol();
-      return;
-    }
-    const target = targetAtEvent(event);
-    if (!target) {
-      if (codeCellFor(event.target)) toast('GoLens could not identify a Go symbol on this diff line.');
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    void offerShortcutCoach('semanticJump');
-    await navigateSemanticTarget(target);
+    codeIntelHandle?.handleEscape?.(event);
   }
 
   // isBookmarkOnlyMutation(mutation) -> whether a MutationRecord is entirely
@@ -2383,91 +1305,49 @@
     // bookmarks.js's own enable(), reached through this file's self-bridge
     // (see the "Bridge onto page/features/bookmarks.js" comment above).
     enableBookmarks();
-    document.addEventListener('mousemove', onMouseMove, true);
-    document.addEventListener('click', onClick, true);
+    // Ticket 21: hover/click detection, the popover, and occurrence
+    // highlighting used to be wired directly here (mousemove/click/keydown
+    // listeners, the diff-reconciliation debounce feeding
+    // scheduleOccurrenceRefresh). All of that now lives inside
+    // code-intel.js's own setEnabled(true), reached through this file's
+    // self-bridge (see the "Bridge onto page/features/code-intel.js"
+    // comment above) — including that module's own MutationObserver, so
+    // this file's diffObserver below only still bumps
+    // fileContextGeneration for fileContextFor's cache.
+    setCodeIntelEnabled(true);
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('visibilitychange', refreshMergeRequestRefs, true);
-    // Queue-until-ready placeholder (ticket 08): the real debounced
-    // function can only be created once legacyDebounceIdleReady resolves
-    // (async), but init() itself must stay synchronous. Any call before
-    // that just records that a reconcile is owed; once ready, the real
-    // debounced function is installed and fired at most once to cover
-    // whatever was queued — a burst before ready collapses into exactly
-    // one call after ready, same as what the 50ms debounce itself already
-    // does for a burst after ready.
-    let diffReconcilePending = false;
-    function diffReconcilePlaceholder() { diffReconcilePending = true; }
-    diffReconcilePlaceholder.cancel = () => { diffReconcilePending = false; };
-    scheduleDiffReconciliation = diffReconcilePlaceholder;
-    legacyDebounceIdleReady.then(() => {
-      // If teardown() ran (or a later init() re-ran) before this resolved,
-      // scheduleDiffReconciliation no longer points at this placeholder —
-      // don't reinstall a debounced function or fire anything belated.
-      if (scheduleDiffReconciliation !== diffReconcilePlaceholder) return;
-      // Import failed permanently (see loadClockModule's .catch above);
-      // leave the placeholder in place rather than crash or loop.
-      if (!legacyDebounceIdleFactory) return;
-      const debounced = legacyDebounceIdleFactory(() => {
-        scheduleOccurrenceRefresh();
-      }, 50);
-      scheduleDiffReconciliation = debounced;
-      if (diffReconcilePending) debounced();
-    });
     state.diffObserver = new MutationObserver((mutations) => {
       // Ticket 18: bookmarks.js now places its own markers in the diff and
       // runs its own separate MutationObserver to reconcile them — this
       // guard (duplicated from bookmarks.js's own
       // bookmarkProjectionMutation(), documented there) still needs to
       // ignore mutations that are only that module's marker/selection-UI
-      // DOM, or every marker placement would bump fileContextGeneration and
-      // retrigger this observer's own reconciliation forever.
+      // DOM, or every marker placement would bump fileContextGeneration
+      // needlessly.
       if (mutations.length && mutations.every(isBookmarkOnlyMutation)) return;
       // Invalidation is synchronous — a hover right after this fires must
-      // never resolve a stale cached file context. Only the (idempotent)
-      // occurrence reconciliation work below is debounced.
+      // never resolve a stale cached file context.
       fileContextGeneration++;
-      scheduleDiffReconciliation();
     });
     const diffObserverRoot = document.getElementById('diffs') || document.body;
     state.diffObserver.observe(diffObserverRoot, { childList: true, subtree: true, characterData: true });
     status('idle', 'Go intelligence · hover code to start');
   }
 
-  function referenceNavigationAction(result) {
-    return result.status === 'references' && result.locations.length === 1 && !result.hasMore ? 'open' : 'show';
-  }
-
-  function isInterfaceDeclaration(result) {
-    return result.status === 'resolved' && result.isDefinition && result.definition.kind === 'interface';
-  }
-
-  function shouldShowReferencesOnHover(result) {
-    return result.status === 'resolved' && result.isDefinition && result.definition?.kind !== 'interface';
-  }
-
   function teardown() {
     state.enabled = false;
     state.abortController?.abort();
     state.abortController = null;
-    clearTimeout(state.hoverTimer);
     clearTimeout(state.toastTimer);
     state.toastTimer = null;
-    handleMouseMovePoint.reset();
-    scheduleDiffReconciliation?.cancel();
-    scheduleDiffReconciliation = null;
     state.diffObserver?.disconnect();
     state.diffObserver = null;
-    clearSelectedSymbol();
-    state.history = [];
-    state.historyIndex = -1;
+    setCodeIntelEnabled(false);
     // Ticket 18: navigation-index/focused-location resets, the refresh
     // timer, the selection UI, and marker removal all now live inside
     // bookmarks.js's own disable().
     disableBookmarks();
-    clearPinnedPopover();
-    markTarget(null);
-    document.removeEventListener('mousemove', onMouseMove, true);
-    document.removeEventListener('click', onClick, true);
     document.removeEventListener('keydown', onKeyDown, true);
     document.removeEventListener('visibilitychange', refreshMergeRequestRefs, true);
     rpcClient?.dispose({ reason: 'Go intelligence request cancelled' });
@@ -2517,11 +1397,12 @@
     // `bookmarksHandle` is only populated once the self-bridge's dynamic
     // import resolves (see that bridge's comment above).
     get bookmarks() { return bookmarksHandle; },
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, codeCellFor, lineContextFor, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, locationKey, showShortcutCoachHint, setClock, clockReady: legacyDebounceIdleReady, keyboardNavReady, mrPreloadReady, projectSearchReady, bookmarksReady,
-      // Live accessor (ticket 08): scheduleDiffReconciliation is reassigned
-      // over time (null -> queue-until-ready placeholder -> real debounced
-      // function), so tests need a getter rather than the value captured
-      // once at module-eval time.
-      getScheduleDiffReconciliation: () => scheduleDiffReconciliation },
+    // get codeIntel() (ticket 21): same live-accessor shape as `bookmarks`
+    // above, for the same reason (`codeIntelHandle` only populates once the
+    // self-bridge's dynamic import resolves). keyboard-nav.js's
+    // `navigationAction` capability (page/main.js) reaches
+    // `.navigationAction(action)` through this.
+    get codeIntel() { return codeIntelHandle; },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, fileContextFor, codeCellFor, lineContextFor, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, onKeyDown, showShortcutCoachHint, setClock, keyboardNavReady, mrPreloadReady, projectSearchReady, bookmarksReady, codeIntelReady },
   };
 })();

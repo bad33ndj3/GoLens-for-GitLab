@@ -27,6 +27,7 @@ import { mount as mountMrPreload } from './features/mr-preload.js';
 import { mount as mountCelebration } from './features/celebration.js';
 import { mount as mountProjectSearch } from './features/project-search.js';
 import { mount as mountBookmarks } from './features/bookmarks.js';
+import { mount as mountCodeIntel } from './features/code-intel.js';
 
 export function mount(ctx = {}) {
   const clock = ctx.clock || createClock();
@@ -56,6 +57,12 @@ export function mount(ctx = {}) {
         // go-navigation.js is not itself a migrated feature yet — see
         // keyboard-nav.js's own header comment for the fuller rationale).
         capabilities: {
+          // Ticket 21: code-intel.js's own five navigation actions
+          // (semanticJump/previousOccurrence/nextOccurrence/historyBack/
+          // historyForward), reached through go-navigation.js's live
+          // `.codeIntel` accessor rather than its (now bookmark-only)
+          // runNavigationAction() below.
+          navigationAction: (action) => globalThis.GoLensGoNavigation?.codeIntel?.navigationAction?.(action) === true,
           runLegacyNavigationAction: (action) => globalThis.GoLensGoNavigation?.runNavigationAction?.(action) === true,
           legacyToast: {
             message: (text) => globalThis.GoLensGoNavigation?.showToast?.(text),
@@ -85,6 +92,16 @@ export function mount(ctx = {}) {
       // here anyway so the module graph stays the single source of truth
       // for "what features exist" (ticket 04 §1).
       { name: 'bookmarks', mount: mountBookmarks },
+      // Same "second, inert instance" shape as bookmarks/project-search
+      // above: this mount has no ctx.legacy (page/lifecycle has no access
+      // to go-navigation.js's diff-DOM/worker-RPC closures), so every
+      // method degrades to false/null/`{kind:'unavailable'}` — no hover/
+      // click listeners attach, no popover renders. The functional instance
+      // is go-navigation.js's own self-bridge (see its "Bridge onto
+      // page/features/code-intel.js" comment). Registered here anyway so
+      // the module graph stays the single source of truth for "what
+      // features exist" (ticket 04 §1).
+      { name: 'code-intel', mount: mountCodeIntel },
     ],
     // Opt out of lifecycle's own chrome.runtime.onMessage registration:
     // bootstrap.js registers synchronously, before this module graph even

@@ -7,12 +7,19 @@
 //
 // mount(ctx) -> { unmount, offerShortcutCoach(actionID) }. `ctx.overlays`
 // replaces the old #golens-*-root DOM read for coach suppression (ticket 12).
-// Two capabilities page/main.js injects, since neither is reachable any
+// Three capabilities page/main.js injects, since none are reachable any
 // other way without a feature -> legacy-global dependency (ticket 03 §3):
-//   - runLegacyNavigationAction(action) -> boolean — forwards actions this
-//     module doesn't own (semanticJump, historyBack/Forward, toggleBookmark,
+//   - navigationAction(action) -> boolean (ticket 21) — forwards the five
+//     actions page/features/code-intel.js now owns (semanticJump,
+//     previousOccurrence, nextOccurrence, historyBack, historyForward) to
+//     that module's handle, reached through go-navigation.js's live
+//     `.codeIntel` accessor. Tried first; returns false for actions it
+//     doesn't own (its own closed action set), so this file falls through
+//     to runLegacyNavigationAction below for those.
+//   - runLegacyNavigationAction(action) -> boolean — forwards the three
+//     remaining actions this module doesn't own (toggleBookmark,
 //     previousBookmark, nextBookmark) to go-navigation.js's still-legacy
-//     runNavigationAction(), which is unchanged by this ticket.
+//     runNavigationAction(), shrunk to just those by ticket 21.
 //   - legacyToast: { message(text), shortcutHint(hint), isShowing() } —
 //     go-navigation.js's toast element is shared UI serving ~15 unmigrated
 //     call sites (bookmarks, semantic jump, copy, project search, …); giving
@@ -65,6 +72,7 @@ export function mount(ctx = {}) {
   const overlays = ctx.overlays;
   const settings = ctx.settings;
   const runLegacyNavigationAction = ctx.runLegacyNavigationAction;
+  const navigationAction = ctx.navigationAction;
   const legacyToast = ctx.legacyToast || {};
 
   let unmounted = false;
@@ -216,7 +224,7 @@ export function mount(ctx = {}) {
     else if (action === 'nextHunk') handled = navigateElements(hunkTargets(), 1, 'No loaded diff hunks.', 'hunk');
     else if (action === 'previousFile') handled = navigateElements(diffFileRoots(), -1, 'No loaded diff files.', 'file');
     else if (action === 'nextFile') handled = navigateElements(diffFileRoots(), 1, 'No loaded diff files.', 'file');
-    else handled = runLegacyNavigationAction?.(action) === true;
+    else handled = navigationAction?.(action) === true || runLegacyNavigationAction?.(action) === true;
     if (handled) {
       event.preventDefault();
       void globalThis.GoLensShortcutCoach?.markShortcutUsed?.(action);
