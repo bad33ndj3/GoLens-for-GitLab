@@ -7,7 +7,7 @@ go-test-file-rows-feature"). Kleine, op zichzelf staande feature.
 
 **Blocked by:** geen.
 
-**Status:** proposed
+**Status:** resolved
 
 - [ ] `_test.go`-detectie en attribute-toggling exact ongewijzigd
 - [ ] Unit tests in `tests/features-go-test-file-rows.test.js`

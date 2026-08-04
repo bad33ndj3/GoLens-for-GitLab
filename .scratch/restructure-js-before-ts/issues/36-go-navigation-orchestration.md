@@ -49,7 +49,7 @@ Escape-routing en een MutationObserver verplaatsen.
 **Blocked by:** 31 — SPA reconcile loop (beslissing); 34 — derived-enabled-owner (beslissing);
 26; 27; 28; 29 (de slice is pas zichtbaar als die vier eruit zijn).
 
-**Status:** proposed
+**Status:** ready-for-agent
 
 - [ ] Beslist en gemotiveerd of deze slice een eigen huisvesting krijgt of opgaat in 31/34's uitkomst
 - [ ] Escape-routing: beide branches in dezelfde prioriteitsvolgorde, inclusief de

@@ -13,7 +13,7 @@ stilzwijgend verloren gaan.
 
 **Blocked by:** 30 — feature-controls; 34 — derived-enabled-owner.
 
-**Status:** proposed
+**Status:** ready-for-agent
 
 - [ ] Alle vier message-types geclaimd in `bootstrap.js`, geroute naar de juiste feature-handle
 - [ ] `tests/bootstrap-message-seam.test.js`'s deelverzameling-invariant blijft kloppen

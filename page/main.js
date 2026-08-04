@@ -28,6 +28,9 @@ import { mount as mountCelebration } from './features/celebration.js';
 import { mount as mountProjectSearch } from './features/project-search.js';
 import { mount as mountBookmarks } from './features/bookmarks.js';
 import { mount as mountCodeIntel } from './features/code-intel.js';
+import { mount as mountDiscussionLineLink } from './features/discussion-line-link.js';
+import { mount as mountGoTestFileRows } from './features/go-test-file-rows.js';
+import { mount as mountControls } from './features/controls.js';
 
 export function mount(ctx = {}) {
   const clock = ctx.clock || createClock();
@@ -102,6 +105,17 @@ export function mount(ctx = {}) {
       // the module graph stays the single source of truth for "what
       // features exist" (ticket 04 §1).
       { name: 'code-intel', mount: mountCodeIntel },
+      { name: 'discussion-line-link', mount: mountDiscussionLineLink },
+      { name: 'go-test-file-rows', mount: mountGoTestFileRows },
+      // Same "second, inert instance" shape as bookmarks/project-search/
+      // code-intel above: this mount has no ctx.legacy (page/lifecycle has
+      // no access to go-navigation.js's preload/bookmark closures), so
+      // every legacy-bag call degrades to a no-op via optional chaining and
+      // no toolbar DOM ever renders. The functional instance is content.js's
+      // own self-mount (see its "legacy capability bag" comment). Registered
+      // here anyway so the module graph stays the single source of truth
+      // for "what features exist" (ticket 04 §1).
+      { name: 'controls', mount: mountControls },
     ],
     // Opt out of lifecycle's own chrome.runtime.onMessage registration:
     // bootstrap.js registers synchronously, before this module graph even

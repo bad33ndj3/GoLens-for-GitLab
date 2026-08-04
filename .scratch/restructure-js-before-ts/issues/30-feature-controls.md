@@ -19,7 +19,7 @@ go-navigation-afhankelijkheid. Die bridge blijft functioneel ongeacht de voortga
 zijn interne herstructureringen van go-navigation.js, geen wijziging van zijn publieke API).
 Ticket 22 (blocked by o.a. 30 zelf) kan dus geen blocker van 30 zijn — dat zou circulair zijn.
 
-**Status:** proposed
+**Status:** resolved
 
 - [ ] Toolbar-DOM/CSS/gedrag (alle 4 knoppen, states) exact ongewijzigd
 - [ ] Preload-state-machine (idle/checking/busy/complete/error, progress-rendering) exact ongewijzigd

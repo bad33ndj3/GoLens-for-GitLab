@@ -1,7 +1,7 @@
 # 31 — SPA reconcile loop
 
 Label: `wayfinder:grilling`
-Status: proposed
+Status: ready-for-agent
 Assignee: claude
 **Blocked by:** 11 — lifecycle-orchestrator
 

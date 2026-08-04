@@ -171,6 +171,44 @@ faalt — daar bleek hier ook aan voldaan, maar de oorzaak ligt vóór batch 1. 
 niet opgelost en hoort een eigen ticket te krijgen; batch 1 heeft het niet veroorzaakt en lost het
 niet op.**
 
+## Batch 2 (30, 32–33) — uitgevoerd 2026-08-04
+
+Tickets 30, 32 en 33 staan op `resolved`. Ticket 31 (spa-reconcile) blijft bewust buiten
+deze batch: het ticket zelf noemt zijn kernvraag ("lifecycle vs. nieuwe feature-module")
+nog onbeantwoord en verwijst naar een aparte ronde — niets daarin geraakt aangepast.
+`content.js` ging van 899 naar ~290 regels. Besluiten die buiten de tickets vielen:
+
+- **`controls.js` blijft één module, geen controls-shell/bookmark-drawer-split.** Ticket 30
+  vroeg om dat expliciet af te wegen. De trigger-knop van de drawer leeft in de shadow-root
+  van de toolbar, één `bookmarks.subscribe()`-callback stuurt zowel de toolbar-badge als een
+  open drawer aan, en het sluiten van de drawer reikt terug de toolbar-shadow in om
+  `aria-expanded` te resetten. Splitsen zou een nieuwe cross-module-seam eisen voor precies de
+  koppeling die ticket 30 zelf verbiedt (geen nieuwe `globalThis`-contracten) — dus één feature.
+- **`rapid-diffs`-opt-in blijft in `content.js`**, zoals ticket 31 al aangaf. `controls.js`
+  krijgt alleen `legacy.enableRapidDiffs` doorgegeven voor de entering-tak van
+  `toggleReviewFocus`; `watchForRapidDiffs`/`enableRapidDiffs`/`isMergeRequestDiff` blijven
+  ongewijzigd in `content.js` en worden ook niet dubbel geïmplementeerd.
+- **Elke DOM-lookup in `controls.js` gaat via module-scoped `host`/`drawerHost`-referenties**,
+  nooit via `document.getElementById('gitlab-lens-root')` (zoals de originele
+  `closeBookmarkDrawer()`/`renderBookmarkControl()`-defaults deden). `page/main.js` registreert
+  een tweede, inerte instantie (zelfde vorm als bookmarks/project-search/code-intel) die
+  `page/lifecycle` bij elke SPA-navigatie mount/unmount't; zonder deze scoping-regel zou die
+  inerte instantie de echte toolbar/drawer van de content.js-instantie kunnen slopen. Getest in
+  `tests/features-controls.test.js` ("unmount() only ever touches this instance's own host").
+- **`bookmarkDrawerPosition` gebruikt `||`, niet `??`**, voor de fallback op `bounds.left`/
+  `bounds.top` — bewust byte-voor-byte gelijk aan het origineel. Met `??` zou een toolbar die
+  exact op `top: 0`/`left: 0` staat een ander resultaat geven dan de legacy-expressie.
+- **`content.js`'s `visibilitychange`/`focus`/`fullscreenchange`-listeners voor preload-refresh
+  en review-focus-auto-exit verhuizen mee naar `controls.js`'s eigen `mount()`** (zelfde
+  self-contained idioom als de andere feature-modules): `content.js`'s eigen
+  `visibilitychange`-listener roept nu alleen nog `schedulePageReconcile()` aan, niet meer
+  `refreshPreloadStatus()` — dat zit nu in `controls.js`'s eigen listener op hetzelfde event.
+  Functioneel identiek (beide vuren op dezelfde gebeurtenis), maar wel twee listeners op
+  hetzelfde event in plaats van één.
+- **`reconcilePage()`'s call-site blijft ongewijzigd in `content.js`** (ticket 31's scope), net
+  als de instructie in ticket 30 vroeg — alleen de implementatie erachter
+  (`createControls`/`setEnabled`/preload-machine) is verhuisd naar `controlsHandle`.
+
 ## Fan-out-regels voor 14–21 (file-ownership)
 
 De feature-carve-outs snijden uit twee hub-bestanden; max één agent per hubbestand tegelijk.

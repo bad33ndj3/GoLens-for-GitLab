@@ -1,7 +1,7 @@
 # 34 — Eigenaar voor de afgeleide enable/disable-fanout
 
 Label: `wayfinder:grilling`
-Status: proposed
+Status: ready-for-agent
 Assignee: claude
 **Blocked by:** 10 — platform/settings-store; 11 — lifecycle-orchestrator
 

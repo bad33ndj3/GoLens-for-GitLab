@@ -8,7 +8,7 @@ eigen DOM-queries).
 
 **Blocked by:** geen.
 
-**Status:** proposed
+**Status:** resolved
 
 - [ ] Link-plaatsing/verwijdering/href-berekening exact ongewijzigd
 - [ ] Unit tests in `tests/features-discussion-line-link.test.js`
