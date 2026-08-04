@@ -351,12 +351,15 @@ const html = `<!doctype html>
       document.body.dataset.bookmarkDrawer = String(drawer.querySelector('[role="dialog"]')?.getAttribute('aria-label') === 'MR bookmarks');
       const tbody = document.querySelector('diff-file tbody');
       tbody.innerHTML = '<tr><td class="new_line"><a href="#line_hash_A4" aria-label="Added line 4">4</a></td><td class="line_content">type <span id="go-target">Runner</span> interface { Run() error }</td></tr>';
-      setTimeout(() => {
+      const reconcileDeadline = Date.now() + 3000;
+      const reconcileWatch = setInterval(() => {
         const restored = tbody.querySelectorAll('.golens-bookmark-marker[aria-pressed="true"]');
+        if (restored.length !== 1 && Date.now() < reconcileDeadline) return;
         document.body.dataset.bookmarkDomReconciled = String(restored.length === 1);
+        clearInterval(reconcileWatch);
         bookmarkTested = true;
         clearInterval(bookmarkWatch);
-      }, 150);
+      }, 50);
     }, 25);
     const preloadWatch = setInterval(() => {
       const controls = document.getElementById('gitlab-lens-root')?.shadowRoot;
