@@ -837,6 +837,11 @@ try {
   console.log('browser injection smoke passed');
 } finally {
   server.close();
-  await rm(profile, { recursive: true, force: true });
-  await rm(smokeRoot, { recursive: true, force: true });
+  // maxRetries/retryDelay: Chrome can still be flushing profile writes
+  // (Cache, crash dumps) for a moment after stopBrowser's SIGTERM/SIGKILL
+  // resolves, which otherwise races recursive rm's directory listing into a
+  // transient ENOTEMPTY that — thrown from this finally — masks whatever
+  // real assertion failure the try block was reporting.
+  await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  await rm(smokeRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

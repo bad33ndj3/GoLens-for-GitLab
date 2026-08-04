@@ -401,18 +401,6 @@ function utf8Column(line, character) {
   return new TextEncoder().encode(line.slice(0, Math.max(0, character))).length;
 }
 
-function utf16Column(line, byteColumn) {
-  const encoder = new TextEncoder();
-  let bytes = 0;
-  let character = 0;
-  for (const value of line) {
-    if (bytes >= byteColumn) break;
-    bytes += encoder.encode(value).length;
-    character += value.length;
-  }
-  return character;
-}
-
 function findIdentifierNode(root, source, line, character, fallbackIdentifier = '', occurrence = null, lines = source.split('\n')) {
   const row = Math.max(0, Math.min(line - 1, lines.length - 1));
   const sourceLine = lines[row] || '';
@@ -741,7 +729,14 @@ export class GoSemanticIndex {
   // Memoized (entries, packagePaths) for a project scope; the expensive
   // per-file packageCount is computed lazily on top of this via
   // `_packageCount` so package-mode queries (which never use packageCount)
-  // never pay for it.
+  // never pay for it. `findImplementations` piggybacks on the same object
+  // for its own lazily-computed, generation-scoped fields (records,
+  // recordsByIdentity, methodsByReceiver, promotedMethodsCache,
+  // candidatesCache) so repeated/paginated calls for the same
+  // (origin, project, ref) scope reuse work instead of rebuilding it -
+  // invalidation is free: a mutation bumps `mutationGeneration` (or
+  // `disposeProject` deletes the entry outright), so a stale scope object
+  // simply stops matching and a fresh one is built here next call.
   _scopeEntries(origin, project, ref) {
     const key = projectKey(origin, project, ref);
     const cached = this._scopeCache.get(key);
@@ -753,6 +748,14 @@ export class GoSemanticIndex {
       entries,
       packagePaths: new Set(entries.map((entry) => entry.packagePath)),
       packageCount: null,
+      records: null,
+      recordsByIdentity: null,
+      interfacesByIdentity: null,
+      methods: null,
+      methodsByReceiver: null,
+      assertions: null,
+      promotedMethodsCache: null,
+      candidatesCache: null,
     };
     this._scopeCache.set(key, scope);
     return scope;
@@ -764,6 +767,92 @@ export class GoSemanticIndex {
         .map((file) => `${entry.packagePath}\u0000${file.packageName}`))).size;
     }
     return scope.packageCount;
+  }
+
+  // The following `_scopeXxx` helpers all lazily fill in a sibling field on
+  // the same memoized `scope` object `_scopeEntries` returns, following the
+  // `_packageCount` pattern: computed at most once per (scope, generation),
+  // reused by every subsequent call -- including subsequent pagination
+  // pages of the same `findImplementations` query -- until a mutation
+  // invalidates the whole scope object.
+  _scopeRecords(scope) {
+    if (!scope.records) scope.records = scope.entries.flatMap((entry) => entry.typeRecords);
+    return scope.records;
+  }
+
+  _scopeRecordsByIdentity(scope) {
+    if (!scope.recordsByIdentity) {
+      scope.recordsByIdentity = new Map(this._scopeRecords(scope).map((record) => [record.identity, record]));
+    }
+    return scope.recordsByIdentity;
+  }
+
+  _scopeInterfacesByIdentity(scope) {
+    if (!scope.interfacesByIdentity) {
+      scope.interfacesByIdentity = new Map(this._scopeRecords(scope)
+        .filter((record) => record.kind === 'interface')
+        .map((record) => [record.identity, record]));
+    }
+    return scope.interfacesByIdentity;
+  }
+
+  _scopeMethodsByReceiver(scope) {
+    if (!scope.methodsByReceiver) {
+      if (!scope.methods) scope.methods = scope.entries.flatMap((entry) => entry.methods);
+      const map = new Map();
+      for (const method of scope.methods) {
+        const receiverMethods = map.get(method.receiverIdentity) || [];
+        receiverMethods.push(method);
+        map.set(method.receiverIdentity, receiverMethods);
+      }
+      scope.methodsByReceiver = map;
+    }
+    return scope.methodsByReceiver;
+  }
+
+  _scopeAssertions(scope) {
+    if (!scope.assertions) scope.assertions = scope.entries.flatMap((entry) => entry.assertions);
+    return scope.assertions;
+  }
+
+  // Cache in front of the recursive promoted-methods walk, keyed by
+  // (record.identity, pointer) -- the recursion itself (cycle-guard
+  // `visiting` semantics included) is unchanged; only the two entry points
+  // per candidate (`pointer=false`/`pointer=true`) are memoized, so repeat
+  // candidates sharing an embedded target record, and repeat pagination
+  // pages of the same query, skip the recursive walk entirely.
+  _scopePromotedMethods(scope, record, pointer) {
+    if (!record) return [];
+    if (!scope.promotedMethodsCache) scope.promotedMethodsCache = new Map();
+    const key = `${record.identity} ${pointer}`;
+    const cached = scope.promotedMethodsCache.get(key);
+    if (cached) return cached;
+    const methodsByReceiver = this._scopeMethodsByReceiver(scope);
+    const recordsByIdentity = this._scopeRecordsByIdentity(scope);
+    const walk = (current, currentPointer, visiting) => {
+      if (!current || visiting.has(current.identity)) return [];
+      visiting.add(current.identity);
+      const own = (methodsByReceiver.get(current.identity) || []).filter((method) => currentPointer || !method.pointer);
+      const ownNames = new Set(own.map((method) => method.identity.match(/^[^(]+/)?.[0] || method.identity));
+      const promotedByName = new Map();
+      for (const embedded of current.embeddedTypes || []) {
+        const embeddedRecord = recordsByIdentity.get(embedded.identity);
+        const branchMethods = walk(embeddedRecord, currentPointer || embedded.pointer, new Set(visiting));
+        const branchNames = new Set();
+        for (const method of branchMethods) {
+          const name = method.identity.match(/^[^(]+/)?.[0] || method.identity;
+          if (ownNames.has(name) || branchNames.has(name)) continue;
+          branchNames.add(name);
+          const matches = promotedByName.get(name) || [];
+          matches.push(method);
+          promotedByName.set(name, matches);
+        }
+      }
+      return [...own, ...[...promotedByName.values()].filter((matches) => matches.length === 1).flat()];
+    };
+    const result = walk(record, pointer, new Set());
+    scope.promotedMethodsCache.set(key, result);
+    return result;
   }
 
   searchScope({ origin = '', project, ref, packagePath = '', mode = 'project' }) {
@@ -1071,18 +1160,25 @@ export class GoSemanticIndex {
   }
 
   findImplementations({ origin = '', project, ref, interfaceDefinition, pageSize = 25, cursor = '' }) {
-    const entries = [...this.packages.values()].filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref);
-    const records = entries.flatMap((entry) => entry.typeRecords);
+    const scope = this._scopeEntries(origin, project, ref);
+    const records = this._scopeRecords(scope);
     const interfaceRecord = records.find((record) => record.kind === 'interface' && sameDefinition(record.definition, interfaceDefinition));
     if (!interfaceRecord) return { status: 'notFound', reason: 'interfaceNotIndexed' };
     if (interfaceRecord.file.buildConstrained) {
       return { status: 'unsupportedImplementations', reason: 'buildConstraint', interfaceDefinition };
     }
 
-    const recordsByIdentity = new Map(records.map((record) => [record.identity, record]));
-    const interfaces = new Map(records.filter((record) => record.kind === 'interface').map((record) => [record.identity, record]));
+    // recordsByIdentity/interfaces are memoized on the scope object (shared
+    // across every call for this (origin, project, ref) at this
+    // mutationGeneration) instead of being rebuilt from `records` here.
+    const recordsByIdentity = this._scopeRecordsByIdentity(scope);
+    const interfaces = this._scopeInterfacesByIdentity(scope);
     const required = new Set();
     const visited = new Set();
+    // Unsupported-interface detection stays a per-call walk from the one
+    // interface record being queried -- already cheap (single walk), and
+    // it also produces `required`/searchTerms for the response below, so
+    // there is nothing worth memoizing here beyond the maps it reads from.
     const collectMethods = (record) => {
       if (record.unsupported) return record.unsupported;
       if (visited.has(record.identity)) return '';
@@ -1105,67 +1201,50 @@ export class GoSemanticIndex {
       return { status: 'unsupportedImplementations', reason: unsupported, interfaceDefinition };
     }
 
-    const methods = entries.flatMap((entry) => entry.methods);
-    const methodsByReceiver = new Map();
-    for (const method of methods) {
-      const receiverMethods = methodsByReceiver.get(method.receiverIdentity) || [];
-      receiverMethods.push(method);
-      methodsByReceiver.set(method.receiverIdentity, receiverMethods);
-    }
-    const promotedMethods = (record, pointer, visiting = new Set()) => {
-      if (!record || visiting.has(record.identity)) return [];
-      visiting.add(record.identity);
-      const own = (methodsByReceiver.get(record.identity) || []).filter((method) => pointer || !method.pointer);
-      const ownNames = new Set(own.map((method) => method.identity.match(/^[^(]+/)?.[0] || method.identity));
-      const promotedByName = new Map();
-      for (const embedded of record.embeddedTypes || []) {
-        const embeddedRecord = recordsByIdentity.get(embedded.identity);
-        const branchMethods = promotedMethods(embeddedRecord, pointer || embedded.pointer, new Set(visiting));
-        const branchNames = new Set();
-        for (const method of branchMethods) {
-          const name = method.identity.match(/^[^(]+/)?.[0] || method.identity;
-          if (ownNames.has(name) || branchNames.has(name)) continue;
-          branchNames.add(name);
-          const matches = promotedByName.get(name) || [];
-          matches.push(method);
-          promotedByName.set(name, matches);
-        }
-      }
-      return [...own, ...[...promotedByName.values()].filter((matches) => matches.length === 1).flat()];
-    };
-    const assertions = entries.flatMap((entry) => entry.assertions);
     const requiredMethods = [...required];
     const searchTerms = [...new Set(requiredMethods.map((method) => method.match(/^[^(]+/)?.[0] || '').filter(Boolean))].sort();
-    const candidates = records
-      .filter((record) => record.kind === 'type' && !record.aliasIdentity)
-      .flatMap((record) => {
-        const targetRecord = record.aliasIdentity ? recordsByIdentity.get(record.aliasIdentity) || record : record;
-        const valueMethods = new Map(promotedMethods(targetRecord, false).map((method) => [method.identity, method]));
-        const pointerMethods = new Map(promotedMethods(targetRecord, true).map((method) => [method.identity, method]));
-        const valueMatches = requiredMethods.every((method) => valueMethods.has(method));
-        const pointerMatches = requiredMethods.every((method) => pointerMethods.has(method));
-        if (!valueMatches && !pointerMatches) return [];
-        const pointer = !valueMatches && pointerMatches;
-        const matchedMethods = requiredMethods.map((method) => (pointer ? pointerMethods : valueMethods).get(method)).filter(Boolean);
-        const asserted = assertions.some((assertion) => (
-          assertion.interfaceIdentity === interfaceRecord.identity && assertion.typeIdentity === record.identity
-        ));
-        return [{
-          ...record.definition,
-          displayName: `${pointer ? '*' : ''}${record.file.packageName}.${record.name}`,
-          pointer,
-          matchedMethods: matchedMethods.length,
-          methodCount: requiredMethods.length,
-          confidence: asserted ? 'asserted' : 'structural',
-          isTestDouble: record.file.generated || record.file.packageName?.endsWith('_test') || testDoublePath(record.definition.path)
-            || matchedMethods.some((method) => method.file?.generated || method.file?.packageName?.endsWith('_test') || testDoublePath(method.definition.path)),
-        }];
-      })
-      .sort((left, right) => {
-        if (left.isTestDouble !== right.isTestDouble) return left.isTestDouble ? 1 : -1;
-        if (left.confidence !== right.confidence) return left.confidence === 'asserted' ? -1 : 1;
-        return `${left.packagePath}/${left.name}`.localeCompare(`${right.packagePath}/${right.name}`);
-      });
+
+    // The full sorted candidate list depends only on (scope, generation,
+    // interfaceRecord.identity) -- it's identical across every pagination
+    // page of the same query, so it's cached once per interface and reused
+    // for every subsequent page (pagination becomes a slice over this
+    // array instead of a full recompute).
+    if (!scope.candidatesCache) scope.candidatesCache = new Map();
+    let candidates = scope.candidatesCache.get(interfaceRecord.identity);
+    if (!candidates) {
+      const assertions = this._scopeAssertions(scope);
+      candidates = records
+        .filter((record) => record.kind === 'type' && !record.aliasIdentity)
+        .flatMap((record) => {
+          const targetRecord = record.aliasIdentity ? recordsByIdentity.get(record.aliasIdentity) || record : record;
+          const valueMethods = new Map(this._scopePromotedMethods(scope, targetRecord, false).map((method) => [method.identity, method]));
+          const pointerMethods = new Map(this._scopePromotedMethods(scope, targetRecord, true).map((method) => [method.identity, method]));
+          const valueMatches = requiredMethods.every((method) => valueMethods.has(method));
+          const pointerMatches = requiredMethods.every((method) => pointerMethods.has(method));
+          if (!valueMatches && !pointerMatches) return [];
+          const pointer = !valueMatches && pointerMatches;
+          const matchedMethods = requiredMethods.map((method) => (pointer ? pointerMethods : valueMethods).get(method)).filter(Boolean);
+          const asserted = assertions.some((assertion) => (
+            assertion.interfaceIdentity === interfaceRecord.identity && assertion.typeIdentity === record.identity
+          ));
+          return [{
+            ...record.definition,
+            displayName: `${pointer ? '*' : ''}${record.file.packageName}.${record.name}`,
+            pointer,
+            matchedMethods: matchedMethods.length,
+            methodCount: requiredMethods.length,
+            confidence: asserted ? 'asserted' : 'structural',
+            isTestDouble: record.file.generated || record.file.packageName?.endsWith('_test') || testDoublePath(record.definition.path)
+              || matchedMethods.some((method) => method.file?.generated || method.file?.packageName?.endsWith('_test') || testDoublePath(method.definition.path)),
+          }];
+        })
+        .sort((left, right) => {
+          if (left.isTestDouble !== right.isTestDouble) return left.isTestDouble ? 1 : -1;
+          if (left.confidence !== right.confidence) return left.confidence === 'asserted' ? -1 : 1;
+          return `${left.packagePath}/${left.name}`.localeCompare(`${right.packagePath}/${right.name}`);
+        });
+      scope.candidatesCache.set(interfaceRecord.identity, candidates);
+    }
 
     const size = Math.max(1, Math.min(100, pageSize));
     const start = cursor ? Math.max(0, candidates.findIndex((candidate) => locationCursor(candidate) === cursor) + 1) : 0;
@@ -1188,6 +1267,30 @@ export class GoSemanticIndex {
 
     const identifierNode = findIdentifierNode(this._treeFor(file).rootNode, file.source, line, character, identifier, occurrence, fileLines(file));
     if (!identifierNode) return { status: 'notFound', reason: 'identifierNotFound' };
+    return this._resolveAtNode({ origin, project, ref, entry, file, path, identifierNode });
+  }
+
+  // A restored-from-snapshot `identifierCandidates` entry carries a bare
+  // position stub (see `restoreIndex`), not a live tree-sitter node, until
+  // its file is actually parsed. Reuse the node as-is when it's already
+  // live; otherwise resolve it against the (lazily materialized) tree by
+  // position alone — cheaper than `findIdentifierNode`'s fallback text scan
+  // because the exact row/column is already known to be correct.
+  _identifierNodeAt(file, candidateNode) {
+    if (candidateNode.type) return candidateNode;
+    let node = this._treeFor(file).rootNode.descendantForPosition({
+      row: candidateNode.startPosition.row,
+      column: candidateNode.startPosition.column,
+    });
+    while (node && !IDENTIFIER_TYPES.has(node.type)) node = node.parent;
+    return node;
+  }
+
+  // Resolution from an already-known identifier node, skipping the
+  // tree-walk-based lookup `resolve()` needs when it only has a position.
+  // `findReferences` calls this directly with the node its identifier-name
+  // index already carries, instead of re-locating it per candidate.
+  _resolveAtNode({ origin, project, ref, entry, file, path, identifierNode }) {
     const symbol = textOf(file.source, identifierNode);
     const parent = identifierNode.parent;
     let candidates = [];
@@ -1308,15 +1411,18 @@ export class GoSemanticIndex {
       };
       if (cursor && locationCursor(location) <= cursor) continue;
       if (sameDefinition({ ...definition, ...location }, definition)) continue;
-      const result = this.resolve({
+      const candidateEntry = this.packages.get(packageKey(origin, project, ref, candidatePackagePath));
+      if (!candidateEntry) continue;
+      const identifierNode = this._identifierNodeAt(file, node);
+      if (!identifierNode) continue;
+      const result = this._resolveAtNode({
         origin,
         project,
         ref,
-        packagePath: candidatePackagePath,
+        entry: candidateEntry,
+        file,
         path: file.path,
-        line: location.line,
-        character: utf16Column(fileLines(file)[node.startPosition.row] || '', node.startPosition.column),
-        identifier: definition.name,
+        identifierNode,
       });
       if (result.status === 'resolved' && sameDefinition(result.definition, definition)) locations.push(location);
       if (locations.length > size) break;
