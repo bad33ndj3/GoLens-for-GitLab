@@ -1,57 +1,52 @@
 // page/features/keyboard-nav.js — hides: hunk/file target computation, key
-// matching, and shortcut-coach offering (ticket 17; boundary from ticket 03
-// §2, interface from ticket 04 §3). Carved out of go-navigation.js (the
+// matching, and shortcut-coach offering. Carved out of go-navigation.js (the
 // coach system, hunk/file navigation) and content.js (the global keydown
 // dispatch loop, native-file-search helpers). Pure decision core in
 // keyboard-nav.internal.js; DOM/messaging in this shell.
 //
 // mount(ctx) -> { unmount, offerShortcutCoach(actionID) }. `ctx.overlays`
-// replaces the old #golens-*-root DOM read for coach suppression (ticket 12).
-// Capabilities page/main.js injects, since none are reachable any other way
-// without a feature -> feature edge (ticket 03 §3):
-//   - navigationAction(action) -> boolean (ticket 21) — forwards the five
-//     actions page/features/code-intel.js now owns (semanticJump,
-//     previousOccurrence, nextOccurrence, historyBack, historyForward) to
-//     that module's handle. Tried first; returns false for actions it
-//     doesn't own (its own closed action set), so this file falls through
-//     to runLegacyNavigationAction below for those.
+// replaces the old #golens-*-root DOM read for coach suppression. Capabilities
+// page/main.js injects, since none are reachable any other way without a
+// feature -> feature edge:
+//   - navigationAction(action) -> boolean — forwards the five actions
+//     page/features/code-intel.js now owns (semanticJump, previousOccurrence,
+//     nextOccurrence, historyBack, historyForward) to that module's handle.
+//     Tried first; returns false for actions it doesn't own, so this file
+//     falls through to runLegacyNavigationAction below for those.
 //   - runLegacyNavigationAction(action) -> boolean — the three remaining
 //     actions (toggleBookmark, previousBookmark, nextBookmark), reproducing
-//     go-navigation.js's former (shrunk-by-ticket-21) runNavigationAction()
-//     body directly against page/features/bookmarks.js's real handle
-//     (ticket 22 — the name survives, the implementation moved into
-//     page/main.js's closure instead of a globalThis bridge).
+//     go-navigation.js's former runNavigationAction() body directly against
+//     page/features/bookmarks.js's real handle.
 //   - legacyToast: { message(text), shortcutHint(hint), isShowing() } — the
-//     shared toast surface (page/lifecycle/mr-session.js's `toast` instance,
-//     ticket 29) serving ~15 call sites (bookmarks, semantic jump, copy,
-//     project search, …); giving this module its own toast host would mean
-//     two toast surfaces that can show at once, which the "gedragen zich
-//     identiek" acceptance criterion forbids. This module still owns the
-//     *decision* of whether and what to show (isCoachBlocked,
-//     messageForAction) — the former shortcutCoachBlocked()/
-//     SHORTCUT_COACH_MESSAGES/offerShortcutCoach().
-//   - minimizeProjectSearch()/handleCodeIntelEscape(event) (ticket 22/20/21)
-//     — document-level Escape routing, formerly go-navigation.js's onKeyDown.
-//     Wired here (not a new page/lifecycle-level keydown listener) since
-//     this module already owns document-level keydown dispatch; see
-//     onEscapeKeyDown below for the exact behavior preserved.
+//     shared toast surface (page/lifecycle/mr-session.js's `toast` instance)
+//     serving multiple call sites; giving this module its own toast host would
+//     mean two toast surfaces that can show at once. This module still owns
+//     the *decision* of whether and what to show (isCoachBlocked,
+//     messageForAction).
+//   - minimizeProjectSearch()/handleCodeIntelEscape(event) — document-level
+//     Escape routing, formerly go-navigation.js's onKeyDown. Wired here (not
+//     a new page/lifecycle-level keydown listener) since this module already
+//     owns document-level keydown dispatch; see onEscapeKeyDown below for the
+//     exact behavior preserved.
+//   - shortcutCoach — optional test seam; defaults to shortcut-settings.js's
+//     real exported singleton (a normal ES-module import, not a globalThis
+//     contract). Binding data (actions/mergeBindings/matchesEvent) always
+//     comes from that same import directly; nothing to fake there.
 //
 // Reverse bridge: code-intel.js's own remaining offerShortcutCoach() call
-// sites (historyBack, nextOccurrence, semanticJump — none of them this
-// module's own hunk/file actions) reach this module's offerShortcutCoach
-// through the module-scope `active` export below (page/main.js passes it
-// into code-intel's `legacy.offerShortcutCoach`), mirroring celebration.js's
-// requestMoment() pattern exactly (ticket 14): there is only ever one
+// sites reach this module's offerShortcutCoach through the module-scope `active`
+// export below (page/main.js passes it into code-intel's `legacy.offerShortcutCoach`),
+// mirroring celebration.js's requestMoment() pattern: there is only ever one
 // mounted instance, so a bare module-level export forwarding to whichever
 // instance is currently mounted is simpler than plumbing a capability the
-// other direction. A call while nothing is mounted is a silent no-op, same
-// as celebration's requestMoment during the mount/unmount gap.
+// other direction. A call while nothing is mounted is a silent no-op.
 //
-// Mount-once lifetime, not pageKey-tracked (same deviation ticket 14/16
-// documented): bootstrap.js remounts the whole page/main.js module graph on
-// every location.href change, so the hunk/file navigation cursor
-// (`elementNavigation`) resets on every such change, where go-navigation.js's
-// legacy teardown() only reset it on actually leaving the merge request.
+// Mount-once lifetime, not pageKey-tracked: bootstrap.js remounts the whole
+// page/main.js module graph on every location.href change, so the hunk/file
+// navigation cursor (`elementNavigation`) resets on every such change, where
+// go-navigation.js's legacy teardown() only reset it on actually leaving the
+// merge request.
+import * as shortcutSettings from '../../shortcut-settings.js';
 import {
   isMergeRequestPath,
   pickNavigationIndex,
@@ -82,6 +77,7 @@ export function mount(ctx = {}) {
   const legacyToast = ctx.legacyToast || {};
   const minimizeProjectSearch = ctx.minimizeProjectSearch;
   const handleCodeIntelEscape = ctx.handleCodeIntelEscape;
+  const shortcutCoach = ctx.shortcutCoach || shortcutSettings.shortcutCoach;
 
   let unmounted = false;
   // Starts true (not the usual "false until settings.ready()" feature-module
@@ -199,7 +195,7 @@ export function mount(ctx = {}) {
   }
 
   // Mirrors go-navigation.js's former two-check shape exactly: blocked is
-  // checked once before asking GoLensShortcutCoach.consider() (cheap early
+  // checked once before asking shortcutCoach.consider() (cheap early
   // exit) and again after it resolves, since consider() awaits its own
   // storage round trip during which an overlay can open or another toast
   // can start — the old showShortcutCoachHint() re-checked
@@ -208,7 +204,7 @@ export function mount(ctx = {}) {
     const message = messageForAction(actionID);
     if (!message || !enabled || coachBlockedNow()) return false;
     try {
-      const hint = await globalThis.GoLensShortcutCoach?.consider?.(actionID);
+      const hint = await shortcutCoach?.consider?.(actionID);
       if (!hint || coachBlockedNow()) return false;
       return legacyToast.shortcutHint?.({ actionID: hint.actionID, message, displayBinding: hint.displayBinding }) ?? false;
     } catch {
@@ -220,10 +216,9 @@ export function mount(ctx = {}) {
 
   function onKeyDown(event) {
     if (!enabled || !isMergeRequestPage() || event.isComposing || isBlockedShortcutEvent(event)) return;
-    const shortcuts = globalThis.GoLensShortcuts;
-    const bindings = shortcuts?.mergeBindings(settings?.get('shortcutBindings'));
-    if (!shortcuts || !bindings) return;
-    const action = shortcuts.actions.find(({ id }) => shortcuts.matchesEvent(bindings[id], event))?.id;
+    const bindings = shortcutSettings.mergeBindings(settings?.get('shortcutBindings'));
+    if (!bindings) return;
+    const action = shortcutSettings.actions.find(({ id }) => shortcutSettings.matchesEvent(bindings[id], event))?.id;
     if (!action) return;
     let handled = false;
     if (action === 'focusFileSearch') handled = focusNativeFileSearch();
@@ -235,7 +230,7 @@ export function mount(ctx = {}) {
     else handled = navigationAction?.(action) === true || runLegacyNavigationAction?.(action) === true;
     if (handled) {
       event.preventDefault();
-      void globalThis.GoLensShortcutCoach?.markShortcutUsed?.(action);
+      void shortcutCoach?.markShortcutUsed?.(action);
     }
   }
 

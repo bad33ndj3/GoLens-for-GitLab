@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSettingsStore } from '../page/platform/settings-store.js';
+import { defaultBindings } from '../shortcut-settings.js';
 
 function fakeStorage() {
   const areas = { sync: {}, local: {} };
@@ -35,7 +36,7 @@ test('ready() resolves defaults for unset keys, get() returns a sync snapshot', 
   assert.equal(store.get('enabled'), true);
   assert.equal(store.get('hideGeneratedFiles'), false);
   assert.equal(store.get('shortcutCoachEnabled'), true);
-  assert.deepEqual(store.get('shortcutBindings'), {});
+  assert.deepEqual(store.get('shortcutBindings'), defaultBindings());
   assert.equal(store.get('golensOnboardingVersion'), 0);
 });
 

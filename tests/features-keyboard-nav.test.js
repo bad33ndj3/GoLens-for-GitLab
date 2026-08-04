@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { mount } from '../page/features/keyboard-nav.js';
+import * as shortcutSettings from '../shortcut-settings.js';
 
 function fakeOverlayRegistry() {
   let openCount = 0;
@@ -58,8 +59,8 @@ function buildFixture(pathname = '/group/project/-/merge_requests/42/diffs') {
 test('offerShortcutCoach: enabled, unblocked, eligible -> renders through legacyToast.shortcutHint with the right message', async () => {
   buildFixture();
   const legacyToast = fakeLegacyToast();
-  globalThis.GoLensShortcutCoach = { consider: async () => ({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }) };
-  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast });
+  const shortcutCoach = { consider: async () => ({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }) };
+  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast, shortcutCoach });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const shown = await handle.offerShortcutCoach('semanticJump');
@@ -70,12 +71,12 @@ test('offerShortcutCoach: enabled, unblocked, eligible -> renders through legacy
   handle.unmount();
 });
 
-test('offerShortcutCoach: an action with no coach copy never asks GoLensShortcutCoach', async () => {
+test('offerShortcutCoach: an action with no coach copy never asks shortcutCoach', async () => {
   buildFixture();
   let considered = false;
-  globalThis.GoLensShortcutCoach = { consider: async () => { considered = true; return null; } };
+  const shortcutCoach = { consider: async () => { considered = true; return null; } };
   const legacyToast = fakeLegacyToast();
-  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast });
+  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast, shortcutCoach });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const shown = await handle.offerShortcutCoach('previousHunk');
@@ -89,10 +90,10 @@ test('offerShortcutCoach: an action with no coach copy never asks GoLensShortcut
 
 test('offerShortcutCoach: blocked when the tab is hidden, an overlay is open, or the toast is already showing', async () => {
   buildFixture();
-  globalThis.GoLensShortcutCoach = { consider: async () => ({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }) };
+  const shortcutCoach = { consider: async () => ({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }) };
   const overlays = fakeOverlayRegistry();
   const legacyToast = fakeLegacyToast();
-  const handle = mount({ overlays, settings: fakeSettings(), legacyToast });
+  const handle = mount({ overlays, settings: fakeSettings(), legacyToast, shortcutCoach });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   overlays.setOpen(1);
@@ -109,11 +110,11 @@ test('offerShortcutCoach: blocked when the tab is hidden, an overlay is open, or
   handle.unmount();
 });
 
-test('offerShortcutCoach: re-checks blocked after the GoLensShortcutCoach.consider() await, not just before it', async () => {
+test('offerShortcutCoach: re-checks blocked after the shortcutCoach.consider() await, not just before it', async () => {
   buildFixture();
   const overlays = fakeOverlayRegistry();
   const legacyToast = fakeLegacyToast();
-  globalThis.GoLensShortcutCoach = {
+  const shortcutCoach = {
     consider: async () => {
       // An overlay opens while consider() is awaiting its own storage
       // round trip — the exact race the old shortcutCoachBlocked()
@@ -122,7 +123,7 @@ test('offerShortcutCoach: re-checks blocked after the GoLensShortcutCoach.consid
       return { actionID: 'semanticJump', displayBinding: 'Ctrl+F12' };
     },
   };
-  const handle = mount({ overlays, settings: fakeSettings(), legacyToast });
+  const handle = mount({ overlays, settings: fakeSettings(), legacyToast, shortcutCoach });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const shown = await handle.offerShortcutCoach('semanticJump');
@@ -135,12 +136,12 @@ test('offerShortcutCoach: re-checks blocked after the GoLensShortcutCoach.consid
 
 test('offerShortcutCoach: enabled defaults true before settings.ready() resolves, matching content.js\'s old optimistic default', async () => {
   buildFixture();
-  globalThis.GoLensShortcutCoach = { consider: async () => ({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }) };
+  const shortcutCoach = { consider: async () => ({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }) };
   const legacyToast = fakeLegacyToast();
   const settings = fakeSettings();
   let resolveReady;
   settings.ready = () => new Promise((resolve) => { resolveReady = resolve; });
-  const handle = mount({ overlays: fakeOverlayRegistry(), settings, legacyToast });
+  const handle = mount({ overlays: fakeOverlayRegistry(), settings, legacyToast, shortcutCoach });
 
   const shown = await handle.offerShortcutCoach('semanticJump');
 
@@ -149,11 +150,11 @@ test('offerShortcutCoach: enabled defaults true before settings.ready() resolves
   handle.unmount();
 });
 
-test('offerShortcutCoach: disabled never asks GoLensShortcutCoach', async () => {
+test('offerShortcutCoach: disabled never asks shortcutCoach', async () => {
   buildFixture();
   let considered = false;
-  globalThis.GoLensShortcutCoach = { consider: async () => { considered = true; return null; } };
-  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings({ enabled: false }), legacyToast: fakeLegacyToast() });
+  const shortcutCoach = { consider: async () => { considered = true; return null; } };
+  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings({ enabled: false }), legacyToast: fakeLegacyToast(), shortcutCoach });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(await handle.offerShortcutCoach('semanticJump'), false);
@@ -173,17 +174,17 @@ test('keydown dispatch: file-search shortcuts do not consume input in GitLab edi
   const navigationActions = [];
   const learnedActions = [];
   const coachedActions = [];
-  await import('../shortcut-settings.js?features-keyboard-nav-test');
-  globalThis.GoLensShortcutCoach = {
+  const shortcutCoach = {
     markShortcutUsed(action) { learnedActions.push(action); return Promise.resolve(true); },
     consider(action) { coachedActions.push(action); return Promise.resolve(null); },
   };
 
   const handle = mount({
     overlays: fakeOverlayRegistry(),
-    settings: fakeSettings({ shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() }),
+    settings: fakeSettings({ shortcutBindings: shortcutSettings.defaultBindings() }),
     legacyToast: fakeLegacyToast(),
     runLegacyNavigationAction: (action) => { navigationActions.push(action); return true; },
+    shortcutCoach,
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -242,8 +243,8 @@ test('manually clicking the native file search offers the coach, matching the le
   const window = buildFixture();
   window.document.body.innerHTML = '<div data-testid="file-browser"><input id="file-search" placeholder="Search (e.g. *.vue)"></div>';
   const coachedActions = [];
-  globalThis.GoLensShortcutCoach = { consider: async (action) => { coachedActions.push(action); return null; } };
-  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast: fakeLegacyToast() });
+  const shortcutCoach = { consider: async (action) => { coachedActions.push(action); return null; } };
+  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast: fakeLegacyToast(), shortcutCoach });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   window.document.getElementById('file-search').click();
@@ -271,13 +272,13 @@ test('hunk navigation: falls back to scanning changed rows when no explicit hunk
     row.getBoundingClientRect = () => ({ top: 100 });
   }
   const legacyToast = fakeLegacyToast();
-  globalThis.GoLensShortcutCoach = { consider: async () => null };
-  await import('../shortcut-settings.js?features-keyboard-nav-hunk-test');
+  const shortcutCoach = { consider: async () => null };
   const handle = mount({
     overlays: fakeOverlayRegistry(),
-    settings: fakeSettings({ shortcutBindings: globalThis.GoLensShortcuts.defaultBindings() }),
+    settings: fakeSettings({ shortcutBindings: shortcutSettings.defaultBindings() }),
     legacyToast,
     runLegacyNavigationAction: () => false,
+    shortcutCoach,
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -298,8 +299,8 @@ test('hunk navigation: falls back to scanning changed rows when no explicit hunk
 test('unmount() removes both listeners and clears the hunk/file navigation cursor', async () => {
   const window = buildFixture();
   window.document.body.innerHTML = '<div data-testid="file-browser"><input id="file-search" placeholder="Search (e.g. *.vue)"></div>';
-  globalThis.GoLensShortcutCoach = { consider: async () => null };
-  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast: fakeLegacyToast() });
+  const shortcutCoach = { consider: async () => null };
+  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast: fakeLegacyToast(), shortcutCoach });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   handle.unmount();
@@ -318,9 +319,9 @@ test('module-scope offerShortcutCoach() forwards to the currently-mounted instan
   buildFixture();
   assert.equal(await moduleOfferShortcutCoach('semanticJump'), false, 'nothing mounted yet is a silent no-op');
 
-  globalThis.GoLensShortcutCoach = { consider: async () => ({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }) };
+  const shortcutCoach = { consider: async () => ({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }) };
   const legacyToast = fakeLegacyToast();
-  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast });
+  const handle = mount({ overlays: fakeOverlayRegistry(), settings: fakeSettings(), legacyToast, shortcutCoach });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   assert.equal(await moduleOfferShortcutCoach('semanticJump'), true);

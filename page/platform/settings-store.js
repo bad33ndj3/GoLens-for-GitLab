@@ -1,14 +1,15 @@
 // platform/settings-store — the one seam for `chrome.storage` access. Hides
 // area layout (sync vs local), `onChanged` plumbing, and default-merging
 // behind a small key/value contract so callers never touch `chrome.storage`
-// directly. Per ticket 04 §2:
+// directly. Contract:
 //   createSettingsStore() -> { get(key), ready(), subscribe(key, fn), set(key, value) }
 //
-// Key ownership (ticket 03 §5) is a convention this module documents but does
-// not enforce: `enabled` belongs to lifecycle, `hideGeneratedFiles` to
+// Key ownership is a convention this module documents but does not enforce:
+// `enabled` belongs to lifecycle, `hideGeneratedFiles` to
 // features/generated-files, `shortcutBindings`/`shortcutCoachEnabled` to this
 // module itself (the seam toward `settings.js`/`shortcut-settings.js`, which
 // stay out of scope and keep writing those keys directly for now).
+import { defaultBindings } from '../../shortcut-settings.js';
 
 const SCHEMA = {
   enabled: { area: 'sync', default: true },
@@ -16,7 +17,7 @@ const SCHEMA = {
   shortcutCoachEnabled: { area: 'sync', default: true },
   shortcutBindings: {
     area: 'sync',
-    default: () => globalThis.GoLensShortcuts?.defaultBindings?.() || {},
+    default: () => defaultBindings(),
   },
   golensOnboardingVersion: { area: 'local', default: 0 },
 };

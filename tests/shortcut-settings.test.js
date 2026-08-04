@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-
-await import('../shortcut-settings.js?shortcut-settings-test');
-const shortcuts = globalThis.GoLensShortcuts;
+import * as shortcuts from '../shortcut-settings.js';
 
 test('normalizes, displays, and matches portable shortcut bindings', () => {
   assert.equal(shortcuts.normalizeBinding('Shift+Alt+BracketRight'), 'Alt+Shift+BracketRight');

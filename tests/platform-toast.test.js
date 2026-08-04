@@ -1,10 +1,7 @@
-// Ticket 29: page/platform/toast.js as a unit. The shadow host is real
-// (happy-dom), the timers are real but never waited out — the auto-hide
-// delays are asserted through a stubbed global setTimeout instead, so the
-// suite stays instant.
-//
-// tests/shortcut-coach-ui.test.js still drives the same surface through
-// go-navigation.js's wrappers, which is what proves the bridge is wired up.
+// page/platform/toast.js as a unit. The shadow host is real (happy-dom),
+// the timers are real but never waited out — the auto-hide delays are
+// asserted through a stubbed global setTimeout instead, so the suite stays
+// instant.
 
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -39,7 +36,6 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.setTimeout = realSetTimeout;
   globalThis.clearTimeout = realClearTimeout;
-  delete globalThis.GoLensShortcutCoach;
 });
 
 function toastElement() {
@@ -142,8 +138,8 @@ test('the dismiss button hides the toast', () => {
 
 test('the disable button turns tips off and confirms it', async () => {
   let enabled = true;
-  globalThis.GoLensShortcutCoach = { async setEnabled(value) { enabled = value; return true; } };
-  const surface = createToast();
+  const shortcutCoach = { async setEnabled(value) { enabled = value; return true; } };
+  const surface = createToast({ shortcutCoach });
   surface.showShortcutCoachHint({ message: 'hint', displayBinding: 'X' });
 
   document.getElementById('golens-go-toast-root').shadowRoot
@@ -155,8 +151,8 @@ test('the disable button turns tips off and confirms it', async () => {
 });
 
 test('the disable button reports a failure to save rather than claiming success', async () => {
-  globalThis.GoLensShortcutCoach = { async setEnabled() { return false; } };
-  const surface = createToast();
+  const shortcutCoach = { async setEnabled() { return false; } };
+  const surface = createToast({ shortcutCoach });
   surface.showShortcutCoachHint({ message: 'hint', displayBinding: 'X' });
 
   document.getElementById('golens-go-toast-root').shadowRoot

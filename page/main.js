@@ -1,22 +1,20 @@
-// page/main.js — first entry point of the real ES-module page skeleton
-// (ticket 05). Loaded via `import(chrome.runtime.getURL('page/main.js'))`
-// from the thin bootstrap content script.
+// page/main.js — first entry point of the real ES-module page skeleton.
+// Loaded via `import(chrome.runtime.getURL('page/main.js'))` from the thin
+// bootstrap content script.
 //
-// Follows the uniform page-module contract (ticket 04 §1):
+// Follows the uniform page-module contract:
 //   export function mount(ctx) -> handle
 // where `handle.unmount()` is total and mount-after-unmount is safe (SPA
 // navigation re-mounts this module on every page transition).
 //
-// Ticket 22 (contract & reassess, folding in 31/34/35/36's deferred work —
-// see map.md's "Batch 3" section): `go-navigation.js` and `content.js` are
-// deleted. Every feature below now gets a REAL, fully capable `legacy`
-// bag/capability set built from this file's own imports and
-// `page/lifecycle/mr-session.js` — there is no more "second, inert instance"
-// distinction; each feature mounted here is the only instance. Cross-feature
-// needs (ticket 03 §3's sanctioned escape hatch: "capabilities that
-// lifecycle injects at mount") are wired below via late-bound accessor
-// closures onto each handle variable, never a captured value (batch 1's
-// platform-services decision) and never `globalThis`.
+// `go-navigation.js` and `content.js` are deleted. Every feature below now
+// gets a REAL, fully capable `legacy` bag/capability set built from this
+// file's own imports and `page/lifecycle/mr-session.js` — there is no more
+// "second, inert instance" distinction; each feature mounted here is the only
+// instance. Cross-feature needs are wired below via late-bound accessor
+// closures onto each handle variable, never a captured value and never
+// `globalThis`.
+import { createStore as createBookmarkStore, hashText as hashBookmarkText } from '../bookmark-store.js';
 import { createClock } from './platform/clock.js';
 import { createSettingsStore } from './platform/settings-store.js';
 import { createOverlayRegistry } from './platform/overlay-registry.js';
@@ -87,28 +85,26 @@ export function mount(ctx = {}) {
       {
         name: 'keyboard-nav',
         mount: mountKeyboardNav,
-        // Capabilities (ticket 03 §3): keyboard-nav.js can't reach the other
-        // features' state any other way without a feature -> feature edge.
+        // Capabilities: keyboard-nav.js can't reach the other features' state
+        // any other way without a feature -> feature edge.
         capabilities: {
-          // Ticket 21: code-intel.js's own five navigation actions
+          // Code-intel.js's own five navigation actions
           // (semanticJump/previousOccurrence/nextOccurrence/historyBack/
           // historyForward).
           navigationAction: (action) => codeIntelHandle?.navigationAction?.(action) === true,
-          // Ticket 22/18: the three bookmark actions (toggleBookmark/
-          // previousBookmark/nextBookmark) — go-navigation.js's former
-          // runNavigationAction(), shrunk by ticket 21 to just these, is
+          // The three bookmark actions (toggleBookmark/previousBookmark/
+          // nextBookmark) — go-navigation.js's former runNavigationAction() is
           // gone; this closure reproduces its exact body (the selected-
           // occurrence fallback chain, then bookmarksHandle.toggleAtSelection/
           // navigate) directly against the real handles instead of a
-          // globalThis bridge (constraint 6: a feature -> feature edge is
-          // removed here, not relocated).
+          // globalThis bridge (a feature -> feature edge is removed here, not
+          // relocated).
           runLegacyNavigationAction: (action) => {
             // go-navigation.js's former runNavigationAction() gated its whole
-            // body on `state.enabled` — the MR-activation latch (ticket 34:
-            // distinct from the settings `enabled` flag keyboard-nav.js
-            // already gates on). Preserved verbatim: gate on session
-            // activation, not the settings flag, or these three actions
-            // would fire on an inactive session.
+            // body on `state.enabled` — the MR-activation latch (distinct from
+            // the settings `enabled` flag keyboard-nav.js already gates on).
+            // Preserved verbatim: gate on session activation, not the settings
+            // flag, or these three actions would fire on an inactive session.
             if (!session.isActive()) return false;
             if (action === 'toggleBookmark') {
               const selectedTarget = codeIntelHandle?.selectedOccurrenceSourceLocation?.() ?? null;
@@ -127,11 +123,11 @@ export function mount(ctx = {}) {
             shortcutHint: (hint) => session.toast.showShortcutCoachHint(hint),
             isShowing: () => session.toast.isToastShowing(),
           },
-          // Ticket 22/20/21: document-level Escape routing, in the original
-          // priority order (project-search-minimize first, then the
-          // popover) — see this file's own onEscapeKeyDown wiring below in
-          // keyboard-nav.js for why it lives there rather than a new
-          // lifecycle-level keydown listener.
+          // Document-level Escape routing, in the original priority order
+          // (project-search-minimize first, then the popover) — see this
+          // file's own onEscapeKeyDown wiring below in keyboard-nav.js for
+          // why it lives there rather than a new lifecycle-level keydown
+          // listener.
           minimizeProjectSearch: () => projectSearchHandle?.minimize?.(),
           handleCodeIntelEscape: (event) => codeIntelHandle?.handleEscape?.(event),
         },
@@ -151,11 +147,10 @@ export function mount(ctx = {}) {
             modulePathFor: (...args) => session.gitlabApi.modulePathFor(...args),
             searchProjectBlobPaths: (...args) => session.gitlabApi.searchProjectBlobPaths(...args),
             projectLoadingProgress,
-            // Ticket 28: both used to reach into `state.packages`/
-            // `state.projects`/`state.projectProgressListeners` directly.
-            // The source-loader instance owns those caches, and with them
-            // the "never drop a project load that still has subscribers"
-            // rule.
+            // Both used to reach into `state.packages`/`state.projects`/
+            // `state.projectProgressListeners` directly. The source-loader
+            // instance owns those caches, and with them the "never drop a
+            // project load that still has subscribers" rule.
             forgetStaleProjectCache(scope) {
               session.sourceLoader.forgetStaleProject(scope);
             },
@@ -189,8 +184,8 @@ export function mount(ctx = {}) {
         name: 'bookmarks',
         mount: trackHandle((handle) => { bookmarksHandle = handle; }, mountBookmarks),
         capabilities: {
-          bookmarkStore: globalThis.GoLensBookmarks?.createStore ? globalThis.GoLensBookmarks.createStore() : null,
-          hashText: globalThis.GoLensBookmarks?.hashText,
+          bookmarkStore: createBookmarkStore(),
+          hashText: hashBookmarkText,
           legacy: {
             projectContext: gitlabApiPure.projectContext,
             mergeRequestIID: gitlabApiPure.mergeRequestIID,
@@ -208,9 +203,9 @@ export function mount(ctx = {}) {
             lineAnchorFor: (...args) => diffDom.lineAnchorFor(...args),
             toast: (message) => session.toast.toast(message),
             isEnabled: () => session.isActive(),
-            // Ticket 21: the hovered target's source location is
-            // code-intel.js's own state — forwards to its selectedSymbolLocation()
-            // handle method instead of reading it directly.
+            // The hovered target's source location is code-intel.js's own
+            // state — forwards to its selectedSymbolLocation() handle method
+            // instead of reading it directly.
             selectedSymbolLocation: () => codeIntelHandle?.selectedSymbolLocation?.() ?? null,
           },
         },

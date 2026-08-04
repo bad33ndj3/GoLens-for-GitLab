@@ -49,7 +49,7 @@ test('snapshotRecords treats every record as stale when there is no current scop
   assert.equal(snapshot.stale.length, 1);
 });
 
-// Deterministic stand-in for GoLensBookmarks.hashText: distinct inputs get
+// Deterministic stand-in for bookmark-store.js's hashText: distinct inputs get
 // distinct hashes, same input gets the same hash, matching everything these
 // tests need from a real hash function.
 async function hashText(value) {

@@ -1,14 +1,12 @@
 // page/features/onboarding.internal.js — pure decision core for
-// page/features/onboarding.js (ticket 15; contract per ticket 04 §1's
-// internal-seam convention, mirrored from settings-overlay.internal.js). No
-// DOM, no chrome.*, no timers: markup builders return HTML strings from
-// already-resolved data (URLs, booleans, precomputed option markup), they
-// never read chrome.runtime.getURL or globalThis.GoLensShortcuts themselves.
+// page/features/onboarding.js. No DOM, no chrome.*, no timers: markup
+// builders return HTML strings from already-resolved data (URLs, booleans,
+// precomputed option markup), they never read chrome.runtime.getURL or
+// shortcut-settings.js themselves.
 
 // isGitLabPage({ hasGitlabGlobal, hasCsrfMeta, hasAppShell }) -> mirrors
-// content.js's own isGitLab() heuristic, duplicated per
-// settings-overlay.internal.js's precedent (a one-line, unlikely-to-drift
-// predicate, not worth a shared platform module for one ticket's sake). Total.
+// content.js's own isGitLab() heuristic, duplicated per precedent: a one-line,
+// unlikely-to-drift predicate, not worth a shared platform module. Total.
 export function isGitLabPage({ hasGitlabGlobal, hasCsrfMeta, hasAppShell }) {
   return Boolean(hasGitlabGlobal || (hasCsrfMeta && hasAppShell));
 }

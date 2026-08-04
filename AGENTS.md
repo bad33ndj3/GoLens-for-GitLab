@@ -22,11 +22,11 @@ GoLens for GitLab is a dependency-light Manifest V3 browser extension.
     `keyboard-nav`, `mr-preload`, `onboarding`, `project-search`, `settings-overlay`. A
     `*.internal.js` sibling holds that feature's pure decision functions (functional core); the
     `*.js` file is the shell that executes effects.
-- `bookmark-store.js` and `shortcut-settings.js` are legacy classic content scripts, injected by the
-  manifest ahead of `bootstrap.js`. They are the only sanctioned `globalThis` contracts
-  (`GoLensBookmarks`, `GoLensShortcuts`, `GoLensShortcutCoach`) because `settings.js` and the page
-  graph both need them and neither can import the other. Do not add new ones. The intended end state
-  is that these two contracts disappear; nothing has been done toward that yet.
+- `bookmark-store.js` and `shortcut-settings.js` are real ES modules at the repo root (not content
+  scripts; the manifest no longer injects them), imported directly by whichever of `settings.js` and
+  the page graph needs them. `shortcut-settings.js` also exports a shared `shortcutCoach` singleton
+  (module-import semantics — the same instance every importer gets — replacing the former
+  `globalThis.GoLensShortcutCoach`).
 - `worker/index-core.js` contains the parser-backed Go symbol index, `worker/source-cache.js` its
   IndexedDB source cache; `worker/dispatch.js` exposes both through the extension service worker
   (`manifest.json`'s `background.service_worker`).
@@ -49,8 +49,8 @@ without exception:
   `page/main.js` injects at mount, as a late-bound accessor closure — never a captured value.
 - `feature → lifecycle`, and `platform → feature` or `platform → lifecycle`.
 - `page → worker` other than through `page/platform/rpc-client.js`.
-- Any new `globalThis` contract between modules. The three legacy ones listed above are the whole
-  set; `globalThis.GoLensBootstrap` is a test seam no production code reads.
+- Any new `globalThis` contract between modules. `globalThis.GoLensBootstrap` is the only one left,
+  and it is a test seam no production code reads.
 
 Each module owns its state through `mount(ctx) → { unmount, …≤5 methods }`: no module-level mutable
 globals, and `unmount()` must be total and safe to re-mount after. Each `chrome.storage` key has one
@@ -80,7 +80,7 @@ For manual testing, load the repository through `chrome://extensions` using **Lo
 
 ## Runtime & User Workflow
 
-The manifest injects `shortcut-settings.js` and `bookmark-store.js` with the stylesheets, then `bootstrap.js`, automatically on GitLab.com; `page/*` ships as a web-accessible resource so the dynamic `import()` resolves. Self-hosted GitLab origins require explicit user approval and persistent dynamic content-script registration through `gitlab-host-access.js`. `page/lifecycle/mr-session.js` must still confirm the page is GitLab before changing it and only activates on an individual merge request. The controls live in a Shadow DOM immediately after GitLab's AI-panel button; never fall back to mounting them on the document body.
+The manifest injects the stylesheets and `bootstrap.js` automatically on GitLab.com; `page/*`, plus root-level `bookmark-store.js`/`shortcut-settings.js`, ship as web-accessible resources so the dynamic `import()` graph resolves. Self-hosted GitLab origins require explicit user approval and persistent dynamic content-script registration through `gitlab-host-access.js`. `page/lifecycle/mr-session.js` must still confirm the page is GitLab before changing it and only activates on an individual merge request. The controls live in a Shadow DOM immediately after GitLab's AI-panel button; never fall back to mounting them on the document body.
 
 GitLab navigation can replace the current merge request without reinjecting content scripts. Keep page setup and teardown idempotent, reconcile Turbo/PJAX DOM changes, propagate `chrome.storage.sync` changes to every open tab, and cancel in-flight source requests when a page or GoLens session ends. Exiting browser fullscreen with Escape must also leave review focus.
 

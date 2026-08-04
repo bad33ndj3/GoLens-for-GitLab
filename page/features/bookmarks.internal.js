@@ -1,10 +1,8 @@
 // page/features/bookmarks.internal.js — pure decision core for
-// page/features/bookmarks.js (ticket 18; contract per ticket 04 §1's
-// internal-seam convention, mirrored from project-search.internal.js /
-// mr-preload.internal.js). No DOM, no chrome.*, no timers, no fetch: these
-// functions only turn already-gathered data (bookmark records, diff-line
-// text, candidate line hashes) into snapshots and kind-discriminated domain
-// outcomes. Not part of the module's public interface — the dependency
+// page/features/bookmarks.js. No DOM, no chrome.*, no timers, no fetch:
+// these functions only turn already-gathered data (bookmark records,
+// diff-line text, candidate line hashes) into snapshots and kind-discriminated
+// domain outcomes. Not part of the module's public interface — the dependency
 // rules bar other modules from importing this file directly.
 
 // normalizePath(value) -> GitLab file-title text with bidi marks and
@@ -63,7 +61,7 @@ export function snapshotRecords(records, scope, contextTextByID = {}) {
 // go-navigation.js's former bookmarkRecoveryCandidates() exactly (including
 // the early-break once a second candidate is found — the caller only needs
 // to know "more than one", not the full list). `hashText` is injected
-// (`GoLensBookmarks.hashText` in production) so this stays deterministic
+// (`bookmark-store.js`'s `hashText` in production) so this stays deterministic
 // given its inputs rather than reaching a global. Total given a well-formed
 // record (has `.anchor` and `.location.startLine <= .location.endLine`).
 export async function bookmarkRecoveryCandidates(lines, record, hashText) {

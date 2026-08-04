@@ -1,15 +1,12 @@
 // platform/toast — the one transient-notification surface on a merge-request
-// page (ticket 29). Lifted verbatim from go-navigation.js's
-// `ensureUI`/`toast`/`hideToast`/`isToastShowing`/`showShortcutCoachHint`.
+// page. Lifted verbatim from go-navigation.js's `ensureUI`/`toast`/
+// `hideToast`/`isToastShowing`/`showShortcutCoachHint`.
 //
 // It stays a single surface on purpose: page/features/keyboard-nav.js,
-// bookmarks.js, project-search.js and code-intel.js all reach it (today via
-// go-navigation.js's `legacyToast` capability and its `showToast`/
-// `showShortcutCoachHint`/`isToastShowing` globals; after ticket 22 by
-// direct injection). code-intel.js deliberately runs its *popover* in its
-// own separate shadow host — that is a different surface with a different
-// lifetime, and this one shrank to toast-only when that split happened
-// (ticket 21).
+// bookmarks.js, project-search.js and code-intel.js all reach it by direct
+// injection. code-intel.js deliberately runs its *popover* in its own
+// separate shadow host — that is a different surface with a different
+// lifetime, and this one is toast-only.
 //
 // One element, two renderings, distinguished by `dataset.kind`:
 //   - `message` — a plain string, auto-hides after 2600ms.
@@ -18,27 +15,25 @@
 // The `message` rendering hides the label/binding/actions through CSS
 // rather than by rebuilding the markup, which is why both share one node.
 //
-// ## Deviations from ticket 29's literal wording, and why
+// ## Implementation notes
 //
-// 1. **No `clock` dependency.** Ticket 29 proposes `createToast({ clock })`.
-//    The originals used bare `setTimeout`/`clearTimeout`, *not*
-//    go-navigation.js's swappable `clock` — routing them through it would
-//    newly make `__test.setClock(...)` affect toast auto-hide timing, which
-//    is a behaviour change in a ticket whose first checklist item is
-//    "toast-timers ongewijzigd". `createToast()` therefore takes no deps and
-//    keeps the raw globals. If a test ever needs to control these timers,
-//    add the seam then, deliberately.
+// 1. **No `clock` dependency.** The original implementation used bare
+//    `setTimeout`/`clearTimeout`, not a swappable clock. `createToast()`
+//    therefore takes no deps and keeps the raw globals. If a test ever needs
+//    to control these timers, add the seam then, deliberately.
 //
-// 2. **`GoLensShortcutCoach` stays a global read.** The "Turn tips off"
-//    button calls `globalThis.GoLensShortcutCoach?.setEnabled?.(false)`
-//    exactly as before. shortcut-settings.js's global is outside this
-//    ticket's scope; injecting it would change who owns that contract
-//    without any ticket saying so.
+// 2. **`shortcutCoach` defaults to the real singleton, injectable for
+//    tests.** The "Turn tips off" button calls
+//    `shortcutCoach?.setEnabled?.(false)`, resolving by default to
+//    shortcut-settings.js's exported `shortcutCoach` instance (a normal
+//    ES-module import, not a globalThis contract).
+
+import { shortcutCoach as defaultShortcutCoach } from '../../shortcut-settings.js';
 
 const MESSAGE_TIMEOUT_MS = 2600;
 const SHORTCUT_HINT_TIMEOUT_MS = 8000;
 
-export function createToast() {
+export function createToast({ shortcutCoach = defaultShortcutCoach } = {}) {
   let host = null;
   let timer = null;
 
@@ -75,7 +70,7 @@ export function createToast() {
     host = element;
     shadow.querySelector('[data-action="shortcut-tip-dismiss"]').addEventListener('click', hideToast);
     shadow.querySelector('[data-action="shortcut-tip-disable"]').addEventListener('click', async () => {
-      const saved = await globalThis.GoLensShortcutCoach?.setEnabled?.(false);
+      const saved = await shortcutCoach?.setEnabled?.(false);
       toast(saved ? 'Shortcut tips turned off. You can re-enable them in settings.' : 'Could not update shortcut tip settings.');
     });
     return shadow;
@@ -102,8 +97,8 @@ export function createToast() {
 
   // Renders a hint it is handed, message included — it does not decide
   // whether or what to show. That decision (the blocked-check and the
-  // action→message mapping) is page/features/keyboard-nav.js's, since ticket
-  // 17. Returns false for a hint with no message so the caller can tell a
+  // action→message mapping) is page/features/keyboard-nav.js's responsibility.
+  // Returns false for a hint with no message so the caller can tell a
   // rendered hint from a skipped one.
   function showShortcutCoachHint(hint) {
     if (!hint?.message) return false;

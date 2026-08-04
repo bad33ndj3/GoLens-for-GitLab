@@ -1,6 +1,5 @@
 // page/features/bookmarks.js — hides: bookmark anchoring/recovery, the diff
-// markers, the selection-to-bookmark UI, and the drawer's data (ticket 18;
-// boundary from ticket 03 §2, interface from ticket 04 §3). Carved out of
+// markers, the selection-to-bookmark UI, and the drawer's data. Carved out of
 // go-navigation.js's former bookmark* functions (anchoring, recovery,
 // markers, selection) and content.js's former bookmark drawer *state*
 // (`state.bookmarkSnapshot`/`bookmarkUnsubscribe`/`bookmarkDrawerReturnFocus`
@@ -18,35 +17,30 @@
 // exactly one surface (the GitLab diff) now that markers live here instead
 // of being registered by go-navigation.js from the outside.
 //
-// Same entanglement shape ticket 19/20 hit: bookmark anchoring needs
-// diff-DOM primitives (diffFileRoots, diffRootFor, rapidFileData,
-// parseBlobLink, codeCellFor, lineContextFor), MR/network helpers
-// (projectContext, mergeRequestIID, mergeRequestRefs, clearMergeRequestRefs,
-// fetchSource), reveal/navigation helpers (navigateToLocation,
-// waitForDiffUpdate, lineAnchorFor), a toast surface, and code-intel's
-// selection state (the active hovered/selected symbol, for the anchor's
-// `symbol` field). Ticket 03 §3's escape hatch applies exactly as it did for
-// mr-preload/project-search: `ctx.legacy` is a capability bag. Ticket 22:
-// `page/main.js` now builds it directly from `page/platform/diff-dom.js`/
-// `gitlab-api.js` and `page/lifecycle/mr-session.js`'s shared instances,
-// plus a late-bound accessor onto `page/features/code-intel.js`'s handle —
-// no more go-navigation.js self-bridge, this is the only mounted instance.
-// `ctx.bookmarkStore` is the `GoLensBookmarks.createStore()` instance
-// (bookmark-store.js, out of scope per ticket 18 — it stays a global,
-// entering here only via `ctx`) plus its `hashText` helper.
+// Bookmark anchoring needs diff-DOM primitives (diffFileRoots, diffRootFor,
+// rapidFileData, parseBlobLink, codeCellFor, lineContextFor), MR/network
+// helpers (projectContext, mergeRequestIID, mergeRequestRefs,
+// clearMergeRequestRefs, fetchSource), reveal/navigation helpers
+// (navigateToLocation, waitForDiffUpdate, lineAnchorFor), a toast surface,
+// and code-intel's selection state (the active hovered/selected symbol, for
+// the anchor's `symbol` field). `ctx.legacy` is a capability bag. `page/main.js`
+// now builds it directly from `page/platform/diff-dom.js`/`gitlab-api.js` and
+// `page/lifecycle/mr-session.js`'s shared instances, plus a late-bound
+// accessor onto `page/features/code-intel.js`'s handle. `ctx.bookmarkStore`
+// is a `createStore()` instance from `bookmark-store.js` (a real ES import in
+// `page/main.js`, entering here only via `ctx`) plus its `hashText` helper.
 //
-// Deviation from ticket 18's literal `{subscribe, snapshot, toggleAt,
-// reveal, remove, clear, recover}` text: four more methods exist on the
-// returned handle — `enable()`/`disable()` (go-navigation.js's init()/
-// teardown() call these; they used to inline bookmark-store setup and
-// marker/timer/selection-UI teardown directly), `toggleAtSelection
-// (fallbackLocation)` and `navigate(direction)` (go-navigation.js's
-// runNavigationAction() 'toggleBookmark'/'previousBookmark'/'nextBookmark'
-// branches — the selection-or-focused-line-or-code-intel-fallback chain and
-// the ordered next/previous walk are keyboard-shortcut concerns with no
-// natural fit in the ticket's 7-method public contract). All four are
-// consumed only by go-navigation.js's self-bridge, never by content.js or
-// page/main.js — same treatment as project-search.js's `minimize()`.
+// Four additional methods exist on the returned handle beyond the core
+// `{subscribe, snapshot, toggleAt, reveal, remove, clear, recover}` methods:
+// `enable()`/`disable()` (go-navigation.js's init()/teardown() call these;
+// they used to inline bookmark-store setup and marker/timer/selection-UI
+// teardown directly), `toggleAtSelection(fallbackLocation)` and
+// `navigate(direction)` (go-navigation.js's runNavigationAction()
+// 'toggleBookmark'/'previousBookmark'/'nextBookmark' branches — the
+// selection-or-focused-line-or-code-intel-fallback chain and the ordered
+// next/previous walk are keyboard-shortcut concerns with no natural fit in
+// the core public contract). All four are consumed only by go-navigation.js's
+// self-bridge, never by content.js or page/main.js.
 import {
   normalizePath,
   snapshotRecords,

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { mount } from '../page/features/onboarding.js';
-import '../shortcut-settings.js';
+import * as shortcutSettings from '../shortcut-settings.js';
 
 function fakeOverlayRegistry() {
   const counts = new Map();
@@ -345,7 +345,7 @@ test('first-run setup: choosing a keymap and hiding generated files saves both, 
 
 test('first-run setup preserves custom shortcuts and discards staged choices when dismissed', async () => {
   buildFixture();
-  const customBindings = { ...globalThis.GoLensShortcuts.defaultBindings(), focusFileSearch: 'Alt+KeyP' };
+  const customBindings = { ...shortcutSettings.defaultBindings(), focusFileSearch: 'Alt+KeyP' };
   const settings = fakeSettings({ golensOnboardingVersion: 0, hideGeneratedFiles: true, shortcutBindings: customBindings });
   const handle = mount({ overlays: fakeOverlayRegistry(), runtime: fakeRuntime(), settings });
   settings.resolveReady();

@@ -1,38 +1,32 @@
 // page/features/onboarding.js — hides: first-run detection
 // (golensOnboardingVersion), the setup wizard and quick-tour DOM, staged
 // choices written through the settings-store, and the onboarding
-// overlay-registry claim (ticket 15; boundary from ticket 03 §2, interface
-// from ticket 04 §3 with the same close()-and-kind-discriminated-outcomes
-// deviation ticket 16 documented for settings-overlay.js). Carved out of
-// content.js following settings-overlay.js's pattern: mount(ctx) -> {
-// unmount, show(), close() }, pure decision core in
+// overlay-registry claim. Carved out of content.js following settings-overlay.js's
+// pattern: mount(ctx) -> { unmount, show(), close() }, pure decision core in
 // onboarding.internal.js, DOM/messaging in this shell.
 //
 // First-run and manually-triggered opening share one open(mode) path below
 // (host creation, markup, registry claim, wiring) so the two can't drift
-// out of sync on claim/release or on which settings keys a save writes to
-// (ticket 15's acceptance criterion) — `overlays.claim('onboarding')` and
-// `release?.()` each appear exactly once in this file. The two dialogs
-// themselves stay distinct, matching content.js's former
-// showSetupOnboarding()/showOnboarding(): first-run shows the 3-step setup
-// wizard (keymap, generated files, essentials recap) and saves choices;
+// out of sync on claim/release or on which settings keys a save writes to —
+// `overlays.claim('onboarding')` and `release?.()` each appear exactly once
+// in this file. The two dialogs themselves stay distinct, matching content.js's
+// former showSetupOnboarding()/showOnboarding(): first-run shows the 3-step
+// setup wizard (keymap, generated files, essentials recap) and saves choices;
 // show() (routed from 'golens-show-onboarding') shows the 4-chapter quick
 // tour reference and saves nothing. Both use `#golens-onboarding-root` as
 // their host id, so at most one can be open at a time.
 //
 // Routed via page/lifecycle (page/lifecycle/internal.js's FEATURE_ROUTES):
-// 'golens-show-onboarding' -> show(). content.js keeps a thin ack-only
-// ... no: bootstrap.js is now the sole responder for that message (see its
-// own comments), since page/lifecycle's routed listener never calls
+// 'golens-show-onboarding' -> show(). bootstrap.js is now the sole responder
+// for that message, since page/lifecycle's routed listener never calls
 // sendResponse and content.js no longer owns onboarding.
 //
-// Mutual exclusion with settings (the reverse of settings-overlay.js's own
-// 'golens-show-onboarding' listener, ticket 16): this module listens for
-// 'golens-show-settings' and closes itself, applying the same bare
-// isGitLab() guard content.js's own handler applied (not MR-specific,
-// unlike this module's own show() guard) — a direct feature -> feature call
-// would violate ticket 03 §3.
+// Mutual exclusion with settings: this module listens for 'golens-show-settings'
+// and closes itself, applying the same bare isGitLab() guard content.js's own
+// handler applied (not MR-specific, unlike this module's own show() guard) — a
+// direct feature -> feature call would violate the module architecture.
 import { createOverlayRegistry } from '../platform/overlay-registry.js';
+import * as shortcutSettings from '../../shortcut-settings.js';
 import {
   isGitLabPage,
   isMergeRequestPath,
@@ -77,10 +71,10 @@ export function mount(ctx = {}) {
   }
 
   function shortcutPresetOptions() {
-    const shortcuts = globalThis.GoLensShortcuts;
-    const currentBindings = shortcuts?.mergeBindings(settings?.get('shortcutBindings')) || settings?.get('shortcutBindings');
-    const currentPreset = shortcuts?.presetForBindings(currentBindings) || 'custom';
-    const presetOptionsHtml = (shortcuts?.presets || []).map((preset) => `
+    const shortcuts = shortcutSettings;
+    const currentBindings = shortcuts.mergeBindings(settings?.get('shortcutBindings')) || settings?.get('shortcutBindings');
+    const currentPreset = shortcuts.presetForBindings(currentBindings) || 'custom';
+    const presetOptionsHtml = (shortcuts.presets || []).map((preset) => `
       <label class="choice-card">
         <input type="radio" name="keymap" value="${preset.id}" ${currentPreset === preset.id ? 'checked' : ''}>
         <span><strong>${preset.label}</strong><small>${preset.description}${preset.id === 'vim' ? '. Shortcuts only, without modes or command sequences.' : ''}</small></span>
