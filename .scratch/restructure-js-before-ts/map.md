@@ -177,6 +177,95 @@ De browser-smoke is hierbij nooit verzwakt: die ving deze race, en zijn settings
 bewijs dat de migratie klopt — het slaagt terwijl `content.js` `#golens-settings-root` niet meer
 aanmaakt.
 
+- **Ticket 22's premise is factually wrong — legacy files still carry ~2000 lines of
+  production code, unclaimed by any ticket.** 22 says "`go-navigation.js` en `content.js`
+  bevatten geen productiecode meer" (blockers 07/08/13-21 all done). They do:
+  - `go-navigation.js` (1408 lines) still owns the **shared infra every `legacy` capability
+    bag depends on** — diff-DOM primitives (`diffRootFor`/`rapidFileData`/
+    `computeFileContext`/`fileContextFor`/`codeCellFor`/`lineFromAnchor`/`lineAnchorFor`/
+    `expansionDirectionForLine`/`waitForDiffUpdate`/`revealLine`/
+    `visibleDiffRootForDefinition`/`flashDestination`/`navigateToLocation`/
+    `lineContextFor`/`diffFileRoots`, plus the `fileContextGeneration` cache its own
+    `diffObserver` invalidates); the GitLab REST/GraphQL layer (`fetchWithRetry`/
+    `fetchSource`/`fetchBlob`/`fetchTreeEntries`/`listPackageFiles`/`listProjectFiles`/
+    `listMergeRequestChangedFiles`/`searchProjectBlobPaths`/`mergeRequestRefs`/
+    `mergeRequestRefsForFile`/`modulePathFor`/`sourceRefFor`/`documentationURL`/
+    `projectPackageURL`/`standardLibraryURL`/`packageDocumentationURL`/`parseBlobLink`/
+    `normalizePath`/`projectContext`); the `loadPackage`/`loadProject` cache-orchestration
+    (`state.packages`/`state.projects`/`state.projectProgressListeners`/`state.modulePaths`,
+    `workerRPC`, the `status()` → `golens-go-status` CustomEvent dispatch — **this event is
+    live**, see the correction above re: `tests/browser-smoke.mjs:268`/`:445`, don't drop it
+    a second time); the toast shadow host (`ensureUI`/`toast`/`hideToast`/`isToastShowing`/
+    `showShortcutCoachHint`); and `init()`/`teardown()`/`onKeyDown`/`refreshMergeRequestRefs`
+    orchestration, plus the four dynamic-`import()` bridges (keyboard-nav/mr-preload/
+    project-search/bookmarks/code-intel) that build `legacy` bags from all of the above and
+    the `globalThis.GoLensGoNavigation` surface those bridges are exposed through.
+  - `content.js` (899 lines) is **an entire unmigrated feature**, not leftover glue: the
+    controls toolbar (~340 lines of shadow DOM: enable toggle, focus toggle, preload button,
+    bookmarks button), the bookmark drawer UI (list rendering, jump/remove/recover/clear
+    actions), review-focus/fullscreen (`toggleReviewFocus`), the preload state machine
+    (`preloadMergeRequest`/`refreshPreloadStatus`/`startFullProjectPreload`/
+    `refreshFullProjectPreloadStatus`), the SPA reconcile loop (`reconcilePage`/
+    `leaveMergeRequestPage`/the body `MutationObserver`/`turbo:load`/`pjax:end`/`popstate`),
+    rapid-diffs opt-in (`enableRapidDiffs`/`watchForRapidDiffs`), the discussion-line-link
+    feature (`overviewDiscussionLineTarget`/`mountOverviewDiscussionLineLink`/
+    `reconcileOverviewDiscussionLineLinks`), the previously-flagged
+    go-test-file-rows feature (`normalizeRepositoryPath`/`reconcileGoTestFileRows`), and
+    `content.js`'s own `chrome.runtime.onMessage` listener for `golens-enabled`/
+    `golens-cache-invalidated`/`golens-preload-full-project`/`golens-full-project-status`
+    (bootstrap.js's message-seam, per the ticket-16 section above, only claims the three
+    settings types — these four still need a home when `content.js`'s own listener goes
+    away).
+  - Two `state.enabled` flags (one in each file), both real gates
+    (`runNavigationAction`/`reconcileGoTestFileRows`/the `legacy.isEnabled` capabilities),
+    driven by the same setting but with no single owner post-split — "één eigenaar per
+    `chrome.storage`-key" (03) covers the storage key, not this derived fan-out.
+  - **Ticket 22 is set to `blocked` below pending new tickets for this work** (proposed
+    immediately below); its own checklist is unchanged and still correct once those land.
+
+- **Proposed tickets to close the gap above (not yet approved — 05-22's breakdown was
+  user-approved per the "Not yet specified" note; this expansion needs the same sign-off
+  before any code):**
+  - Platform (what every `legacy` bag actually needs, so first):
+    - **26 — `page/platform/diff-dom.js`**: the diff-DOM primitive group above, verbatim
+      behaviour. Home for `fileContextGeneration`'s cache-bump too, or documents why it
+      stays with whichever module keeps the `diffObserver`.
+    - **27 — `page/platform/gitlab-api.js`**: the REST/GraphQL group above
+      (`fetchWithRetry` and everything built on it).
+    - **28 — `page/platform/source-loader.js`**: `loadPackage`/`loadProject` + their cache
+      state + `workerRPC` + the `status()`/`golens-go-status` dispatch. Blocked by 27
+      (fetch layer) and needs `rpc-client.js` (09, done).
+    - **29 — `page/platform/toast.js`**: the toast shadow host
+      (`ensureUI`/`toast`/`hideToast`/`isToastShowing`/`showShortcutCoachHint`).
+  - Features (the unmigrated content.js feature, split by concern):
+    - **30 — `page/features/controls.js`**: toolbar + preload state machine +
+      review-focus + bookmark drawer. Largest of the new tickets; may itself want
+      splitting (controls-shell vs. bookmark-drawer) when scoped — flag that at
+      breakdown time rather than deciding here.
+    - **31 — SPA reconcile loop**: `reconcilePage`/`leaveMergeRequestPage`/the
+      MutationObserver/turbo/pjax/popstate listeners. Open design question this ticket
+      must answer: fold into `page/lifecycle` (it's arguably lifecycle's job already) or
+      a new `page/features/mr-page-reconciler.js` — decide against ticket 03 §3's
+      dependency rules before writing code, don't default silently.
+    - **32 — `page/features/discussion-line-link.js`**: `overviewDiscussionLineTarget`/
+      `mountOverviewDiscussionLineLink`/`reconcileOverviewDiscussionLineLinks`.
+    - **33 — `page/features/go-test-file-rows.js`**: `normalizeRepositoryPath`/
+      `reconcileGoTestFileRows` (the gap map.md already flagged under ticket 13/22 above).
+  - **34 — owner for the derived enable/disable fan-out**: decide and document who drives
+    `state.enabled`'s effects (navigation actions, go-test-file-rows, `legacy.isEnabled`)
+    once both legacy flags are gone — likely settings-store's `subscribe('enabled', …)`
+    fanning out through page/lifecycle, but that's this ticket's decision to make, not an
+    assumption to bake into 26-33.
+  - **35 — content.js's remaining message types**: `golens-enabled`/
+    `golens-cache-invalidated`/`golens-preload-full-project`/`golens-full-project-status`
+    need a bootstrap.js claim (ticket-16 pattern) once `content.js`'s own listener is
+    deleted. Likely folds into whichever of 30/31 owns the behaviour each message
+    triggers, but call it out as its own checklist item so it isn't dropped silently.
+  - **22 rewritten** (after 26-35 land): only what its title says — delete the four
+    dynamic-import bridges and `globalThis.GoLensGoNavigation`/`GoLensContent`, wire real
+    deps into `page/main.js`/`page/lifecycle` directly, update the manifest, verify
+    dependency rules over the full graph, full `npm run check` + browser-smoke green.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,
