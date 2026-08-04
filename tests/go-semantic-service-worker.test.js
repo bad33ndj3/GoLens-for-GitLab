@@ -13,7 +13,7 @@ before(async () => {
       },
     },
   };
-  await import('../go-semantic-worker.js?service-worker-test');
+  await import('../worker/dispatch.js?service-worker-test');
   connectListener({
     name: 'golens-go-rpc',
     onMessage: { addListener(listener) { messageListener = listener; } },

@@ -83,15 +83,24 @@ async function runCase(definition) {
   const warmup = definition.warmup ?? DEFAULT_WARMUP;
   const context = definition.setup ? await definition.setup() : undefined;
 
-  for (let index = 0; index < warmup; index++) {
-    await definition.run(context);
-  }
-
+  // Cases whose setup allocates something that outlives a plain
+  // garbage-collect — a `happy-dom` `Window` keeps itself reachable until it
+  // is closed — declare a `teardown`. Without it every such fixture stays
+  // resident for the whole run and the later, larger cases hit the default
+  // V8 heap limit; see ticket 24.
   const samples = [];
-  for (let index = 0; index < iterations; index++) {
-    const start = performance.now();
-    await definition.run(context);
-    samples.push(performance.now() - start);
+  try {
+    for (let index = 0; index < warmup; index++) {
+      await definition.run(context);
+    }
+
+    for (let index = 0; index < iterations; index++) {
+      const start = performance.now();
+      await definition.run(context);
+      samples.push(performance.now() - start);
+    }
+  } finally {
+    if (definition.teardown) await definition.teardown(context);
   }
 
   const medianMs = median(samples);
@@ -196,10 +205,25 @@ async function main() {
     return;
   }
 
+  // Diagnostic only, and only active under `--expose-gc` (ticket 24): forces
+  // a GC after each case and records the heap baseline it settles at. This
+  // distinguishes "heap climbs case-over-case" (an accumulating JS-heap
+  // leak) from "one case has a high one-shot peak, baseline drops back
+  // afterwards" (a large fixture colliding with the default heap limit,
+  // not a leak) — see docs/benchmarks/README.md and ticket 24's baseline
+  // note for the reading of this repo's own numbers.
+  const trackMemory = typeof global.gc === 'function';
+
   const results = [];
   for (const definition of cases) {
     process.stdout.write(`running ${definition.name}...\n`);
-    results.push(await runCase(definition));
+    const result = await runCase(definition);
+    if (trackMemory) {
+      global.gc();
+      result.heapUsedAfterMB = process.memoryUsage().heapUsed / (1024 * 1024);
+      process.stdout.write(`  heapUsed after GC: ${result.heapUsedAfterMB.toFixed(1)} MB\n`);
+    }
+    results.push(result);
   }
 
   const output = { ...header(args.label), results };

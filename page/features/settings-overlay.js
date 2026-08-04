@@ -1,0 +1,121 @@
+// page/features/settings-overlay.js — hides: the in-page settings overlay's
+// DOM, settings.html-embedding, ready-handshake, and its overlay-registry
+// claim. Carved out of content.js following generated-files.js's pattern:
+// mount(ctx) -> { unmount, show(), close() }, pure decision core in
+// settings-overlay.internal.js, DOM/messaging in this shell.
+//
+// Routed via page/lifecycle (page/lifecycle/internal.js's FEATURE_ROUTES):
+// 'golens-show-settings' -> show(), 'golens-close-settings' -> close(),
+// 'golens-settings-ready' -> ready(). content.js keeps a thin ack-only
+// chrome.runtime.onMessage shim for the same message types since page/lifecycle's
+// routed listener never calls sendResponse; both listeners fire for every
+// message delivered to this tab, so the ack and this module's actual DOM work
+// happen in parallel, not as a single synchronous call.
+//
+// Mutual exclusion with onboarding (page/features/onboarding.js): neither
+// module calls the other directly (no feature -> feature calls). Each listens
+// for the other's open message and closes itself: this module listens for
+// 'golens-show-onboarding' here, applying the same isGitLab()/isMergeRequest()
+// guard onboarding.js's own show() applies, so the two stay in sync about when
+// that message is actually honored; onboarding.js listens for 'golens-show-settings'
+// with its own (looser, MR-independent) guard. Documented deviation: this used
+// to be one synchronous function call inside content.js's message handler; it
+// is now two independent chrome.runtime.onMessage listeners reacting to the
+// same delivered message, so relative ordering depends on listener registration
+// order.
+import { createOverlayRegistry } from '../platform/overlay-registry.js';
+import { isGitLabPage, isMergeRequestPath, overlayMarkup } from './settings-overlay.internal.js';
+
+function detectGitLabPage(doc, win) {
+  return isGitLabPage({
+    hasGitlabGlobal: Boolean(win.gon?.gitlab_url),
+    hasCsrfMeta: Boolean(doc.querySelector('meta[name="csrf-token"]')),
+    hasAppShell: Boolean(doc.querySelector('.super-sidebar, [data-testid="super-sidebar"], #js-top-bar, .layout-page, .ai-panels')),
+  });
+}
+
+export function mount(ctx = {}) {
+  const doc = document;
+  const win = window;
+  const runtime = ctx.runtime !== undefined ? ctx.runtime : globalThis.chrome?.runtime;
+  const overlays = ctx.overlays || createOverlayRegistry();
+
+  let unmounted = false;
+  let host = null;
+  let release = null;
+  let returnFocus = null;
+
+  // close(opts) -> { kind: 'closed' | 'not-open' }
+  function close({ restoreFocus = true } = {}) {
+    if (!host) return { kind: 'not-open' };
+    host.remove();
+    host = null;
+    release?.();
+    release = null;
+    if (restoreFocus) returnFocus?.focus?.();
+    returnFocus = null;
+    return { kind: 'closed' };
+  }
+
+  // show() -> { kind: 'shown' | 'already-open' | 'not-gitlab' }
+  //
+  // The outcome is a value, not a silent return, because bootstrap.js answers
+  // popup.js's `chrome.tabs.sendMessage` with it and popup.js *shows the user*
+  // the error on failure (its `activeTabRequest` throws on `!ok`). A silent
+  // early return would leave bootstrap unable to tell "opened" from "this is
+  // not a GitLab page", which is exactly the lying-ack defect that got this
+  // ticket parked the first time.
+  function show() {
+    if (host) {
+      host.shadowRoot?.querySelector('iframe')?.focus();
+      return { kind: 'already-open' };
+    }
+    if (!detectGitLabPage(doc, win)) return { kind: 'not-gitlab' };
+    returnFocus = doc.activeElement;
+    host = doc.createElement('div');
+    host.id = 'golens-settings-root';
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = overlayMarkup({ settingsUrl: runtime?.getURL ? runtime.getURL('settings.html') : 'settings.html' });
+    shadow.querySelector('[data-action="close-settings-backdrop"]').addEventListener('click', (event) => {
+      if (event.target === event.currentTarget) close();
+    });
+    const frame = shadow.querySelector('iframe');
+    frame.addEventListener('load', () => {
+      host.dataset.loaded = 'true';
+      frame.focus();
+    }, { once: true });
+    doc.body.append(host);
+    release = overlays.claim('settings-overlay');
+    return { kind: 'shown' };
+  }
+
+  // ready() -> { kind: 'ready' | 'not-open' } — settings.js's handshake once
+  // its iframe document has initialised.
+  function ready() {
+    if (!host) return { kind: 'not-open' };
+    host.dataset.ready = 'true';
+    return { kind: 'ready' };
+  }
+
+  // Mirrors content.js's own 'golens-show-onboarding' guard exactly, so this
+  // module only closes settings when content.js's handler would actually
+  // proceed to open onboarding.
+  function onRuntimeMessage(message) {
+    if (message?.type !== 'golens-show-onboarding') return;
+    if (!detectGitLabPage(doc, win) || !isMergeRequestPath(win.location.pathname)) return;
+    close({ restoreFocus: false });
+  }
+  runtime?.onMessage?.addListener(onRuntimeMessage);
+
+  return {
+    unmount() {
+      if (unmounted) return;
+      unmounted = true;
+      runtime?.onMessage?.removeListener(onRuntimeMessage);
+      close({ restoreFocus: false });
+    },
+    show,
+    close,
+    ready,
+  };
+}

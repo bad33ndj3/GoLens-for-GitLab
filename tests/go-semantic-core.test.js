@@ -4,7 +4,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { before, test } from 'node:test';
 import { Language, Parser } from 'web-tree-sitter';
-import { GoSemanticIndex } from '../go-semantic-core.js';
+import { GoSemanticIndex } from '../worker/index-core.js';
 
 let index;
 const FIXTURES = fileURLToPath(new URL('./fixtures/semantic-regressions/', import.meta.url));

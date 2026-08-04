@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { GoSemanticSourceCache, isCommitSHA } from '../go-semantic-cache.js';
+import { GoSemanticSourceCache, isCommitSHA } from '../worker/source-cache.js';
 import { FakeIndexedDB } from './benchmarks/fake-indexeddb.mjs';
 
 function blobID(source) {
@@ -283,7 +283,7 @@ test('records a write-time verification marker on source records', async () => {
   assert.equal(record.format, 4);
 });
 
-// Instruments `readManifests`/`readSourceRecords` call counts to pin
+// Instruments `_readManifests`/`_readSourceRecords` call counts to pin
 // "answered without a separate storage round trip per package": the number
 // of storage calls a merge-request status check makes must stay flat as the
 // package count grows, not scale linearly with it (before this change,
@@ -307,10 +307,10 @@ async function seededMergeRequestCache(packageCount) {
 
 function countStorageCalls(cache) {
   const counts = { manifestReads: 0, sourceReads: 0 };
-  const originalReadManifests = cache.readManifests.bind(cache);
-  const originalReadSourceRecords = cache.readSourceRecords.bind(cache);
-  cache.readManifests = async (...args) => { counts.manifestReads++; return originalReadManifests(...args); };
-  cache.readSourceRecords = async (...args) => { counts.sourceReads++; return originalReadSourceRecords(...args); };
+  const originalReadManifests = cache._readManifests.bind(cache);
+  const originalReadSourceRecords = cache._readSourceRecords.bind(cache);
+  cache._readManifests = async (...args) => { counts.manifestReads++; return originalReadManifests(...args); };
+  cache._readSourceRecords = async (...args) => { counts.sourceReads++; return originalReadSourceRecords(...args); };
   return counts;
 }
 

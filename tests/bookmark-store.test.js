@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-
-await import('../bookmark-store.js?bookmark-store-test');
-const bookmarks = globalThis.GoLensBookmarks;
+import * as bookmarks from '../bookmark-store.js';
 
 function memoryStorage(events = []) {
   const values = {};

@@ -1,0 +1,1318 @@
+// page/features/code-intel.js — hides: hover/click resolution and its
+// debouncing, the popover DOM and its render functions, occurrence
+// highlighting in the diff view, and reference/implementation navigation.
+// Carved out of go-navigation.js's hover/click handlers, `showResult` and
+// its rendering helpers, `resolveAt`/`findReferencesAt`/
+// `findImplementationsAt`, and the occurrence-highlighting functions. Pure
+// classification/presentation core in code-intel.internal.js; DOM,
+// debouncing, and resolution orchestration in this shell.
+//
+// mount(ctx) -> { unmount, setEnabled(bool), navigationAction(name) ->
+// boolean, ...six self-bridge-only extras — see the return statement below }.
+//
+// This module needs a `legacy` capability bag — diff-DOM primitives
+// (fileContextFor/lineContextFor/codeCellFor/diffFileRoots), package/project
+// loading and worker RPC (loadPackage/preloadMergeRequest/
+// mergeRequestRefsForFile/mergeRequestIID/sourceRefFor/dirname/workerRPC),
+// URL builders (projectContext/documentationURL/projectPackageURL), the
+// shared "reveal a location in the diff" primitives also used by bookmarks.js
+// (visibleDiffRootForDefinition/navigateToLocation), the shared toast
+// surface (toast), the shortcut-coach bridge (offerShortcutCoach), the
+// frame-throttle clock (requestFrame), and project-search's modal opener
+// (openFullSearch). `page/main.js` builds this bag directly from
+// `page/platform/diff-dom.js`/`gitlab-api.js`, `page/lifecycle/mr-session.js`'s
+// shared instances, and late-bound accessors onto the mr-preload/
+// project-search handles — this is the only mounted instance.
+//
+// Toast-surface decision: the shared instance page/lifecycle/mr-session.js
+// now owns, reached through `legacy.toast`. The toast host is a shared
+// surface across features precisely because giving each feature its own toast
+// element risks two toasts showing at once; moving it into code-intel.js would
+// additionally make keyboard-nav.js, bookmarks.js, and project-search.js —
+// three sibling features, none of them code-intel — depend on this module's
+// private DOM, which the module architecture forbids (feature -> feature calls
+// are not allowed). go-navigation.js itself no longer calls it directly
+// (code-intel.js now owns every call site that used to live there), but
+// multiple other consumers still reach it through go-navigation.js. The
+// surface will stay in place until go-navigation.js itself becomes an ES
+// module.
+//
+// Popover DOM (`#golens-go-intelligence-root`) is now fully private to this
+// module — physically split out of go-navigation.js's former single shared
+// shadow host, which also held the `.toast` markup. go-navigation.js's own
+// `ensureUI()` shrank to a toast-only host (a different id) so the toast
+// surface above keeps working without this module's popover DOM as a
+// dependency. `tests/browser-smoke.mjs` already reads the popover through
+// `#golens-go-intelligence-root` by id (unaffected: the id itself didn't
+// move) — see this module's own render functions below for the markup,
+// trimmed of the `.toast` section and its CSS.
+import {
+  identifierAtCharacter,
+  caretElementMatchesIdentifier,
+  isWholeIdentifier,
+  identifierBoundary,
+  referenceNavigationAction,
+  isInterfaceDeclaration,
+  shouldShowReferencesOnHover,
+  classify,
+  symbolPresentation,
+  implementationGroups,
+  resultScopeText,
+  absenceText,
+  destinationLineForDefinition,
+  locationKey,
+  sourceLocationText,
+  loadingPhaseLabel,
+} from './code-intel.internal.js';
+
+const POPOVER_DISMISS_DELAY = 450;
+const FULL_TYPE_BODY_INITIAL_LINES = 40;
+const DIFF_ROOT_SELECTOR = 'diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]';
+const CODE_CELL_SELECTOR = 'td.line_content, td[class*="line-content"], [data-testid="diff-line-content"], [data-testid="rd-diff-line-content"], .rd-diff-code, .rd-diff-line-code';
+
+const MARKUP = `
+  <style>
+    :host { all:initial; position:fixed; z-index:var(--golens-z-popover); inset:0; pointer-events:none; font:12px/1.45 var(--golens-font-sans); color-scheme:dark; }
+    * { box-sizing:border-box; }
+    .popover { position:fixed; display:none; width:min(460px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-lg); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); color:var(--golens-text-primary); pointer-events:auto; }
+    .popover.show { display:grid; grid-template-rows:auto minmax(0,1fr); }
+    .popover-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-2); align-items:center; min-height:46px; padding:var(--golens-space-2) var(--golens-space-3); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+    .popover-heading { min-width:0; }
+    .popover-title { overflow:hidden; color:var(--golens-text-primary); font-size:12px; font-weight:700; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
+    .location { overflow:hidden; margin-top:2px; color:var(--golens-text-muted); font:10px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+    .popover-body { min-height:0; overflow:auto; padding:var(--golens-space-3); }
+    .symbol-badge { display:inline-flex; min-width:20px; height:20px; align-items:center; justify-content:center; padding:0 var(--golens-space-1); border:1px solid currentColor; border-radius:var(--golens-radius-xs); background:color-mix(in srgb,currentColor 7%,transparent); font:700 9px/1 var(--golens-font-mono); letter-spacing:-.02em; }
+    .symbol-interface,.symbol-interface-method { color:#c586c0; } .symbol-struct { color:#d7ba7d; } .symbol-function { color:#dcdcaa; } .symbol-method,.symbol-type { color:#4ec9b0; } .symbol-variable,.symbol-parameter,.symbol-field { color:#9cdcfe; } .symbol-constant { color:#4fc1ff; } .symbol-package { color:#fc9b6b; } .symbol-external { color:#3794ff; }
+    .header-actions { display:flex; align-items:center; gap:2px; }
+    .header-action { display:inline-flex; width:28px; height:28px; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:var(--golens-radius-sm); background:transparent; color:var(--golens-text-secondary); cursor:pointer; transition:background-color var(--golens-motion-fast),border-color var(--golens-motion-fast),color var(--golens-motion-fast),transform var(--golens-motion-fast); }
+    .header-action:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); } .header-action:active { background:var(--golens-surface-pressed); transform:translateY(1px); } .header-action:disabled { cursor:not-allowed; opacity:.45; } .header-action[hidden] { display:none; } .header-action svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
+    .copy-button .check-icon { display:none; } .copy-button[data-state="copied"] { border-color:var(--golens-success); background:var(--golens-success-soft); color:var(--golens-success); } .copy-button .copy-icon { display:block; } .copy-button[data-state="copied"] .copy-icon { display:none; } .copy-button[data-state="copied"] .check-icon { display:block; }
+    .signature-block { margin:0 0 var(--golens-space-3); overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-inset); } .signature-block[hidden] { display:none; }
+    .signature { margin:0; padding:var(--golens-space-2) var(--golens-space-3); overflow-wrap:anywhere; color:#dcdcaa; font:600 11px/1.5 var(--golens-font-mono); white-space:pre-wrap; }
+    .signature-toggle { width:100%; padding:var(--golens-space-2) var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); color:var(--golens-info-hover); font:650 10px/1.4 var(--golens-font-sans); text-align:left; cursor:pointer; } .signature-toggle:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .signature-toggle:active { background:var(--golens-surface-pressed); } .signature-toggle:disabled { cursor:not-allowed; opacity:.45; } .signature-toggle[hidden] { display:none; }
+    .docs:empty,.scope[hidden],.shortcut-hint[hidden] { display:none; }
+    .docs { margin:0 0 var(--golens-space-3); color:var(--golens-text-secondary); line-height:1.5; white-space:pre-wrap; }
+    .scope { margin:0 0 var(--golens-space-3); padding:6px 8px; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-muted); font:10px/1.4 var(--golens-font-mono); }
+    .choices { display:grid; gap:5px; }
+    .choice { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-2); width:100%; min-height:40px; align-items:center; padding:var(--golens-space-2); border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-raised); color:var(--golens-text-primary); text-align:left; cursor:pointer; transition:background-color var(--golens-motion-fast),border-color var(--golens-motion-fast),transform var(--golens-motion-fast); }
+    .choice:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); } .choice:active { background:var(--golens-surface-pressed); transform:translateY(1px); } .choice:disabled { cursor:not-allowed; opacity:.45; } .choice:focus-visible,.header-action:focus-visible,.signature-toggle:focus-visible,summary:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:1px; }
+    .choice-copy { min-width:0; } .choice-heading { display:flex; min-width:0; align-items:center; gap:7px; }
+    .choice-title { overflow:hidden; color:var(--golens-text-primary); font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+    .choice-context { display:block; margin-top:2px; overflow:hidden; color:var(--golens-text-muted); font:10px/1.35 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+    .choice-doc { display:block; margin-top:3px; overflow:hidden; color:var(--golens-text-secondary); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+    .destination-icon { position:relative; display:inline-flex; width:22px; height:22px; flex:0 0 auto; align-items:center; justify-content:center; border-radius:4px; }
+    .destination-icon svg { width:15px; height:15px; } .destination-in-diff { color:var(--golens-primary); } .destination-new-tab { color:var(--golens-info); }
+    .choice:hover .destination-icon::after,.choice:focus-visible .destination-icon::after { position:absolute; z-index:2; right:-4px; bottom:calc(100% + 7px); width:max-content; max-width:180px; padding:var(--golens-space-1) var(--golens-space-2); border:1px solid var(--golens-border-strong); border-radius:var(--golens-radius-xs); background:var(--golens-surface-raised); box-shadow:var(--golens-shadow-sm); color:var(--golens-text-primary); content:attr(data-tooltip); font:10px/1.3 var(--golens-font-sans); pointer-events:none; }
+    details { margin-top:var(--golens-space-1); } summary { padding:var(--golens-space-2) var(--golens-space-1); border-radius:var(--golens-radius-xs); color:var(--golens-text-secondary); cursor:pointer; } summary:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .test-double-choices { display:grid; gap:5px; margin-top:var(--golens-space-1); }
+    .shortcut-hint { display:flex; align-items:center; gap:5px; margin:var(--golens-space-3) 0 0; color:var(--golens-text-muted); font-size:10px; } kbd { display:inline-flex; min-width:17px; min-height:17px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
+    .loading-progress { display:grid; gap:var(--golens-space-2); margin:0 0 var(--golens-space-3); padding:var(--golens-space-2) var(--golens-space-3); border:1px solid color-mix(in srgb,var(--golens-primary) 35%,var(--golens-border-subtle)); border-radius:var(--golens-radius-sm); background:var(--golens-primary-soft); } .loading-progress[hidden] { display:none; } .loading-progress-meta { display:flex; justify-content:space-between; gap:var(--golens-space-2); color:var(--golens-text-primary); font-size:10px; } .loading-progress-phase { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; } .loading-progress-count { flex:0 0 auto; color:var(--golens-primary-hover); font:700 10px/1.45 var(--golens-font-mono); font-variant-numeric:tabular-nums; } .loading-track { height:4px; overflow:hidden; border-radius:999px; background:var(--golens-surface-pressed); } .loading-track > i { display:block; width:0; height:100%; border-radius:inherit; background:var(--golens-primary); transition:width var(--golens-motion-base); }
+    @media (prefers-reduced-motion:reduce) { .header-action,.choice,.loading-track > i { transition:none; } .header-action:active,.choice:active { transform:none; } }
+  </style>
+  <section class="popover" role="tooltip" aria-labelledby="golens-popover-title">
+    <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><div class="header-actions"><button class="header-action copy-button" type="button" aria-label="Copy source location" title="Copy source location" hidden><svg class="copy-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg><svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.25 3.15 3.15L13 4.6"/></svg></button><button class="header-action close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></header>
+    <div class="popover-body"><div class="loading-progress" hidden role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase"></span><span class="loading-progress-count"></span></div><div class="loading-track" role="progressbar" aria-label="Go intelligence loading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="docs"></div><div class="scope" hidden></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
+  </section>
+`;
+
+const ESCAPE_GUARD_SELECTOR = 'input, textarea, select, [contenteditable], dialog, [role="dialog"], [aria-modal="true"]';
+
+export function mount(ctx = {}) {
+  const doc = document;
+  const win = window;
+  const legacy = ctx.legacy || null;
+
+  let unmounted = false;
+  let enabled = false;
+  let ui = null;
+  let hoverTimer = null;
+  let popoverDismissTimer = null;
+  let popoverMode = 'hidden';
+  let popoverTargetKey = '';
+  let pinnedPopover = false;
+  let pinnedTargetKey = '';
+  let activeTarget = null;
+  let activeElement = null;
+  let lastErrorToast = '';
+  let selectedIdentifier = '';
+  let occurrences = [];
+  let occurrenceIndex = -1;
+  let occurrenceRefreshTimer = null;
+  let diffObserver = null;
+  let diffMutationTimer = null;
+  let history = [];
+  let historyIndex = -1;
+
+  function noLegacy(fallback) {
+    return () => Promise.resolve(fallback);
+  }
+
+  // --- popover DOM (private, lazily created) ------------------------------
+
+  function ensureUI() {
+    if (ui?.isConnected) return ui.shadowRoot;
+    const host = doc.createElement('div');
+    host.id = 'golens-go-intelligence-root';
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = MARKUP;
+    doc.body.append(host);
+    ui = host;
+    const popover = shadow.querySelector('.popover');
+    popover.addEventListener('pointerenter', () => pinPopover());
+    popover.addEventListener('pointerdown', () => pinPopover());
+    popover.addEventListener('focusin', () => pinPopover());
+    popover.addEventListener('keydown', onPopoverKeyDown);
+    popover.querySelector('.copy-button').addEventListener('click', (event) => copySourceLocation(event.currentTarget));
+    popover.querySelector('.close-button').addEventListener('click', hidePopover);
+    return shadow;
+  }
+
+  // --- source-location text / copy ----------------------------------------
+
+  function sourceLocationForTarget(target) {
+    if (!target?.cell || !Number.isInteger(target.character)) return null;
+    const file = legacy.fileContextFor(target.cell);
+    const line = legacy.lineContextFor(target.cell);
+    if (!file || !line) return null;
+    return {
+      path: line.side === 'old' ? file.oldPath : file.newPath,
+      line: line.line,
+      character: target.character + 1,
+      side: line.side,
+    };
+  }
+
+  function configureSourceCopy(button, sourceLocation = null) {
+    const text = sourceLocationText(sourceLocation);
+    button.hidden = !text;
+    button.dataset.copyText = text;
+    button.dataset.state = 'idle';
+    button.setAttribute('aria-label', text ? `Copy source location ${text}` : 'Copy source location');
+    button.title = text ? `Copy ${text}` : 'Copy source location';
+  }
+
+  function fallbackCopyText(text) {
+    const textarea = doc.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
+    doc.body.append(textarea);
+    textarea.select();
+    const copied = doc.execCommand?.('copy') === true;
+    textarea.remove();
+    if (!copied) throw new Error('Clipboard access is unavailable.');
+  }
+
+  async function writeClipboardText(text) {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API is unavailable.');
+      await navigator.clipboard.writeText(text);
+    } catch {
+      fallbackCopyText(text);
+    }
+  }
+
+  async function copySourceLocation(button) {
+    const text = button.dataset.copyText;
+    if (!text) return;
+    try {
+      await writeClipboardText(text);
+      button.dataset.state = 'copied';
+      button.setAttribute('aria-label', `Copied source location ${text}`);
+      button.title = `Copied ${text}`;
+      legacy.toast(`Copied ${text}`);
+      setTimeout(() => {
+        if (button.dataset.copyText !== text) return;
+        button.dataset.state = 'idle';
+        button.setAttribute('aria-label', `Copy source location ${text}`);
+        button.title = `Copy ${text}`;
+      }, 1800);
+    } catch {
+      legacy.toast('Could not copy the source location.');
+    }
+  }
+
+  // --- popover positioning / mode ------------------------------------------
+
+  function positionPopover(popover, x, y) {
+    const margin = 12;
+    const gap = 12;
+    const bounds = popover.getBoundingClientRect();
+    const width = bounds.width || Math.min(460, innerWidth - margin * 2);
+    const height = bounds.height || Math.min(420, innerHeight - margin * 2);
+    const left = Math.max(margin, Math.min(x + gap, innerWidth - width - margin));
+    const below = y + 18;
+    const top = below + height <= innerHeight - margin
+      ? below
+      : Math.max(margin, y - height - gap);
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+  }
+
+  function targetKey(target) {
+    if (!target) return '';
+    return `${target.cell ? legacy.fileContextFor(target.cell)?.path : ''}:${target.cell ? legacy.lineContextFor(target.cell)?.line : ''}:${target.character ?? ''}`;
+  }
+
+  function cancelPopoverDismissal() {
+    clearTimeout(popoverDismissTimer);
+    popoverDismissTimer = null;
+  }
+
+  function setPopoverMode(mode, target = null) {
+    cancelPopoverDismissal();
+    const popover = ui?.shadowRoot.querySelector('.popover');
+    const key = targetKey(target);
+    if (key) popoverTargetKey = key;
+    popoverMode = mode;
+    pinnedPopover = mode === 'pinned';
+    if (pinnedPopover) pinnedTargetKey = key || popoverTargetKey;
+    else pinnedTargetKey = '';
+    if (!popover) return;
+    popover.dataset.mode = mode;
+    popover.setAttribute('role', pinnedPopover ? 'dialog' : 'tooltip');
+    if (pinnedPopover) popover.setAttribute('aria-modal', 'false');
+    else popover.removeAttribute('aria-modal');
+    popover.querySelector('.close-button').hidden = !pinnedPopover;
+  }
+
+  function clearPinnedPopover() {
+    if (popoverMode === 'hidden') {
+      cancelPopoverDismissal();
+      pinnedPopover = false;
+      pinnedTargetKey = '';
+      return;
+    }
+    setPopoverMode('passive');
+  }
+
+  function pinPopover(target = null) {
+    const popover = ui?.shadowRoot.querySelector('.popover');
+    if (!popover?.classList.contains('show')) return;
+    setPopoverMode('pinned', target);
+  }
+
+  function schedulePassivePopoverDismissal() {
+    if (popoverMode !== 'passive' || popoverDismissTimer) return false;
+    popoverDismissTimer = setTimeout(hidePopover, POPOVER_DISMISS_DELAY);
+    return true;
+  }
+
+  function hidePopover() {
+    cancelPopoverDismissal();
+    popoverMode = 'hidden';
+    popoverTargetKey = '';
+    pinnedPopover = false;
+    pinnedTargetKey = '';
+    const popover = ui?.shadowRoot.querySelector('.popover');
+    popover?.classList.remove('show');
+    if (popover) {
+      popover.dataset.mode = 'hidden';
+      popover.setAttribute('role', 'tooltip');
+      popover.removeAttribute('aria-modal');
+      popover.querySelector('.close-button').hidden = true;
+    }
+  }
+
+  function eventIsInsideUI(event) {
+    return Boolean(ui && event.composedPath().includes(ui));
+  }
+
+  function dismissPinnedPopoverFromOutside(event) {
+    if (!pinnedPopover || eventIsInsideUI(event)) return false;
+    hidePopover();
+    return true;
+  }
+
+  // --- symbol badges / signature / destination -----------------------------
+
+  function applySymbolBadge(element, kind) {
+    const presentation = symbolPresentation(kind);
+    element.className = `symbol-badge symbol-${presentation.className}`;
+    element.textContent = presentation.badge;
+    element.setAttribute('aria-label', presentation.label);
+    element.title = presentation.label;
+    return element;
+  }
+
+  function createSymbolBadge(kind) {
+    const badge = doc.createElement('span');
+    badge.setAttribute('role', 'img');
+    return applySymbolBadge(badge, kind);
+  }
+
+  function renderSignature(popover, definition = null, { showFullTypeBody = false } = {}) {
+    const block = popover.querySelector('.signature-block');
+    const signature = block.querySelector('.signature');
+    const toggle = block.querySelector('.signature-toggle');
+    const typeBody = showFullTypeBody ? definition?.fullTypeBody || '' : '';
+    if (typeBody) {
+      const lines = typeBody.split('\n');
+      const compact = lines.slice(0, FULL_TYPE_BODY_INITIAL_LINES).join('\n');
+      const remaining = lines.length - FULL_TYPE_BODY_INITIAL_LINES;
+      block.hidden = false;
+      signature.textContent = compact;
+      signature.title = '';
+      toggle.hidden = remaining <= 0;
+      toggle.textContent = `Show remaining ${remaining} line${remaining === 1 ? '' : 's'}`;
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.onclick = remaining > 0 ? () => {
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        signature.textContent = expanded ? compact : typeBody;
+        toggle.textContent = expanded ? `Show remaining ${remaining} line${remaining === 1 ? '' : 's'}` : 'Collapse type body';
+        toggle.setAttribute('aria-expanded', String(!expanded));
+      } : null;
+      return;
+    }
+    const full = definition?.signature || '';
+    const compact = definition?.compactSignature || '';
+    block.hidden = !full;
+    signature.textContent = compact || full;
+    signature.title = compact ? full : '';
+    toggle.hidden = !compact;
+    toggle.textContent = 'Show full signature';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.onclick = compact ? () => {
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      signature.textContent = expanded ? compact : full;
+      signature.title = expanded ? full : '';
+      toggle.textContent = expanded ? 'Show full signature' : 'Collapse signature';
+      toggle.setAttribute('aria-expanded', String(!expanded));
+    } : null;
+  }
+
+  function destinationIcon(destination) {
+    const icon = doc.createElement('span');
+    icon.className = `destination-icon destination-${destination.kind === 'inDiff' ? 'in-diff' : 'new-tab'}`;
+    icon.dataset.tooltip = destination.label;
+    icon.setAttribute('role', 'img');
+    icon.setAttribute('aria-label', destination.label);
+    icon.title = destination.label;
+    icon.innerHTML = destination.kind === 'inDiff'
+      ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg>'
+      : '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg>';
+    return icon;
+  }
+
+  // flashDestination(target) -> brief `data-golens-navigation-destination`
+  // highlight flash. Byte-identical to go-navigation.js's former
+  // flashDestination() and to keyboard-nav.js's own duplicate (ticket 17) —
+  // same "small, unlikely-to-drift helper" duplication precedent, not a
+  // shared platform module.
+  function flashDestination(target) {
+    if (!target) return;
+    target.removeAttribute('data-golens-navigation-destination');
+    void target.offsetWidth;
+    target.setAttribute('data-golens-navigation-destination', '');
+    setTimeout(() => target.removeAttribute('data-golens-navigation-destination'), 1300);
+  }
+
+  // visibleDiffRootForDefinition/navigateToLocation are shared with
+  // bookmarks.js (ticket 18's `reveal()`) — go-navigation.js owns them, not
+  // this module; see that file's own comment on why they stayed there
+  // instead of moving here with the rest of hover/click resolution.
+  function definitionDestination(definition) {
+    return legacy.visibleDiffRootForDefinition(definition)
+      ? { kind: 'inDiff', label: 'Jump in this MR diff' }
+      : { kind: 'newTab', label: 'Open in a new tab' };
+  }
+
+  function recordSemanticJump(source, destination) {
+    if (!source || !destination || locationKey(source) === locationKey(destination)) return;
+    const retained = history.slice(0, historyIndex + 1);
+    if (locationKey(retained.at(-1)) !== locationKey(source)) retained.push(source);
+    retained.push(destination);
+    history = retained.slice(-100);
+    historyIndex = history.length - 1;
+    if (history.length >= 3) void legacy.offerShortcutCoach('historyBack');
+  }
+
+  async function navigateHistoryImpl(direction) {
+    const nextIndex = historyIndex + direction;
+    if (nextIndex < 0 || nextIndex >= history.length) {
+      legacy.toast(direction < 0 ? 'No earlier semantic location.' : 'No later semantic location.');
+      return false;
+    }
+    if (!await legacy.navigateToLocation(history[nextIndex])) {
+      legacy.toast('That semantic location is no longer loaded in this diff.');
+      return false;
+    }
+    historyIndex = nextIndex;
+    return true;
+  }
+
+  async function openDefinition(definition, sourceLocation = null) {
+    const destinationLine = destinationLineForDefinition(definition);
+    const root = legacy.visibleDiffRootForDefinition(definition);
+    if (root) {
+      const destination = { path: definition.path, line: destinationLine, side: 'new' };
+      if (await legacy.navigateToLocation(destination)) recordSemanticJump(sourceLocation, destination);
+      return;
+    }
+    const context = legacy.projectContext();
+    const url = `${context.projectBase}/-/blob/${encodeURIComponent(definition.ref)}/${definition.path.split('/').map(encodeURIComponent).join('/')}#L${destinationLine}`;
+    win.open(url, '_blank', 'noopener');
+  }
+
+  // --- choice / result rendering --------------------------------------------
+
+  function choiceButton({ title, fullTitle = title, context = '', documentation = '', kind = '', definition = null, externalURL = '' }) {
+    const sourceLocation = sourceLocationForTarget(activeTarget);
+    const destination = definition ? definitionDestination(definition) : { kind: 'newTab', label: 'Open in a new tab' };
+    const button = doc.createElement('button');
+    const copy = doc.createElement('span');
+    const heading = doc.createElement('span');
+    const titleElement = doc.createElement('span');
+    button.type = 'button';
+    button.className = 'choice';
+    button.setAttribute('aria-label', `${fullTitle}. ${destination.label}`);
+    copy.className = 'choice-copy';
+    heading.className = 'choice-heading';
+    titleElement.className = 'choice-title';
+    titleElement.textContent = title;
+    if (fullTitle !== title) titleElement.title = fullTitle;
+    if (kind) heading.append(createSymbolBadge(kind));
+    heading.append(titleElement);
+    copy.append(heading);
+    if (context) {
+      const contextElement = doc.createElement('span');
+      contextElement.className = 'choice-context';
+      contextElement.textContent = context;
+      contextElement.title = context;
+      copy.append(contextElement);
+    }
+    if (documentation) {
+      const docs = doc.createElement('span');
+      docs.className = 'choice-doc';
+      docs.textContent = documentation;
+      docs.title = documentation;
+      copy.append(docs);
+    }
+    button.append(copy, destinationIcon(destination));
+    button.addEventListener('click', () => {
+      hidePopover();
+      if (definition) openDefinition(definition, sourceLocation);
+      else if (externalURL) win.open(externalURL, '_blank', 'noopener');
+    });
+    return button;
+  }
+
+  function implementationButton(candidate) {
+    const confidence = candidate.confidence === 'asserted' ? 'Explicit assertion' : 'Structural match';
+    return choiceButton({
+      title: candidate.displayName,
+      context: `${candidate.path}:${candidate.documentationLine || candidate.line} · ${confidence}`,
+      documentation: candidate.documentation?.split('\n')[0] || '',
+      kind: candidate.kind || 'type',
+      definition: candidate,
+    });
+  }
+
+  function resultAction(label, listener) {
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = 'choice';
+    button.textContent = label;
+    button.addEventListener('click', listener);
+    return button;
+  }
+
+  async function loadMoreResults(result, pointer, button) {
+    button.disabled = true;
+    button.textContent = 'Loading more…';
+    try {
+      const page = result.request.kind === 'references'
+        ? await findReferences(result.request.target, result.request.definition, result.nextCursor, result.request.scope)
+        : await findImplementations(result.request.target, result.request.definition, undefined, result.nextCursor, result.request.scope);
+      const key = result.request.kind === 'references' ? 'locations' : 'candidates';
+      showResult({ ...page, [key]: [...result[key], ...page[key]], request: result.request }, pointer);
+      pinPopover(pointer);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = 'Show more';
+      legacy.toast(error.message || 'Unable to load more semantic results.');
+    }
+  }
+
+  // showResult(result, pointer) -> boolean (renders and returns true, or
+  // returns false for an `unrecognized` result — the closed `kind` set from
+  // code-intel.internal.js's classify(), replacing the former 11-way
+  // `if/else if` chain on the worker's own wire-level `result.status`
+  // (ticket 04 §5/§2: those wire statuses are unchanged and un-renamed;
+  // `kind` is the new UI-outcome discriminator this dispatch switches on).
+  function showResult(result, pointer) {
+    const shadow = ensureUI();
+    const popover = shadow.querySelector('.popover');
+    const wasPinned = pinnedPopover;
+    const loadingProgress = popover.querySelector('.loading-progress');
+    const badge = popover.querySelector('.popover-header .symbol-badge');
+    const title = popover.querySelector('.popover-title');
+    const docs = popover.querySelector('.docs');
+    const scope = popover.querySelector('.scope');
+    const choices = popover.querySelector('.choices');
+    const location = popover.querySelector('.location');
+    const copyButton = popover.querySelector('.copy-button');
+    const shortcut = popover.querySelector('.shortcut-hint');
+    const shortcutHint = shortcut.querySelector('span');
+    loadingProgress.hidden = true;
+    popover.removeAttribute('aria-busy');
+    renderSignature(popover);
+    docs.textContent = '';
+    scope.textContent = resultScopeText(result.scope);
+    scope.hidden = !scope.textContent;
+    location.textContent = '';
+    configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
+    choices.replaceChildren();
+    shortcut.hidden = true;
+    let shouldPin = false;
+    const setHeader = (kind, heading, sourceLocation = '') => {
+      applySymbolBadge(badge, kind);
+      title.textContent = heading;
+      location.textContent = sourceLocation;
+      location.title = sourceLocation;
+    };
+    const setShortcut = (text) => {
+      shortcutHint.textContent = text;
+      shortcut.hidden = !text;
+    };
+    const { kind } = classify(result);
+    if (kind === 'resolved') {
+      setHeader(result.definition.kind, result.definition.name, `${result.definition.path}:${result.definition.line}`);
+      renderSignature(popover, result.definition, { showFullTypeBody: !result.isDefinition });
+      docs.textContent = result.definition.documentation || '';
+      if (!result.isDefinition) {
+        choices.append(choiceButton({
+          title: 'Go to definition',
+          context: `${result.definition.path}:${destinationLineForDefinition(result.definition)}`,
+          definition: result.definition,
+        }));
+      }
+      setShortcut(result.isDefinition && result.definition.kind === 'interface'
+        ? 'or Ctrl + click to find implementations'
+        : result.isDefinition ? 'or Ctrl + click to find usages' : 'or Ctrl + click to go to definition');
+    } else if (kind === 'externalDoc') {
+      const url = legacy.documentationURL(result);
+      setHeader('external', result.symbol, result.importPath);
+      renderSignature(popover, { signature: `${result.importPath}.${result.symbol}` });
+      docs.textContent = 'Documentation is available on pkg.go.dev.';
+      choices.append(choiceButton({ title: 'Open on pkg.go.dev', context: url, externalURL: url }));
+      setShortcut('or Ctrl + click to open package documentation');
+    } else if (kind === 'projectPackage') {
+      const url = legacy.projectPackageURL(result);
+      setHeader('package', result.symbol, result.importPath);
+      renderSignature(popover, { signature: `package ${result.symbol}` });
+      docs.textContent = url
+        ? 'Open this package directory at the merge request commit.'
+        : 'The package directory is unavailable because the merge request commit could not be verified.';
+      if (url) choices.append(choiceButton({
+        title: 'Open package directory',
+        context: `${result.packagePath || '.'} · ${result.ref.slice(0, 12)}`,
+        externalURL: url,
+      }));
+      setShortcut(url ? 'or Ctrl + click to choose this package directory' : '');
+    } else if (kind === 'builtin') {
+      const url = legacy.documentationURL(result);
+      setHeader('builtin', result.symbol, 'Go builtin');
+      renderSignature(popover, { signature: `builtin ${result.symbol}` });
+      docs.textContent = 'Documentation is available on pkg.go.dev.';
+      choices.append(choiceButton({ title: 'Open on pkg.go.dev', context: url, externalURL: url }));
+      setShortcut('or Ctrl + click to open builtin documentation');
+    } else if (kind === 'ambiguous') {
+      setHeader('external', result.symbol, `${result.definitions.length} definitions`);
+      docs.textContent = result.reason === 'receiverOrSelector'
+        ? 'Ambiguous receiver or selector. Choose only when the intended definition is clear.'
+        : 'Multiple definitions match. Choose the definition you want to open.';
+      result.definitions.forEach((definition) => {
+        choices.append(choiceButton({
+          title: definition.compactSignature || definition.signature,
+          fullTitle: definition.signature,
+          context: `${definition.receiver ? `${definition.receiver} · ` : ''}${definition.path}:${definition.line}`,
+          kind: definition.kind,
+          definition,
+        }));
+      });
+      shouldPin = result.definitions.length > 0;
+    } else if (kind === 'references') {
+      const count = `${result.locations.length}${result.hasMore ? '+' : ''}`;
+      setHeader(result.definition.kind, `Usages of ${result.definition.name}`, `${result.definition.path}:${result.definition.line}`);
+      renderSignature(popover, result.definition);
+      docs.textContent = result.locations.length
+        ? `${count} usage${result.locations.length === 1 && !result.hasMore ? '' : 's'} in the current search scope.`
+        : absenceText(result.scope);
+      result.locations.forEach((reference) => {
+        choices.append(choiceButton({
+          title: reference.path.split('/').pop(),
+          context: `${reference.path}:${reference.line}`,
+          definition: reference,
+        }));
+      });
+      if (result.hasMore) choices.append(resultAction('Show more', (event) => loadMoreResults(result, pointer, event.currentTarget)));
+      shouldPin = result.locations.length > 1;
+    } else if (kind === 'implementations') {
+      const groups = implementationGroups(result);
+      setHeader('interface', `Implementations of ${result.interfaceDefinition.name}`, `${result.methodCount} required method${result.methodCount === 1 ? '' : 's'}`);
+      renderSignature(popover, result.interfaceDefinition);
+      docs.textContent = result.candidates.length
+        ? `${groups.production.length} production implementation${groups.production.length === 1 ? '' : 's'}${groups.testDoubles.length ? ` and ${groups.testDoubles.length} test double${groups.testDoubles.length === 1 ? '' : 's'}` : ''}.`
+        : absenceText(result.scope);
+      groups.production.forEach((candidate) => choices.append(implementationButton(candidate)));
+      if (groups.testDoubles.length) {
+        const details = doc.createElement('details');
+        const summary = doc.createElement('summary');
+        const group = doc.createElement('div');
+        group.className = 'test-double-choices';
+        summary.textContent = `Test doubles (${groups.testDoubles.length})`;
+        groups.testDoubles.forEach((candidate) => group.append(implementationButton(candidate)));
+        details.append(summary, group);
+        choices.append(details);
+      }
+      if (result.hasMore) choices.append(resultAction('Show more', (event) => loadMoreResults(result, pointer, event.currentTarget)));
+      shouldPin = result.candidates.length > 0;
+    } else if (kind === 'unsupportedImplementations') {
+      setHeader('interface', `Implementations of ${result.interfaceDefinition.name}`);
+      renderSignature(popover, result.interfaceDefinition);
+      docs.textContent = result.reason === 'buildConstraint'
+        ? 'Unsupported build constraint: GoLens cannot safely choose a platform-specific implementation set.'
+        : result.reason === 'typeSetConstraint'
+        ? 'This interface contains a type-set constraint, which the structural finder cannot evaluate safely.'
+        : 'This interface embeds a type that cannot be resolved inside the project.';
+    } else if (kind === 'notFound') {
+      setHeader('external', result.symbol || 'Not found');
+      docs.textContent = absenceText(result.scope);
+    } else if (kind === 'unsupported') {
+      setHeader('external', result.symbol || 'Unsupported');
+      docs.textContent = result.reason === 'buildConstraint'
+        ? 'Unsupported build constraint: GoLens cannot safely select the active declaration.'
+        : 'This semantic relationship is unsupported.';
+    } else return false;
+    const hasCompleteSearchTerms = result.request?.kind === 'references' || result.searchTerms?.length;
+    if (result.request && hasCompleteSearchTerms && result.scope?.kind !== 'fullProject' && !result.scope?.complete
+      && !['buildConstraint', 'typeSetConstraint'].includes(result.reason)) {
+      choices.append(resultAction('Search complete project', () => legacy.openFullSearch(result, pointer)));
+      shouldPin = true;
+    }
+    popover.classList.add('show');
+    positionPopover(popover, pointer.x, pointer.y);
+    if (shouldPin || wasPinned) pinPopover(pointer);
+    else setPopoverMode('passive', pointer);
+    return true;
+  }
+
+  function showLoading(message, pointer, progress) {
+    const shadow = ensureUI();
+    const popover = shadow.querySelector('.popover');
+    const wasPinned = pinnedPopover;
+    const loadingProgress = popover.querySelector('.loading-progress');
+    const loadingPhase = loadingProgress.querySelector('.loading-progress-phase');
+    const loadingCount = loadingProgress.querySelector('.loading-progress-count');
+    const loadingTrack = loadingProgress.querySelector('.loading-track');
+    const badge = popover.querySelector('.popover-header .symbol-badge');
+    const title = popover.querySelector('.popover-title');
+    const docs = popover.querySelector('.docs');
+    const choices = popover.querySelector('.choices');
+    const location = popover.querySelector('.location');
+    const copyButton = popover.querySelector('.copy-button');
+    const shortcutHint = popover.querySelector('.shortcut-hint');
+    if (progress) {
+      loadingProgress.hidden = false;
+      loadingPhase.textContent = loadingPhaseLabel(progress.phase);
+      loadingCount.textContent = progress.phase === 'discovering'
+        ? '0%'
+        : `${progress.percentage}% · ${progress.completed} / ${progress.total} files`;
+      loadingTrack.setAttribute('aria-valuenow', String(progress.percentage));
+      loadingTrack.querySelector('i').style.width = `${progress.percentage}%`;
+    } else {
+      loadingProgress.hidden = true;
+    }
+    applySymbolBadge(badge, 'external');
+    title.textContent = message;
+    renderSignature(popover);
+    docs.textContent = '';
+    choices.replaceChildren();
+    location.textContent = '';
+    configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
+    shortcutHint.hidden = true;
+    popover.setAttribute('aria-busy', 'true');
+    popover.classList.add('show');
+    positionPopover(popover, pointer.x, pointer.y);
+    if (wasPinned) pinPopover(pointer);
+    else setPopoverMode('passive', pointer);
+  }
+
+  // --- resolution orchestration (fetch, debounce, sequencing) --------------
+
+  async function resolveAt(target, method, onProgress) {
+    const file = legacy.fileContextFor(target.cell);
+    const line = legacy.lineContextFor(target.cell);
+    const context = legacy.projectContext();
+    if (!file || !line || !context) return { status: 'unsupported', reason: 'diffContextUnavailable' };
+    const refs = await legacy.mergeRequestRefsForFile(file);
+    const sourcePath = line.side === 'old' ? file.oldPath : file.newPath;
+    const packagePath = legacy.dirname(sourcePath);
+    const ref = legacy.sourceRefFor(file, line, refs);
+    await legacy.loadPackage(packagePath, ref, onProgress);
+    const params = {
+      origin: location.origin,
+      project: context.project,
+      ref,
+      packagePath,
+      path: sourcePath,
+      line: line.line,
+      character: target.character,
+      identifier: target.identifier,
+      occurrence: target.occurrence,
+    };
+    let result = await legacy.workerRPC(method, params);
+    if (result.status === 'needsPackage') {
+      await legacy.loadPackage(result.packagePath, ref, onProgress);
+      result = await legacy.workerRPC(method, params);
+    }
+    return result;
+  }
+
+  function relatedResultScope(restored, packagePath) {
+    if (restored?.coverage === 'related') {
+      return {
+        kind: 'indexedPackages',
+        packageCount: restored.packages || 0,
+        complete: false,
+        searchStatus: restored.searchStatus || 'limited',
+      };
+    }
+    return null;
+  }
+
+  async function findReferences(target, definition, cursor = '', scopeOverride = null) {
+    const file = legacy.fileContextFor(target.cell);
+    const line = legacy.lineContextFor(target.cell);
+    const context = legacy.projectContext();
+    if (!file || !line || !context) return { status: 'notFound' };
+    const refs = await legacy.mergeRequestRefsForFile(file);
+    const sourcePath = line.side === 'old' ? file.oldPath : file.newPath;
+    const packagePath = legacy.dirname(sourcePath);
+    const ref = legacy.sourceRefFor(file, line, refs);
+    await legacy.loadPackage(packagePath, ref);
+    let restored = null;
+    if (ref === refs.headSha) {
+      restored = await legacy.workerRPC('restoreMergeRequest', {
+        origin: location.origin,
+        project: context.project,
+        mergeRequest: legacy.mergeRequestIID(),
+        ref,
+      });
+    }
+    const result = await legacy.workerRPC('findReferences', {
+      origin: location.origin,
+      project: context.project,
+      ref,
+      packagePath,
+      definition,
+      pageSize: 25,
+      cursor,
+      ...((scopeOverride || relatedResultScope(restored, packagePath)) ? { scope: scopeOverride || relatedResultScope(restored, packagePath) } : {}),
+    });
+    return { ...result, request: { kind: 'references', target, definition, ref, scope: scopeOverride } };
+  }
+
+  async function findImplementations(target, definition, progress = () => {}, cursor = '', scopeOverride = null) {
+    const file = legacy.fileContextFor(target.cell);
+    const line = legacy.lineContextFor(target.cell);
+    const context = legacy.projectContext();
+    if (!file || !line || !context) return { status: 'notFound' };
+    const refs = await legacy.mergeRequestRefsForFile(file);
+    const ref = legacy.sourceRefFor(file, line, refs);
+    let restored = null;
+    if (ref === refs.headSha) {
+      await legacy.preloadMergeRequest(progress);
+      restored = await legacy.workerRPC('restoreMergeRequest', {
+        origin: location.origin,
+        project: context.project,
+        mergeRequest: legacy.mergeRequestIID(),
+        ref,
+      });
+    } else {
+      await legacy.loadPackage(legacy.dirname(line.side === 'old' ? file.oldPath : file.newPath), ref, progress);
+    }
+    const packagePath = legacy.dirname(line.side === 'old' ? file.oldPath : file.newPath);
+    const result = await legacy.workerRPC('findImplementations', {
+      origin: location.origin,
+      project: context.project,
+      ref,
+      interfaceDefinition: definition,
+      pageSize: 25,
+      cursor,
+      ...((scopeOverride || relatedResultScope(restored, packagePath)) ? { scope: scopeOverride || relatedResultScope(restored, packagePath) } : {}),
+    });
+    return { ...result, request: { kind: 'implementations', target, definition, ref, scope: scopeOverride } };
+  }
+
+  async function navigateSemanticTarget(target) {
+    hidePopover();
+    activeTarget = { key: targetKey(target), ...target };
+    markTarget(target.element);
+    try {
+      showLoading(`Looking up ${target.identifier}…`, target);
+      const result = await resolveAt(target, 'resolveDefinition', (message, progress) => showLoading(message, target, progress));
+      if (isInterfaceDeclaration(result)) {
+        const implementations = await findImplementations(
+          target,
+          result.definition,
+          (message) => showLoading(message, target),
+        );
+        showResult(implementations, target);
+      }
+      else if (result.status === 'resolved' && result.isDefinition) {
+        showLoading(`Finding usages of ${target.identifier}…`, target);
+        const references = await findReferences(target, result.definition);
+        if (referenceNavigationAction(references) === 'open') openDefinition(references.locations[0], sourceLocationForTarget(target));
+        else showResult(references, target);
+      }
+      else if (result.status === 'resolved') openDefinition(result.definition, sourceLocationForTarget(target));
+      else if (result.status === 'projectPackage') {
+        showResult(result, target);
+        pinPopover(target);
+      }
+      else if (result.status === 'standardLibrary' || result.status === 'packageDocumentation' || result.status === 'builtin') win.open(legacy.documentationURL(result), '_blank', 'noopener');
+      else if (['ambiguous', 'notFound', 'unsupported'].includes(result.status)) {
+        showResult(result, target);
+        pinPopover(target);
+      }
+      else legacy.toast('GoLens could not resolve this symbol safely.');
+    } catch (error) {
+      hidePopover();
+      legacy.toast(error.message || 'Go intelligence is unavailable.');
+    }
+  }
+
+  // --- hit-test / hover / click ---------------------------------------------
+
+  function markTarget(element) {
+    if (activeElement === element) return;
+    activeElement?.removeAttribute('data-golens-go-target');
+    activeElement = element || null;
+    activeElement?.setAttribute('data-golens-go-target', '');
+  }
+
+  function caretAtPoint(cell, x, y) {
+    let node;
+    let offset;
+    if (doc.caretPositionFromPoint) {
+      const position = doc.caretPositionFromPoint(x, y);
+      node = position?.offsetNode;
+      offset = position?.offset;
+    } else if (doc.caretRangeFromPoint) {
+      const range = doc.caretRangeFromPoint(x, y);
+      node = range?.startContainer;
+      offset = range?.startOffset;
+    }
+    if (!node || !cell.contains(node)) return null;
+    const range = doc.createRange();
+    range.selectNodeContents(cell);
+    try { range.setEnd(node, offset); } catch { return null; }
+    const character = range.toString().length;
+    const source = cell.textContent || '';
+    const identifier = identifierAtCharacter(source, character);
+    if (!identifier) return null;
+    const element = node.nodeType === 1 ? node : node.parentElement;
+    if (!caretElementMatchesIdentifier(element, cell, identifier.identifier)) return null;
+    return { ...identifier, element: element === cell ? null : element };
+  }
+
+  function identifierFromElement(target, cell) {
+    let element = target?.nodeType === 1 ? target : target?.parentElement;
+    while (element && element !== cell) {
+      const identifier = (element.textContent || '').trim();
+      if (isWholeIdentifier(identifier)) {
+        const range = doc.createRange();
+        range.selectNodeContents(cell);
+        try { range.setEndBefore(element); } catch { return null; }
+        const character = range.toString().length;
+        const hit = identifierAtCharacter(cell.textContent || '', character);
+        if (!hit || hit.identifier !== identifier) return null;
+        return { ...hit, element };
+      }
+      element = element.parentElement;
+    }
+    return null;
+  }
+
+  function targetAtEvent(event) {
+    const cell = legacy.codeCellFor(event.target);
+    if (!cell || !legacy.fileContextFor(cell)) return null;
+    const caret = caretAtPoint(cell, event.clientX, event.clientY) || identifierFromElement(event.target, cell);
+    return caret ? { ...caret, cell, x: event.clientX, y: event.clientY } : null;
+  }
+
+  function throttleToFrame(fn) {
+    let scheduled = false;
+    let latestArgs = null;
+    const throttled = (...args) => {
+      latestArgs = args;
+      if (scheduled) return;
+      scheduled = true;
+      legacy.requestFrame(() => {
+        scheduled = false;
+        fn(...latestArgs);
+      });
+    };
+    throttled.reset = () => { scheduled = false; latestArgs = null; };
+    return throttled;
+  }
+
+  const handleMouseMovePoint = throttleToFrame((point) => {
+    if (!enabled) return;
+    const target = targetAtEvent(point);
+    const key = targetKey(target);
+    if (key === activeTarget?.key) {
+      cancelPopoverDismissal();
+      return;
+    }
+    clearTimeout(hoverTimer);
+    if (!target) {
+      activeTarget = null;
+      markTarget(null);
+      schedulePassivePopoverDismissal();
+      return;
+    }
+    cancelPopoverDismissal();
+    hidePopover();
+    activeTarget = { key, ...target };
+    markTarget(target.element);
+    hoverTimer = setTimeout(async () => {
+      try {
+        if (activeTarget?.key !== key) return;
+        showLoading(`Looking up ${target.identifier}…`, target);
+        const result = await resolveAt(target, 'resolveHover', (message, progress) => {
+          if (activeTarget?.key === key) showLoading(message, target, progress);
+        });
+        let displayResult = result;
+        if (shouldShowReferencesOnHover(result)) {
+          showLoading(`Finding usages of ${target.identifier}…`, target);
+          displayResult = await findReferences(target, result.definition);
+        }
+        if (activeTarget?.key === key) showResult(displayResult, target);
+      } catch (error) {
+        if (activeTarget?.key === key) hidePopover();
+        const message = error.message || 'Go intelligence is unavailable.';
+        if (lastErrorToast !== message) {
+          lastErrorToast = message;
+          legacy.toast(message);
+        }
+      }
+    }, 350);
+  });
+
+  function onMouseMove(event) {
+    if (!enabled) return;
+    if (ui && event.composedPath().includes(ui)) {
+      pinPopover();
+      return;
+    }
+    if (pinnedPopover) return;
+    handleMouseMovePoint({ target: event.target, clientX: event.clientX, clientY: event.clientY });
+  }
+
+  async function onClick(event) {
+    if (!enabled || event.button !== 0) return;
+    if (eventIsInsideUI(event)) return;
+    if (!(event.metaKey || event.ctrlKey)) {
+      dismissPinnedPopoverFromOutside(event);
+      const selection = globalThis.getSelection?.();
+      const target = (!selection || selection.isCollapsed) ? targetAtEvent(event) : null;
+      if (target) selectSymbol(target);
+      else if (!legacy.codeCellFor(event.target)) clearSelectedSymbol();
+      return;
+    }
+    const target = targetAtEvent(event);
+    if (!target) {
+      if (legacy.codeCellFor(event.target)) legacy.toast('GoLens could not identify a Go symbol on this diff line.');
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void legacy.offerShortcutCoach('semanticJump');
+    await navigateSemanticTarget(target);
+  }
+
+  // Escape while the popover holds focus: same guard string as
+  // go-navigation.js's document-level listener (duplicated per the
+  // isBookmarkOnlyMutation precedent from ticket 18 — a small, unlikely-to-
+  // drift check isn't worth a shared platform module) since this listener is
+  // independent of that one, not preceded by it.
+  function escapeGuardBlocks(event) {
+    return [...event.composedPath(), doc.activeElement].some((target) => target?.closest?.(ESCAPE_GUARD_SELECTOR));
+  }
+
+  function onPopoverKeyDown(event) {
+    if (event.key !== 'Escape') return;
+    if (escapeGuardBlocks(event)) return;
+    handleEscape(event);
+  }
+
+  // handleEscape(event) -> mutates `event` (preventDefault/stopPropagation)
+  // exactly as go-navigation.js's former unified onKeyDown did for its
+  // popover branch; self-bridge-only, called by go-navigation.js's own
+  // document-level Escape handler *after* its project-search-minimize check
+  // (and after that same guard already ran once there — not re-checked
+  // here).
+  function handleEscape(event) {
+    if (popoverMode === 'hidden') {
+      if (selectedIdentifier) { event.preventDefault(); clearSelectedSymbol(); }
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    hidePopover();
+  }
+
+  // --- occurrence highlighting -----------------------------------------------
+
+  function occurrenceRanges(identifier) {
+    const found = [];
+    if (!identifier) return found;
+    for (const root of legacy.diffFileRoots()) {
+      const firstCell = root.querySelector(CODE_CELL_SELECTOR);
+      if (!firstCell || !legacy.fileContextFor(firstCell)) continue;
+      for (const cell of root.querySelectorAll(CODE_CELL_SELECTOR)) {
+        const cellSource = cell.textContent || '';
+        if (!cellSource.includes(identifier)) continue;
+        const walker = doc.createTreeWalker(cell, globalThis.NodeFilter?.SHOW_TEXT || 4);
+        let node;
+        let nodeOffset = 0;
+        while ((node = walker.nextNode())) {
+          const text = node.nodeValue || '';
+          let from = 0;
+          while (from <= text.length - identifier.length) {
+            const index = text.indexOf(identifier, from);
+            if (index < 0) break;
+            const end = index + identifier.length;
+            const hit = identifierAtCharacter(cellSource, nodeOffset + index);
+            if (identifierBoundary(text[index - 1]) && identifierBoundary(text[end]) && hit?.identifier === identifier && hit.character === nodeOffset + index) {
+              const range = doc.createRange();
+              range.setStart(node, index);
+              range.setEnd(node, end);
+              found.push({ range, cell, row: cell.closest('tr, [role="row"]') || cell, character: hit.character, occurrence: hit.occurrence });
+            }
+            from = index + identifier.length;
+          }
+          nodeOffset += text.length;
+        }
+      }
+    }
+    return found;
+  }
+
+  function paintOccurrences() {
+    const highlights = globalThis.CSS?.highlights;
+    if (!highlights || typeof globalThis.Highlight !== 'function') return;
+    highlights.delete('golens-symbol-occurrence');
+    highlights.delete('golens-symbol-current');
+    if (!occurrences.length) return;
+    highlights.set('golens-symbol-occurrence', new globalThis.Highlight(...occurrences.map(({ range }) => range)));
+    if (occurrenceIndex >= 0) highlights.set('golens-symbol-current', new globalThis.Highlight(occurrences[occurrenceIndex].range));
+  }
+
+  function refreshOccurrences() {
+    clearTimeout(occurrenceRefreshTimer);
+    occurrenceRefreshTimer = null;
+    const previousCell = occurrences[occurrenceIndex]?.cell;
+    occurrences = occurrenceRanges(selectedIdentifier);
+    occurrenceIndex = previousCell ? occurrences.findIndex(({ cell }) => cell === previousCell) : (occurrences.length ? 0 : -1);
+    if (occurrenceIndex < 0 && occurrences.length) occurrenceIndex = 0;
+    paintOccurrences();
+  }
+
+  function scheduleOccurrenceRefresh() {
+    if (!selectedIdentifier || occurrenceRefreshTimer) return;
+    occurrenceRefreshTimer = setTimeout(refreshOccurrences, 30);
+  }
+
+  function clearSelectedSymbol() {
+    selectedIdentifier = '';
+    occurrences = [];
+    occurrenceIndex = -1;
+    clearTimeout(occurrenceRefreshTimer);
+    occurrenceRefreshTimer = null;
+    globalThis.CSS?.highlights?.delete('golens-symbol-occurrence');
+    globalThis.CSS?.highlights?.delete('golens-symbol-current');
+  }
+
+  function selectSymbol(target) {
+    selectedIdentifier = target.identifier;
+    refreshOccurrences();
+    const index = occurrences.findIndex(({ cell, character }) => cell === target.cell && character === target.character);
+    if (index >= 0) occurrenceIndex = index;
+    paintOccurrences();
+    if (occurrences.length > 1) void legacy.offerShortcutCoach('nextOccurrence');
+  }
+
+  function navigateOccurrenceImpl(direction) {
+    if (!occurrences.length) {
+      legacy.toast(selectedIdentifier ? `No loaded occurrences of ${selectedIdentifier}.` : 'Click a Go symbol to select it first.');
+      return false;
+    }
+    occurrenceIndex = (occurrenceIndex + direction + occurrences.length) % occurrences.length;
+    const occurrence = occurrences[occurrenceIndex];
+    paintOccurrences();
+    occurrence.row.scrollIntoView({ behavior: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+    flashDestination(occurrence.row);
+    legacy.toast(`${selectedIdentifier} · ${occurrenceIndex + 1} of ${occurrences.length}`);
+    return true;
+  }
+
+  function targetForOccurrence(occurrence, identifier) {
+    if (!occurrence) return null;
+    const bounds = occurrence.row.getBoundingClientRect();
+    const parent = occurrence.range.startContainer.parentElement;
+    const element = parent && parent !== occurrence.cell && (parent.textContent || '').trim() === identifier ? parent : null;
+    return {
+      identifier,
+      character: occurrence.character,
+      occurrence: occurrence.occurrence,
+      cell: occurrence.cell,
+      element,
+      x: bounds.left + Math.min(bounds.width / 2, 240),
+      y: bounds.top + Math.min(bounds.height / 2, 20),
+    };
+  }
+
+  function targetForSelectedOccurrence() {
+    return targetForOccurrence(occurrences[occurrenceIndex], selectedIdentifier);
+  }
+
+  // Own MutationObserver on the diff DOM (ticket 18's bookmarks.js
+  // precedent: "the module owns marker/highlight placement", not a
+  // registration API on go-navigation.js). No self-mutation guard is needed
+  // for the loop-prevention reason ticket 18 needed one: painting occurrences
+  // uses the CSS Custom Highlight API (`CSS.highlights.set(...)`), which
+  // never mutates the DOM, so this observer cannot retrigger itself. It does
+  // duplicate go-navigation.js's own `isBookmarkOnlyMutation` filter (see
+  // that file's comment) so bookmark marker placement doesn't cause
+  // unnecessary occurrence recomputation — before this ticket, occurrence
+  // refresh and bookmark markers shared one observer with one guard;
+  // splitting them must not silently start reacting to the other module's
+  // DOM where the old code didn't.
+  function isBookmarkOnlyMutation(mutation) {
+    const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+    return nodes.length > 0 && nodes.every((node) => node.nodeType === 1 && (
+      node.matches?.('[data-golens-bookmark-marker], #golens-bookmark-selection-root')
+      || node.querySelector?.('[data-golens-bookmark-marker], #golens-bookmark-selection-root')
+    ));
+  }
+
+  // Plain setTimeout debounce, not go-navigation.js's former
+  // legacyDebounceIdleFactory bridge (ticket 08's async page/platform/clock.js
+  // import) — same choice ticket 18 made for bookmarks.js's own observer, "om
+  // precies dezelfde getallen te garanderen" without depending on that
+  // module's async-ready races. Preserves the same 50ms + 30ms timing
+  // composition (mutation -> 50ms -> scheduleOccurrenceRefresh's own 30ms ->
+  // refreshOccurrences) the original single shared observer had.
+  function scheduleOccurrenceRefreshFromMutation() {
+    clearTimeout(diffMutationTimer);
+    diffMutationTimer = setTimeout(scheduleOccurrenceRefresh, 50);
+  }
+
+  // --- navigationAction(name) -> boolean ------------------------------------
+
+  // navigationAction(name) -> boolean (handled?). The five actions
+  // go-navigation.js's former runNavigationAction() used to own that belong
+  // to code-intel: semanticJump, previousOccurrence, nextOccurrence,
+  // historyBack, historyForward. The other three (toggleBookmark/
+  // previousBookmark/nextBookmark) stayed in go-navigation.js's own
+  // (shrunk) runNavigationAction, which forwards to bookmarks.js — not this
+  // module's concern (see this file's header comment and keyboard-nav.js's
+  // updated header comment for the split).
+  function navigationAction(action) {
+    if (!enabled) return false;
+    if (action === 'semanticJump') {
+      const target = targetForSelectedOccurrence();
+      if (!target) legacy.toast('Click a Go symbol to select it first.');
+      else navigateSemanticTarget(target);
+      return true;
+    }
+    if (action === 'previousOccurrence') return navigateOccurrenceImpl(-1);
+    if (action === 'nextOccurrence') return navigateOccurrenceImpl(1);
+    if (action === 'historyBack') { navigateHistoryImpl(-1); return true; }
+    if (action === 'historyForward') { navigateHistoryImpl(1); return true; }
+    return false;
+  }
+
+  // --- enable / disable ------------------------------------------------------
+
+  function setEnabled(next) {
+    const value = Boolean(next);
+    if (value === enabled) return;
+    enabled = value;
+    if (!legacy) return;
+    if (enabled) {
+      doc.addEventListener('mousemove', onMouseMove, true);
+      doc.addEventListener('click', onClick, true);
+      diffObserver = new MutationObserver((mutations) => {
+        if (mutations.length && mutations.every(isBookmarkOnlyMutation)) return;
+        scheduleOccurrenceRefreshFromMutation();
+      });
+      const diffObserverRoot = doc.getElementById('diffs') || doc.body;
+      diffObserver.observe(diffObserverRoot, { childList: true, subtree: true, characterData: true });
+    } else {
+      clearTimeout(hoverTimer);
+      handleMouseMovePoint.reset();
+      clearTimeout(diffMutationTimer);
+      diffMutationTimer = null;
+      diffObserver?.disconnect();
+      diffObserver = null;
+      clearSelectedSymbol();
+      history = [];
+      historyIndex = -1;
+      clearPinnedPopover();
+      markTarget(null);
+      doc.removeEventListener('mousemove', onMouseMove, true);
+      doc.removeEventListener('click', onClick, true);
+      hidePopover();
+      ui?.remove();
+      ui = null;
+    }
+  }
+
+  return {
+    unmount() {
+      if (unmounted) return;
+      unmounted = true;
+      setEnabled(false);
+    },
+    setEnabled,
+    navigationAction: legacy ? navigationAction : () => false,
+    // --- self-bridge-only extras (documented deviation, ticket 04 §1's
+    // "~5" budget — same allowance bookmarks.js/project-search.js already
+    // used for their own self-bridge-only methods). None of these are ever
+    // called by page/main.js's inert instance; go-navigation.js's own thin
+    // forwarding functions (findReferencesAt/findImplementationsAt/
+    // showResult/pinPopover/hidePopover, same names as before this ticket)
+    // are the only callers, keeping project-search.js's and bookmarks.js's
+    // existing `legacy` capability bags unchanged.
+    findReferences: legacy ? findReferences : noLegacy({ status: 'notFound' }),
+    findImplementations: legacy ? findImplementations : noLegacy({ status: 'notFound' }),
+    showResult: legacy ? showResult : () => false,
+    pinPopover: legacy ? pinPopover : () => {},
+    hidePopover: legacy ? hidePopover : () => {},
+    // selectedSymbolLocation() -> the currently *hovered* target's source
+    // location, or null. Used by bookmarks.js's `legacy.selectedSymbolLocation`
+    // capability (ticket 18).
+    selectedSymbolLocation: () => (legacy ? (() => {
+      const loc = sourceLocationForTarget(activeTarget);
+      return loc ? { identifier: activeTarget?.identifier || '', path: loc.path, side: loc.side, line: loc.line } : null;
+    })() : null),
+    // selectedOccurrenceSourceLocation() -> the currently *click-selected*
+    // symbol's source location, or null. Used by go-navigation.js's shrunk
+    // runNavigationAction() as the toggleBookmark fallback (byte-identical
+    // to the former inline `sourceLocationForTarget(targetForSelectedOccurrence())`).
+    selectedOccurrenceSourceLocation: () => (legacy ? sourceLocationForTarget(targetForSelectedOccurrence()) : null),
+    // handleEscape(event) -> see its own doc comment above.
+    handleEscape: legacy ? handleEscape : () => {},
+    // __test: bends ticket 04 §1's "test surface = handle + internal.js pure
+    // functions" on purpose, for exactly one reason — ticket 24's `npm run
+    // bench` baseline benchmarks caretAtPoint/occurrenceRanges by name
+    // (tests/benchmarks/diff-dom.bench.mjs), and 13-21's perf-regression
+    // criterion is only checkable if those two rows stay comparable against
+    // that baseline. Not for use outside tests/benchmarks/.
+    __test: { caretAtPoint, occurrenceRanges },
+  };
+}

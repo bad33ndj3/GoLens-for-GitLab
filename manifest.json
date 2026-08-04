@@ -10,7 +10,7 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "background": {
-    "service_worker": "go-semantic-worker.js",
+    "service_worker": "worker/dispatch.js",
     "type": "module"
   },
   "icons": {
@@ -32,8 +32,8 @@
   "content_scripts": [
     {
       "matches": ["https://gitlab.com/*"],
-      "js": ["shortcut-settings.js", "bookmark-store.js", "go-navigation.js", "content.js"],
       "css": ["golens-theme.css", "gitlab-lens.css"],
+      "js": ["bootstrap.js"],
       "run_at": "document_idle"
     }
   ],
@@ -41,6 +41,9 @@
     {
       "resources": [
         "settings.html",
+        "page/*",
+        "bookmark-store.js",
+        "shortcut-settings.js",
         "assets/icons/golens-32.png",
         "assets/icons/golens-128.png",
         "assets/celebrations/golens-approved.png",

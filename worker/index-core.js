@@ -1,0 +1,1351 @@
+const IDENTIFIER_TYPES = new Set(['identifier', 'field_identifier', 'package_identifier', 'type_identifier']);
+const PREDECLARED_FUNCTIONS = new Set([
+  'append', 'cap', 'clear', 'close', 'complex', 'copy', 'delete', 'imag', 'len', 'make',
+  'max', 'min', 'new', 'panic', 'print', 'println', 'real', 'recover',
+]);
+const PREDECLARED_TYPES = new Set([
+  'any', 'bool', 'byte', 'comparable', 'complex64', 'complex128', 'error', 'float32', 'float64',
+  'int', 'int8', 'int16', 'int32', 'int64', 'rune', 'string', 'uint', 'uint8', 'uint16', 'uint32',
+  'uint64', 'uintptr',
+]);
+const COMPACT_SIGNATURE_LIMIT = 160;
+// Format of GoSemanticIndex.serializeProject's output. Independent of the
+// source-cache's CACHE_FORMAT_VERSION (go-semantic-cache.js) — this one
+// versions derived index data, not raw source blobs, and the two must never
+// be conflated: bumping one must not discard the other.
+export const INDEX_FORMAT_VERSION = 1;
+
+function packageKey(origin, project, ref, packagePath) {
+  return `${origin}\u0000${project}\u0000${ref}\u0000${packagePath}`;
+}
+
+function projectKey(origin, project, ref) {
+  return `${origin}\u0000${project}\u0000${ref}`;
+}
+
+function fileKey(origin, project, ref, path) {
+  return `${origin}\u0000${project}\u0000${ref}\u0000${path}`;
+}
+
+function textOf(source, node) {
+  return node ? source.slice(node.startIndex, node.endIndex) : '';
+}
+
+function unquoteImport(value) {
+  if (value.startsWith('`') && value.endsWith('`')) return value.slice(1, -1);
+  try { return JSON.parse(value); } catch { return value.replace(/^"|"$/g, ''); }
+}
+
+function isStandardLibraryImport(importPath) {
+  return Boolean(importPath) && !importPath.split('/')[0].includes('.');
+}
+
+function externalImportResult(importPath, symbol) {
+  if (isStandardLibraryImport(importPath)) return { status: 'standardLibrary', importPath, symbol };
+  return { status: 'packageDocumentation', importPath, symbol };
+}
+
+function defaultImportName(importPath) {
+  const parts = importPath.split('/').filter(Boolean);
+  const last = parts.at(-1) || '';
+  return /^v[2-9]\d*$/.test(last) && parts.length > 1 ? parts.at(-2) : last;
+}
+
+function receiverType(value) {
+  return value
+    .replace(/\s+/g, '')
+    .replace(/^\(+|\)+$/g, '')
+    .replace(/^\*+/, '')
+    .replace(/\[.*\]$/, '')
+    .split('.')
+    .pop();
+}
+
+function dirname(path) {
+  const index = path.lastIndexOf('/');
+  return index < 0 ? '' : path.slice(0, index);
+}
+
+function projectTypeIdentity(file, name) {
+  const packageImportPath = [file.modulePath, file.packagePath].filter(Boolean).join('/');
+  const testPackage = file.packageName?.endsWith('_test') ? `#${file.packageName}` : '';
+  return `${packageImportPath || file.packagePath}${testPackage}.${name}`;
+}
+
+function namedTypeIdentity(file, value) {
+  const parts = value.split('.');
+  const name = parts.pop();
+  if (!name) return '';
+  if (parts.length) {
+    const importPath = file.imports.get(parts.join('.'));
+    return importPath ? `${importPath}.${name}` : value;
+  }
+  return PREDECLARED_TYPES.has(name) ? `builtin.${name}` : projectTypeIdentity(file, name);
+}
+
+function typeIdentity(file, node) {
+  if (!node) return '';
+  if (node.type === 'pointer_type') return typeIdentity(file, node.childForFieldName('type') || node.namedChildren[0]);
+  if (node.type === 'generic_type') return typeIdentity(file, node.childForFieldName('type') || node.namedChildren[0]);
+  if (node.type === 'type_identifier' || node.type === 'identifier') return namedTypeIdentity(file, textOf(file.source, node));
+  if (node.type === 'qualified_type') {
+    const packageName = textOf(file.source, node.childForFieldName('package'));
+    const name = textOf(file.source, node.childForFieldName('name'));
+    const importPath = file.imports.get(packageName);
+    return importPath ? `${importPath}.${name}` : `${packageName}.${name}`;
+  }
+  if (node.type === 'function_type') {
+    const parameters = parameterTypes(file, node.childForFieldName('parameters'));
+    const results = resultTypes(file, node.childForFieldName('result'));
+    return `func(${parameters.join(',')})(${results.join(',')})`;
+  }
+  if (node.type === 'channel_type') {
+    const source = textOf(file.source, node).trim();
+    const direction = source.startsWith('<-chan') ? '<-chan' : source.startsWith('chan<-') ? 'chan<-' : 'chan';
+    return `${direction}(${typeIdentity(file, node.childForFieldName('value'))})`;
+  }
+  const children = node.namedChildren.map((child) => typeIdentity(file, child) || textOf(file.source, child).replace(/\s+/g, ''));
+  return `${node.type}(${children.join(',')})`;
+}
+
+function parameterTypes(file, parameterList) {
+  const types = [];
+  for (const parameter of parameterList?.namedChildren || []) {
+    if (parameter.type !== 'parameter_declaration' && parameter.type !== 'variadic_parameter_declaration') continue;
+    const typeNode = parameter.childForFieldName('type');
+    const identity = `${parameter.type === 'variadic_parameter_declaration' ? '...' : ''}${typeIdentity(file, typeNode)}`;
+    const names = parameter.namedChildren.filter((child) => child.id !== typeNode?.id && IDENTIFIER_TYPES.has(child.type));
+    for (let index = 0; index < Math.max(1, names.length); index++) types.push(identity);
+  }
+  return types;
+}
+
+function resultTypes(file, result) {
+  if (!result) return [];
+  if (result.type === 'parameter_list') return parameterTypes(file, result);
+  return [typeIdentity(file, result)];
+}
+
+function methodIdentity(file, node) {
+  const name = textOf(file.source, node.childForFieldName('name'));
+  const parameters = parameterTypes(file, node.childForFieldName('parameters'));
+  const results = resultTypes(file, node.childForFieldName('result'));
+  return `${name}(${parameters.join(',')})(${results.join(',')})`;
+}
+
+function receiverDetails(source, receiver) {
+  const parameter = receiver?.namedChildren.find((child) => child.type === 'parameter_declaration');
+  const typeNode = parameter?.childForFieldName('type');
+  return {
+    name: textOf(source, firstIdentifier(typeNode)),
+    pointer: typeNode?.type === 'pointer_type',
+  };
+}
+
+function buildConstrainedSource(source) {
+  return /^(?:\s*\/\/go:build\s+.+|\s*\/\/\s*\+build\s+.+)/m.test(source);
+}
+
+function generatedSource(source) {
+  return /^\/\/ Code generated .* DO NOT EDIT\.$/m.test(source);
+}
+
+function locationCursor({ path = '', line = 0, column = 0 }) {
+  return `${path}\u0000${String(line).padStart(10, '0')}\u0000${String(column).padStart(10, '0')}`;
+}
+
+function testDoublePath(path) {
+  if (/_test\.go$/i.test(path)) return true;
+  return path.split('/').some((part) => /^(?:mocks?|fakes?|stubs?|testdoubles?)$/i.test(part));
+}
+
+function assertionFor(file, node) {
+  const source = textOf(file.source, node).replace(/\s+/g, ' ').trim();
+  const match = source.match(/^_\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*=\s*(?:(?:\(\s*\*\s*)|&\s*)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)/);
+  if (!match) return null;
+  return {
+    interfaceIdentity: namedTypeIdentity(file, match[1]),
+    typeIdentity: namedTypeIdentity(file, match[2]),
+  };
+}
+
+function declarationDocumentation(source, node) {
+  const comments = [];
+  let previous = node.previousNamedSibling;
+  let expectedRow = node.startPosition.row - 1;
+  while (previous?.type === 'comment' && previous.endPosition.row === expectedRow) {
+    comments.unshift(previous);
+    expectedRow = previous.startPosition.row - 1;
+    previous = previous.previousNamedSibling;
+  }
+  return {
+    line: comments[0]?.startPosition.row + 1 || 0,
+    text: comments.map((comment) => textOf(source, comment)).join('\n')
+    .replace(/^\s*\/\/\s?/gm, '')
+    .replace(/^\s*\/\*+\s?/, '')
+    .replace(/\s*\*\/$/, '')
+    .replace(/^\s*\*\s?/gm, '')
+    .trim(),
+  };
+}
+
+function signatureFor(source, node) {
+  const body = node.childForFieldName?.('body');
+  if (body) return source.slice(node.startIndex, body.startIndex).trim().replace(/\s+/g, ' ');
+  return textOf(source, node).split('\n')[0].trim();
+}
+
+function fullTypeBodyFor(source, node) {
+  const typeNode = node.childForFieldName?.('type');
+  if (!['struct_type', 'interface_type'].includes(typeNode?.type)) return '';
+  const body = `type ${textOf(source, node)}`;
+  return body.includes('\n') ? body : '';
+}
+
+function parameterCount(parameter) {
+  const typeNode = parameter.childForFieldName?.('type');
+  const names = parameter.namedChildren.filter((child) => child.id !== typeNode?.id && IDENTIFIER_TYPES.has(child.type));
+  return Math.max(1, names.length);
+}
+
+function compactSignatureFor(source, node, signature) {
+  if (signature.length <= COMPACT_SIGNATURE_LIMIT) return '';
+  const parameters = node.childForFieldName?.('parameters');
+  if (!parameters) return '';
+  const entries = parameters.namedChildren
+    .filter((child) => child.type === 'parameter_declaration' || child.type === 'variadic_parameter_declaration')
+    .map((child) => ({ text: textOf(source, child).replace(/\s+/g, ' '), count: parameterCount(child) }));
+  if (!entries.length) return '';
+
+  const body = node.childForFieldName?.('body');
+  const prefix = source.slice(node.startIndex, parameters.startIndex).trim().replace(/\s+/g, ' ');
+  const suffix = source.slice(parameters.endIndex, body?.startIndex ?? node.endIndex).trim().replace(/\s+/g, ' ');
+  const total = entries.reduce((sum, entry) => sum + entry.count, 0);
+  const visible = [];
+  let visibleCount = 0;
+  for (const entry of entries) {
+    const nextCount = visibleCount + entry.count;
+    const remaining = total - nextCount;
+    const middle = [...visible, entry.text, ...(remaining ? [`… +${remaining} parameters`] : [])].join(', ');
+    const candidate = `${prefix}(${middle})${suffix ? ` ${suffix}` : ''}`;
+    if (candidate.length > COMPACT_SIGNATURE_LIMIT && visible.length) break;
+    if (candidate.length > COMPACT_SIGNATURE_LIMIT && !visible.length) break;
+    visible.push(entry.text);
+    visibleCount = nextCount;
+  }
+  const remaining = total - visibleCount;
+  if (!remaining) return '';
+  const middle = [...visible, `… +${remaining} parameters`].join(', ');
+  return `${prefix}(${middle})${suffix ? ` ${suffix}` : ''}`;
+}
+
+function documentationNodeFor(source, node) {
+  if (node.parent?.type === 'type_declaration') return node.parent;
+  if (node.type !== 'var_spec' && node.type !== 'const_spec') return node;
+  const declaration = node.parent;
+  const specifications = declaration?.namedChildren.filter((child) => child.type === node.type) || [];
+  const grouped = /^(?:var|const)\s*\(/.test(textOf(source, declaration).trimStart());
+  return specifications.length === 1 && !grouped ? declaration : node;
+}
+
+function definitionFor({ source, node, nameNode, kind, receiver = '', packageName, packagePath, path, ref }) {
+  const documentation = declarationDocumentation(source, documentationNodeFor(source, node));
+  const signature = signatureFor(source, node);
+  const compactSignature = compactSignatureFor(source, node, signature);
+  return {
+    name: textOf(source, nameNode),
+    kind,
+    receiver: receiverType(receiver),
+    signature,
+    ...(compactSignature ? { compactSignature } : {}),
+    ...(fullTypeBodyFor(source, node) ? { fullTypeBody: fullTypeBodyFor(source, node) } : {}),
+    documentation: documentation.text,
+    documentationLine: documentation.line,
+    packageName,
+    packagePath,
+    path,
+    ref,
+    line: nameNode.startPosition.row + 1,
+    column: nameNode.startPosition.column + 1,
+  };
+}
+
+function definitionLocationKey(definition) {
+  return `${definition.path}\u0000${definition.line}\u0000${definition.column}`;
+}
+
+function uniqueDefinitions(definitions) {
+  const unique = new Map();
+  definitions.forEach((definition) => unique.set(`${definitionLocationKey(definition)}\u0000${definition.kind}`, definition));
+  return [...unique.values()].sort((left, right) => (
+    `${left.kind}\u0000${left.receiver}\u0000${left.path}\u0000${String(left.line).padStart(8, '0')}\u0000${String(left.column).padStart(8, '0')}`
+      .localeCompare(`${right.kind}\u0000${right.receiver}\u0000${right.path}\u0000${String(right.line).padStart(8, '0')}\u0000${String(right.column).padStart(8, '0')}`)
+  ));
+}
+
+function sameDefinition(left, right) {
+  return left?.path === right?.path
+    && left?.ref === right?.ref
+    && left?.line === right?.line
+    && left?.column === right?.column
+    && left?.kind === right?.kind
+    && left?.name === right?.name;
+}
+
+function walk(node, visit) {
+  visit(node);
+  for (const child of node.namedChildren) walk(child, visit);
+}
+
+function firstIdentifier(node) {
+  if (!node) return null;
+  if (IDENTIFIER_TYPES.has(node.type)) return node;
+  for (const child of node.namedChildren) {
+    const found = firstIdentifier(child);
+    if (found) return found;
+  }
+  return null;
+}
+
+function namedIdentifiers(node) {
+  if (!node) return [];
+  if (IDENTIFIER_TYPES.has(node.type)) return [node];
+  return node.namedChildren.filter((child) => IDENTIFIER_TYPES.has(child.type));
+}
+
+function isKeyedElementKey(identifierNode) {
+  let node = identifierNode.parent;
+  while (node && node.type !== 'keyed_element') node = node.parent;
+  const key = node?.childForFieldName?.('key');
+  return Boolean(key && key.startIndex <= identifierNode.startIndex && key.endIndex >= identifierNode.endIndex);
+}
+
+function containsNode(scope, node) {
+  return scope.startIndex <= node.startIndex && scope.endIndex >= node.endIndex;
+}
+
+function lexicalScopeFor(node, functionNode) {
+  const scopeTypes = new Set([
+    'block', 'if_statement', 'for_statement', 'expression_switch_statement',
+    'type_switch_statement', 'select_statement', 'expression_case', 'type_case', 'communication_case',
+  ]);
+  let current = node.parent;
+  while (current && current.id !== functionNode.id) {
+    if (scopeTypes.has(current.type)) return current;
+    current = current.parent;
+  }
+  return functionNode;
+}
+
+function localDefinitionFor(file, identifierNode, name) {
+  if (identifierNode.type !== 'identifier' || name === '_' || isKeyedElementKey(identifierNode)) return null;
+  let functionNode = identifierNode.parent;
+  while (functionNode && !['function_declaration', 'method_declaration', 'func_literal'].includes(functionNode.type)) functionNode = functionNode.parent;
+  if (!functionNode) return null;
+
+  const definitions = [];
+  const add = (declaration, nameNode, kind = 'variable', scope = functionNode, visibleAfter = declaration.endIndex, mayRedeclare = false) => {
+    if (!nameNode || textOf(file.source, nameNode) !== name || !containsNode(scope, identifierNode)) return;
+    const isDeclaration = nameNode.id === identifierNode.id;
+    if (!isDeclaration && (nameNode.startIndex > identifierNode.startIndex || identifierNode.startIndex < visibleAfter)) return;
+    const body = functionNode.childForFieldName?.('body');
+    const scopeID = scope.id === body?.id ? functionNode.id : scope.id;
+    if (mayRedeclare && definitions.some((candidate) => candidate.scopeID === scopeID)) return;
+    definitions.push({ offset: nameNode.startIndex, scopeID, definition: definitionFor({
+      source: file.source,
+      node: declaration,
+      nameNode,
+      kind,
+      packageName: file.packageName,
+      packagePath: file.packagePath,
+      path: file.path,
+      ref: file.ref,
+    }) });
+  };
+
+  const addParameters = (parameters) => {
+    for (const parameter of parameters?.namedChildren || []) {
+      if (parameter.type !== 'parameter_declaration') continue;
+      parameter.namedChildren
+        .filter((child) => child.type === 'identifier')
+        .forEach((nameNode) => add(
+          parameter,
+          nameNode,
+          'parameter',
+          functionNode,
+          functionNode.childForFieldName?.('body')?.startIndex ?? functionNode.endIndex,
+        ));
+    }
+  };
+  addParameters(functionNode.childForFieldName?.('parameters'));
+  addParameters(functionNode.childForFieldName?.('receiver'));
+
+  walk(functionNode.childForFieldName?.('body') || functionNode, (node) => {
+    const scope = lexicalScopeFor(node, functionNode);
+    if (node.type === 'short_var_declaration') {
+      namedIdentifiers(node.childForFieldName('left')).forEach((nameNode) => add(node, nameNode, 'variable', scope, node.endIndex, true));
+    }
+    if (node.type === 'var_spec' || node.type === 'const_spec') {
+      namedIdentifiers(node.childForFieldName('name') || node).forEach((nameNode) => add(node, nameNode, node.type === 'const_spec' ? 'constant' : 'variable', scope));
+    }
+    if (node.type === 'range_clause') {
+      const declares = node.children.some((child) => textOf(file.source, child) === ':=');
+      if (declares) namedIdentifiers(node.childForFieldName('left')).forEach((nameNode) => add(node, nameNode, 'variable', scope, node.endIndex, true));
+    }
+  });
+
+  return definitions.sort((left, right) => right.offset - left.offset)[0]?.definition || null;
+}
+
+function utf8Column(line, character) {
+  return new TextEncoder().encode(line.slice(0, Math.max(0, character))).length;
+}
+
+function utf16Column(line, byteColumn) {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  let character = 0;
+  for (const value of line) {
+    if (bytes >= byteColumn) break;
+    bytes += encoder.encode(value).length;
+    character += value.length;
+  }
+  return character;
+}
+
+function findIdentifierNode(root, source, line, character, fallbackIdentifier = '', occurrence = null, lines = source.split('\n')) {
+  const row = Math.max(0, Math.min(line - 1, lines.length - 1));
+  const sourceLine = lines[row] || '';
+  if (Number.isInteger(occurrence) && occurrence >= 0 && fallbackIdentifier) {
+    const identifiers = [];
+    walk(root, (candidate) => {
+      if (IDENTIFIER_TYPES.has(candidate.type)
+        && candidate.startPosition.row === row
+        && textOf(source, candidate) === fallbackIdentifier) identifiers.push(candidate);
+    });
+    identifiers.sort((left, right) => left.startIndex - right.startIndex);
+    return identifiers[occurrence] || null;
+  }
+  const column = utf8Column(sourceLine, character);
+  let node = root.descendantForPosition({ row, column });
+  while (node && !IDENTIFIER_TYPES.has(node.type)) node = node.parent;
+  if (node && (!fallbackIdentifier || textOf(source, node) === fallbackIdentifier)) return node;
+
+  if (!fallbackIdentifier) return null;
+  const precedingSource = row ? `${lines.slice(0, row).join('\n')}\n` : '';
+  const lineStart = new TextEncoder().encode(precedingSource).length;
+  const candidates = [];
+  let candidate = sourceLine.indexOf(fallbackIdentifier);
+  while (candidate >= 0) {
+    const before = sourceLine[candidate - 1] || '';
+    const after = sourceLine[candidate + fallbackIdentifier.length] || '';
+    if (!/[\p{L}\p{N}_]/u.test(before) && !/[\p{L}\p{N}_]/u.test(after)) candidates.push(candidate);
+    candidate = sourceLine.indexOf(fallbackIdentifier, candidate + fallbackIdentifier.length);
+  }
+  const localIndex = candidates.sort((a, b) => Math.abs(a - character) - Math.abs(b - character))[0] ?? -1;
+  if (localIndex < 0) return null;
+  const index = lineStart + utf8Column(sourceLine, localIndex);
+  const endIndex = index + new TextEncoder().encode(fallbackIdentifier).length;
+  let fallback = root.descendantForIndex(index, endIndex);
+  while (fallback && !IDENTIFIER_TYPES.has(fallback.type)) fallback = fallback.parent;
+  return fallback;
+}
+
+function fileLines(file) {
+  if (!file.lines) file.lines = file.source.split('\n');
+  return file.lines;
+}
+
+function explicitBindingType(source, identifierNode, name) {
+  let scope = identifierNode;
+  while (scope && !['function_declaration', 'method_declaration', 'func_literal', 'source_file'].includes(scope.type)) scope = scope.parent;
+  if (!scope) return '';
+
+  if (scope.type === 'method_declaration') {
+    const receiver = scope.childForFieldName('receiver');
+    const binding = receiver?.namedChildren.find((child) => child.type === 'parameter_declaration');
+    const bindingName = binding?.childForFieldName('name');
+    if (textOf(source, bindingName) === name) return receiverType(textOf(source, binding.childForFieldName('type')));
+  }
+
+  const parameters = scope.childForFieldName?.('parameters');
+  for (const parameter of parameters?.namedChildren || []) {
+    if (parameter.type !== 'parameter_declaration') continue;
+    const names = parameter.namedChildren.filter((child) => child.type === 'identifier');
+    if (names.some((candidate) => textOf(source, candidate) === name)) {
+      return receiverType(textOf(source, parameter.childForFieldName('type')));
+    }
+  }
+
+  let inferred = '';
+  walk(scope, (node) => {
+    if (inferred) return;
+    if (node.type === 'var_spec') {
+      const names = namedIdentifiers(node);
+      if (names.some((candidate) => textOf(source, candidate) === name)) {
+        inferred = receiverType(textOf(source, node.childForFieldName('type')));
+      }
+    }
+    if (node.type === 'short_var_declaration') {
+      const left = node.childForFieldName('left');
+      if (!left || !namedIdentifiers(left).some((candidate) => textOf(source, candidate) === name)) return;
+      const right = node.childForFieldName('right');
+      const composite = right?.namedChildren.find((child) => ['composite_literal', 'unary_expression'].includes(child.type));
+      inferred = receiverType(textOf(source, composite?.childForFieldName?.('type') || firstIdentifier(composite)));
+    }
+  });
+  return inferred;
+}
+
+function typeForExpression(entry, file, identifierNode, expression) {
+  if (!expression) return '';
+  if (expression.type === 'identifier') {
+    return explicitBindingType(file.source, identifierNode, textOf(file.source, expression));
+  }
+  if (expression.type !== 'selector_expression') return '';
+  const receiver = typeForExpression(entry, file, identifierNode, expression.childForFieldName('operand'));
+  const field = textOf(file.source, expression.childForFieldName('field'));
+  return entry.types.get(receiver)?.fields.get(field)?.type || '';
+}
+
+function shadowsPredeclaredFunction(file, identifierNode, name) {
+  return file.imports.has(name) || Boolean(localDefinitionFor(file, identifierNode, name));
+}
+
+function packageDefinitions(entry, name, packageName = entry.packageName) {
+  return (entry.definitions.get(name) || []).filter((definition) => definition.packageName === packageName);
+}
+
+function memberDefinitions(entry, name, receiver = '', packageName = entry.packageName) {
+  const members = entry.members.get(name) || [];
+  const direct = members.filter((definition) => (
+    definition.packageName === packageName && (!receiver || definition.receiver === receiver)
+  ));
+  if (direct.length || !receiver) return direct;
+  const visited = new Set();
+  const promoted = (typeName) => {
+    if (!typeName || visited.has(typeName)) return [];
+    visited.add(typeName);
+    const type = entry.types.get(typeName);
+    if (!type) return [];
+    if (type.alias) {
+      const aliased = members.filter((definition) => definition.packageName === packageName && definition.receiver === type.alias);
+      if (aliased.length) return aliased;
+    }
+    return (type.embedded || []).flatMap((embedded) => {
+      const embeddedDirect = members.filter((definition) => definition.packageName === packageName && definition.receiver === embedded.name);
+      return embeddedDirect.length ? embeddedDirect : promoted(embedded.name);
+    });
+  };
+  return promoted(receiver);
+}
+
+function compositeLiteralType(file, identifierNode) {
+  let literal = identifierNode.parent;
+  while (literal && literal.type !== 'composite_literal') literal = literal.parent;
+  const typeNode = literal?.childForFieldName?.('type');
+  if (!typeNode) return null;
+  if (typeNode.type === 'qualified_type') {
+    return {
+      qualifier: textOf(file.source, typeNode.childForFieldName('package')),
+      name: textOf(file.source, typeNode.childForFieldName('name')),
+    };
+  }
+  const nameNode = firstIdentifier(typeNode);
+  return nameNode ? { qualifier: '', name: textOf(file.source, nameNode) } : null;
+}
+
+export class GoSemanticIndex {
+  constructor(parser) {
+    this.parser = parser;
+    this.packages = new Map();
+    this.files = new Map();
+    this.projects = new Set();
+    // Single invalidation mechanism shared by every memoized, project-scoped
+    // derived structure (scope summary, implementation-search indexes).
+    // Bumped by every mutation (indexPackage, disposeProject, clear);
+    // indexProject mutates only through those two, so it needs no bump of
+    // its own. A cached entry is valid only while its stored generation
+    // still matches this counter.
+    this.mutationGeneration = 0;
+    this._scopeCache = new Map();
+  }
+
+  // Lazy: the parse tree is only ever needed to locate an identifier node at
+  // an arbitrary (line, character) — a per-file cost paid at most once, on
+  // first query touching that file. Freshly indexed files already carry a
+  // tree (indexPackage needs it to build definitions) so this is a no-op for
+  // them; restored files carry none, and pay the parse here instead of at
+  // restore time, which is the whole point of restoring.
+  _treeFor(file) {
+    if (!file.tree) file.tree = this.parser.parse(file.source);
+    return file.tree;
+  }
+
+  // Plain-data snapshot of the packages indexed under (origin, project, ref),
+  // suitable for durable storage and for `restoreIndex` on a fresh instance
+  // without re-parsing. Deliberately excludes anything that lives only as a
+  // tree-sitter node: parse trees, and any `node` reference held by
+  // identifierCandidates is reduced to the bare position it exposes to
+  // callers (see `_serializePackage`).
+  //
+  // Pass `packagePath` to snapshot a single package rather than every package
+  // indexed for the scope — the caller's persistence cost should match the
+  // amount of work it just did (one package cached should write one
+  // package's worth of data, not the whole project's), so a package-scoped
+  // snapshot never claims `isProject`.
+  serializeProject({ origin = '', project, ref, packagePath = '' }) {
+    const entries = [...this.packages.values()]
+      .filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref
+        && (!packagePath || entry.packagePath === packagePath));
+    if (!entries.length) return null;
+    return {
+      version: INDEX_FORMAT_VERSION,
+      origin,
+      project,
+      ref,
+      isProject: !packagePath && this.hasProject({ origin, project, ref }),
+      packages: entries.map((entry) => this._serializePackage(entry)),
+    };
+  }
+
+  _serializePackage(entry) {
+    const files = [...entry.files.values()].map((file) => ({
+      path: file.path,
+      source: file.source,
+      blobId: file.blobId || '',
+      packageName: file.packageName,
+      buildConstrained: file.buildConstrained,
+      generated: file.generated,
+      imports: [...file.imports.entries()],
+      importPaths: [...file.importPaths],
+    }));
+    return {
+      packagePath: entry.packagePath,
+      modulePath: entry.modulePath,
+      packageName: entry.packageName,
+      files,
+      definitions: [...entry.definitions.entries()],
+      members: [...entry.members.entries()],
+      types: [...entry.types.entries()].map(([name, type]) => [name, {
+        fields: [...type.fields.entries()],
+        embedded: type.embedded,
+        alias: type.alias,
+      }]),
+      typeRecords: entry.typeRecords.map((record) => ({ ...record, file: undefined, filePath: record.file.path })),
+      methods: entry.methods.map((method) => ({ ...method, file: undefined, filePath: method.file.path })),
+      assertions: entry.assertions.map((assertion) => ({ ...assertion })),
+      identifierCandidates: [...entry.identifierCandidates.entries()].map(([name, candidates]) => [
+        name,
+        candidates.map((candidate) => ({
+          filePath: candidate.file.path,
+          row: candidate.node.startPosition.row,
+          column: candidate.node.startPosition.column,
+        })),
+      ]),
+    };
+  }
+
+  // Restores every package in a `serializeProject` blob into this index
+  // without touching the parser. Returns null (leaving this index untouched)
+  // on a format-version mismatch or an empty/malformed blob, so the caller's
+  // existing reparse path is the correctness backstop.
+  restoreIndex(blob) {
+    if (!blob || blob.version !== INDEX_FORMAT_VERSION || !Array.isArray(blob.packages) || !blob.packages.length) return null;
+    const { origin = '', project, ref } = blob;
+    let files = 0;
+    let definitions = 0;
+    for (const snapshot of blob.packages) {
+      const entry = this._restorePackageEntry({ origin, project, ref }, snapshot);
+      this.packages.set(packageKey(origin, project, ref, entry.packagePath), entry);
+      for (const file of entry.files.values()) this.files.set(fileKey(origin, project, ref, file.path), file);
+      files += entry.files.size;
+      definitions += entry.definitionsByLocation.size;
+    }
+    if (blob.isProject) this.projects.add(projectKey(origin, project, ref));
+    this.mutationGeneration++;
+    return { packages: blob.packages.length, files, definitions };
+  }
+
+  _restorePackageEntry({ origin, project, ref }, snapshot) {
+    const files = new Map();
+    for (const file of snapshot.files) {
+      files.set(file.path, {
+        path: file.path,
+        source: file.source,
+        blobId: file.blobId,
+        origin,
+        ref,
+        project,
+        packagePath: snapshot.packagePath,
+        modulePath: snapshot.modulePath,
+        packageName: file.packageName,
+        tree: null,
+        imports: new Map(file.imports),
+        importPaths: new Set(file.importPaths),
+        lines: null,
+        buildConstrained: file.buildConstrained,
+        generated: file.generated,
+      });
+    }
+    const resolveFile = (filePath) => files.get(filePath);
+
+    const definitions = new Map(snapshot.definitions);
+    const members = new Map(snapshot.members);
+    const definitionsByLocation = new Map();
+    for (const list of [...definitions.values(), ...members.values()]) {
+      for (const definition of list) definitionsByLocation.set(definitionLocationKey(definition), definition);
+    }
+
+    return {
+      origin,
+      project,
+      ref,
+      packagePath: snapshot.packagePath,
+      modulePath: snapshot.modulePath,
+      packageName: snapshot.packageName,
+      definitions,
+      members,
+      definitionsByLocation,
+      types: new Map(snapshot.types.map(([name, type]) => [name, {
+        fields: new Map(type.fields),
+        embedded: type.embedded,
+        alias: type.alias,
+      }])),
+      typeRecords: snapshot.typeRecords.map((record) => ({ ...record, file: resolveFile(record.filePath), filePath: undefined })),
+      methods: snapshot.methods.map((method) => ({ ...method, file: resolveFile(method.filePath), filePath: undefined })),
+      assertions: snapshot.assertions.map((assertion) => ({ ...assertion })),
+      identifierCandidates: new Map(snapshot.identifierCandidates.map(([name, positions]) => [
+        name,
+        positions.map((position) => ({
+          file: resolveFile(position.filePath),
+          node: { startPosition: { row: position.row, column: position.column } },
+        })),
+      ])),
+      files,
+    };
+  }
+
+  hasPackage({ origin = '', project, ref, packagePath }) {
+    return this.packages.has(packageKey(origin, project, ref, packagePath));
+  }
+
+  packageDefinitionCount({ origin = '', project, ref, packagePath }) {
+    return this.packages.get(packageKey(origin, project, ref, packagePath))?.definitionsByLocation.size || 0;
+  }
+
+  hasProject({ origin = '', project, ref }) {
+    return this.projects.has(projectKey(origin, project, ref));
+  }
+
+  // Memoized (entries, packagePaths) for a project scope; the expensive
+  // per-file packageCount is computed lazily on top of this via
+  // `_packageCount` so package-mode queries (which never use packageCount)
+  // never pay for it.
+  _scopeEntries(origin, project, ref) {
+    const key = projectKey(origin, project, ref);
+    const cached = this._scopeCache.get(key);
+    if (cached && cached.generation === this.mutationGeneration) return cached;
+    const entries = [...this.packages.values()]
+      .filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref);
+    const scope = {
+      generation: this.mutationGeneration,
+      entries,
+      packagePaths: new Set(entries.map((entry) => entry.packagePath)),
+      packageCount: null,
+    };
+    this._scopeCache.set(key, scope);
+    return scope;
+  }
+
+  _packageCount(scope) {
+    if (scope.packageCount === null) {
+      scope.packageCount = new Set(scope.entries.flatMap((entry) => [...entry.files.values()]
+        .map((file) => `${entry.packagePath}\u0000${file.packageName}`))).size;
+    }
+    return scope.packageCount;
+  }
+
+  searchScope({ origin = '', project, ref, packagePath = '', mode = 'project' }) {
+    const scope = this._scopeEntries(origin, project, ref);
+    if (mode === 'package') {
+      return { kind: 'currentPackage', packagePath, packageCount: scope.packagePaths.has(packagePath) ? 1 : 0, complete: true };
+    }
+    const packageCount = this._packageCount(scope);
+    if (this.hasProject({ origin, project, ref })) {
+      return { kind: 'fullProject', packageCount, complete: true, searchStatus: 'complete' };
+    }
+    if (packageCount <= 1) {
+      return { kind: 'currentPackage', packagePath: scope.entries[0]?.packagePath || packagePath, packageCount, complete: false };
+    }
+    return { kind: 'indexedPackages', packageCount, complete: false, searchStatus: 'limited' };
+  }
+
+  clear() {
+    this.packages.clear();
+    this.files.clear();
+    this.projects.clear();
+    this._scopeCache.clear();
+    this.mutationGeneration++;
+  }
+
+  indexPackage({ origin = '', project, ref, packagePath, modulePath = '', files }) {
+    this.mutationGeneration++;
+    const key = packageKey(origin, project, ref, packagePath);
+    const previous = this.packages.get(key);
+    for (const path of previous?.files.keys() || []) this.files.delete(fileKey(origin, project, ref, path));
+    const entry = {
+      origin,
+      project,
+      ref,
+      packagePath,
+      modulePath,
+      packageName: '',
+      definitions: new Map(),
+      members: new Map(),
+      definitionsByLocation: new Map(),
+      types: new Map(),
+      typeRecords: [],
+      methods: [],
+      assertions: [],
+      identifierCandidates: new Map(),
+      files: new Map(),
+    };
+
+    for (const file of files) {
+      const tree = this.parser.parse(file.source);
+      const fileEntry = {
+        ...file,
+        origin,
+        ref,
+        project,
+        packagePath,
+        modulePath,
+        tree,
+        imports: new Map(),
+        importPaths: new Set(),
+        lines: null,
+        buildConstrained: buildConstrainedSource(file.source),
+        generated: generatedSource(file.source),
+      };
+      const packageClause = tree.rootNode.namedChildren.find((node) => node.type === 'package_clause');
+      const packageNameNode = firstIdentifier(packageClause);
+      const packageName = textOf(file.source, packageNameNode);
+      fileEntry.packageName = packageName;
+      if (packageName && (!entry.packageName || (entry.packageName.endsWith('_test') && !packageName.endsWith('_test')))) {
+        entry.packageName = packageName;
+      }
+
+      const recordDefinition = (definition, packageScoped = true) => {
+        if (!definition?.name) return definition;
+        entry.definitionsByLocation.set(definitionLocationKey(definition), definition);
+        const collection = packageScoped ? entry.definitions : entry.members;
+        const existing = collection.get(definition.name) || [];
+        existing.push(definition);
+        collection.set(definition.name, existing);
+        return definition;
+      };
+
+      walk(tree.rootNode, (node) => {
+        if (IDENTIFIER_TYPES.has(node.type)) {
+          const name = textOf(file.source, node);
+          const candidates = entry.identifierCandidates.get(name) || [];
+          candidates.push({ file: fileEntry, node });
+          entry.identifierCandidates.set(name, candidates);
+        }
+        if (node.type === 'import_spec') {
+          const pathNode = node.childForFieldName('path');
+          const importPath = unquoteImport(textOf(file.source, pathNode));
+          const aliasNode = node.childForFieldName('name');
+          const alias = textOf(file.source, aliasNode) || defaultImportName(importPath);
+          if (importPath) fileEntry.importPaths.add(importPath);
+          if (alias && alias !== '_' && alias !== '.') fileEntry.imports.set(alias, importPath);
+          return;
+        }
+
+        const add = (nameNode, kind, receiver = '', packageScoped = true) => {
+          if (!nameNode) return;
+          const definition = definitionFor({
+            source: file.source,
+            node,
+            nameNode,
+            kind,
+            receiver,
+            packageName,
+            packagePath,
+            path: file.path,
+            ref,
+          });
+          return recordDefinition(definition, packageScoped);
+        };
+
+        if (node.type === 'function_declaration') add(node.childForFieldName('name'), 'function');
+        if (node.type === 'method_declaration') {
+          const receiver = node.childForFieldName('receiver');
+          const receiverInfo = receiverDetails(file.source, receiver);
+          const definition = add(node.childForFieldName('name'), 'method', receiverInfo.name, false);
+          if (definition && receiverInfo.name) {
+            entry.methods.push({
+              definition,
+              file: fileEntry,
+              receiver: receiverInfo.name,
+              receiverIdentity: projectTypeIdentity(fileEntry, receiverInfo.name),
+              pointer: receiverInfo.pointer,
+              identity: methodIdentity(fileEntry, node),
+            });
+          }
+        }
+        if (node.type === 'type_spec' || node.type === 'type_alias') {
+          const nameNode = node.childForFieldName('name');
+          const typeNode = node.childForFieldName('type');
+          const typeName = textOf(file.source, nameNode);
+          const fields = new Map();
+          const embeddedFields = [];
+          if (typeNode?.type === 'struct_type') {
+            walk(typeNode, (fieldNode) => {
+              if (fieldNode.type !== 'field_declaration') return;
+              const fieldTypeNode = fieldNode.childForFieldName('type');
+              const fieldType = receiverType(textOf(file.source, fieldTypeNode));
+              const names = namedIdentifiers(fieldNode.childForFieldName('name'));
+              if (!names.length && fieldTypeNode) {
+                embeddedFields.push({
+                  identity: typeIdentity(fileEntry, fieldTypeNode),
+                  name: fieldType,
+                  pointer: /^\s*\*/.test(textOf(file.source, fieldNode)),
+                });
+              }
+              names.forEach((fieldName) => {
+                const fieldDefinition = recordDefinition(definitionFor({
+                  source: file.source,
+                  node: fieldNode,
+                  nameNode: fieldName,
+                  kind: 'field',
+                  receiver: typeName,
+                  packageName,
+                  packagePath,
+                  path: file.path,
+                  ref,
+                }), false);
+                fields.set(textOf(file.source, fieldName), { type: fieldType, definition: fieldDefinition });
+              });
+            });
+          }
+          const kind = typeNode?.type === 'interface_type'
+            ? 'interface'
+            : typeNode?.type === 'struct_type' ? 'struct' : 'type';
+          const definition = add(nameNode, kind);
+          if (typeName) {
+            entry.types.set(typeName, {
+              fields,
+              embedded: embeddedFields,
+              alias: node.type === 'type_alias' ? receiverType(textOf(file.source, typeNode)) : '',
+            });
+            const record = {
+              definition,
+              file: fileEntry,
+              name: typeName,
+              identity: projectTypeIdentity(fileEntry, typeName),
+              kind: kind === 'interface' ? 'interface' : 'type',
+              methods: [],
+              embedded: [],
+              unsupported: '',
+              embeddedTypes: embeddedFields,
+              aliasIdentity: node.type === 'type_alias' ? typeIdentity(fileEntry, typeNode) : '',
+            };
+            if (kind === 'interface') {
+              for (const element of typeNode.namedChildren) {
+                if (element.type === 'method_elem') record.methods.push(methodIdentity(fileEntry, element));
+                if (element.type !== 'type_elem') continue;
+                const elementSource = textOf(file.source, element);
+                if (/[~|]/.test(elementSource) || element.namedChildren.length !== 1) {
+                  record.unsupported = 'typeSetConstraint';
+                  continue;
+                }
+                record.embedded.push(typeIdentity(fileEntry, element.namedChildren[0]));
+              }
+            }
+            entry.typeRecords.push(record);
+          }
+        }
+        if (node.type === 'method_elem') {
+          let interfaceType = node.parent;
+          while (interfaceType && interfaceType.type !== 'interface_type') interfaceType = interfaceType.parent;
+          const typeSpec = interfaceType?.parent;
+          add(node.childForFieldName('name'), 'interfaceMethod', textOf(file.source, typeSpec?.childForFieldName('name')), false);
+        }
+        if (node.type === 'const_spec') namedIdentifiers(node.childForFieldName('name') || node).forEach((name) => add(name, 'constant'));
+        if (node.type === 'var_spec') {
+          namedIdentifiers(node.childForFieldName('name') || node).forEach((name) => add(name, 'variable'));
+          const assertion = assertionFor(fileEntry, node);
+          if (assertion) entry.assertions.push(assertion);
+        }
+      });
+
+      entry.files.set(file.path, fileEntry);
+      this.files.set(fileKey(origin, project, ref, file.path), fileEntry);
+    }
+    this.packages.set(key, entry);
+    return {
+      status: 'indexed',
+      packageName: entry.packageName,
+      files: entry.files.size,
+      definitions: entry.definitionsByLocation.size,
+    };
+  }
+
+  indexProject({ origin = '', project, ref, modulePath = '', files }) {
+    this.disposeProject({ origin, project, ref });
+    const packages = new Map();
+    for (const file of files) {
+      const packagePath = dirname(file.path);
+      const packageFiles = packages.get(packagePath) || [];
+      packageFiles.push(file);
+      packages.set(packagePath, packageFiles);
+    }
+
+    let definitions = 0;
+    for (const [packagePath, packageFiles] of packages) {
+      const result = this.indexPackage({ origin, project, ref, packagePath, modulePath, files: packageFiles });
+      definitions += result.definitions;
+    }
+    this.projects.add(projectKey(origin, project, ref));
+    return { status: 'projectIndexed', packages: packages.size, files: files.length, definitions };
+  }
+
+  packageRelations({ origin = '', project, ref, packagePath }) {
+    const entry = this.packages.get(packageKey(origin, project, ref, packagePath));
+    if (!entry) return { status: 'notFound', reason: 'packageNotIndexed' };
+    const imports = new Set();
+    const referenced = new Map();
+    for (const file of entry.files.values()) {
+      for (const importPath of file.importPaths) {
+        const importedPackagePath = this.importToPackagePath(entry.modulePath, importPath);
+        if (importedPackagePath !== null) imports.add(importedPackagePath);
+      }
+      walk(this._treeFor(file).rootNode, (node) => {
+        let qualifierNode;
+        let nameNode;
+        if (node.type === 'selector_expression') {
+          qualifierNode = node.childForFieldName('operand');
+          nameNode = node.childForFieldName('field');
+        } else if (node.type === 'qualified_type') {
+          qualifierNode = node.childForFieldName('package');
+          nameNode = node.childForFieldName('name');
+        } else {
+          return;
+        }
+        if (!qualifierNode || (qualifierNode.type !== 'identifier' && qualifierNode.type !== 'package_identifier')) return;
+        const qualifier = textOf(file.source, qualifierNode);
+        const importPath = file.imports.get(qualifier);
+        const importedPackagePath = this.importToPackagePath(entry.modulePath, importPath);
+        const name = textOf(file.source, nameNode);
+        if (importedPackagePath === null || !name) return;
+        const id = `${importedPackagePath}\u0000${name}`;
+        referenced.set(id, { packagePath: importedPackagePath, importPath, name });
+      });
+    }
+    const exportedDeclarations = [...entry.definitions.values()]
+      .flat()
+      .filter((definition) => /^\p{Lu}/u.test(definition.name))
+      .map(({ name, kind, path, line }) => ({ name, kind, path, line }));
+    const interfaces = entry.typeRecords
+      .filter((record) => record.kind === 'interface' && record.definition)
+      .map((record) => ({
+        name: record.name,
+        identity: record.identity,
+        packagePath,
+        methods: [...record.methods],
+        methodNames: record.methods.map((method) => method.match(/^[^(]+/)?.[0] || '').filter(Boolean),
+        embedded: [...record.embedded],
+        definition: record.definition,
+      }));
+    return {
+      status: 'relations',
+      packagePath,
+      imports: [...imports].sort(),
+      referencedImports: [...referenced.values()].sort((left, right) => `${left.packagePath}.${left.name}`.localeCompare(`${right.packagePath}.${right.name}`)),
+      exportedDeclarations,
+      interfaces,
+      assertions: entry.assertions.map((assertion) => ({ ...assertion })),
+    };
+  }
+
+  findImplementations({ origin = '', project, ref, interfaceDefinition, pageSize = 25, cursor = '' }) {
+    const entries = [...this.packages.values()].filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref);
+    const records = entries.flatMap((entry) => entry.typeRecords);
+    const interfaceRecord = records.find((record) => record.kind === 'interface' && sameDefinition(record.definition, interfaceDefinition));
+    if (!interfaceRecord) return { status: 'notFound', reason: 'interfaceNotIndexed' };
+    if (interfaceRecord.file.buildConstrained) {
+      return { status: 'unsupportedImplementations', reason: 'buildConstraint', interfaceDefinition };
+    }
+
+    const recordsByIdentity = new Map(records.map((record) => [record.identity, record]));
+    const interfaces = new Map(records.filter((record) => record.kind === 'interface').map((record) => [record.identity, record]));
+    const required = new Set();
+    const visited = new Set();
+    const collectMethods = (record) => {
+      if (record.unsupported) return record.unsupported;
+      if (visited.has(record.identity)) return '';
+      visited.add(record.identity);
+      record.methods.forEach((method) => required.add(method));
+      for (const embeddedIdentity of record.embedded) {
+        if (embeddedIdentity === 'builtin.any') continue;
+        if (embeddedIdentity === 'builtin.comparable') return 'typeSetConstraint';
+        const embedded = interfaces.get(embeddedIdentity);
+        if (!embedded) return recordsByIdentity.has(embeddedIdentity) || embeddedIdentity.startsWith('builtin.')
+          ? 'typeSetConstraint'
+          : 'unresolvedEmbeddedInterface';
+        const unsupported = collectMethods(embedded);
+        if (unsupported) return unsupported;
+      }
+      return '';
+    };
+    const unsupported = collectMethods(interfaceRecord);
+    if (unsupported) {
+      return { status: 'unsupportedImplementations', reason: unsupported, interfaceDefinition };
+    }
+
+    const methods = entries.flatMap((entry) => entry.methods);
+    const methodsByReceiver = new Map();
+    for (const method of methods) {
+      const receiverMethods = methodsByReceiver.get(method.receiverIdentity) || [];
+      receiverMethods.push(method);
+      methodsByReceiver.set(method.receiverIdentity, receiverMethods);
+    }
+    const promotedMethods = (record, pointer, visiting = new Set()) => {
+      if (!record || visiting.has(record.identity)) return [];
+      visiting.add(record.identity);
+      const own = (methodsByReceiver.get(record.identity) || []).filter((method) => pointer || !method.pointer);
+      const ownNames = new Set(own.map((method) => method.identity.match(/^[^(]+/)?.[0] || method.identity));
+      const promotedByName = new Map();
+      for (const embedded of record.embeddedTypes || []) {
+        const embeddedRecord = recordsByIdentity.get(embedded.identity);
+        const branchMethods = promotedMethods(embeddedRecord, pointer || embedded.pointer, new Set(visiting));
+        const branchNames = new Set();
+        for (const method of branchMethods) {
+          const name = method.identity.match(/^[^(]+/)?.[0] || method.identity;
+          if (ownNames.has(name) || branchNames.has(name)) continue;
+          branchNames.add(name);
+          const matches = promotedByName.get(name) || [];
+          matches.push(method);
+          promotedByName.set(name, matches);
+        }
+      }
+      return [...own, ...[...promotedByName.values()].filter((matches) => matches.length === 1).flat()];
+    };
+    const assertions = entries.flatMap((entry) => entry.assertions);
+    const requiredMethods = [...required];
+    const searchTerms = [...new Set(requiredMethods.map((method) => method.match(/^[^(]+/)?.[0] || '').filter(Boolean))].sort();
+    const candidates = records
+      .filter((record) => record.kind === 'type' && !record.aliasIdentity)
+      .flatMap((record) => {
+        const targetRecord = record.aliasIdentity ? recordsByIdentity.get(record.aliasIdentity) || record : record;
+        const valueMethods = new Map(promotedMethods(targetRecord, false).map((method) => [method.identity, method]));
+        const pointerMethods = new Map(promotedMethods(targetRecord, true).map((method) => [method.identity, method]));
+        const valueMatches = requiredMethods.every((method) => valueMethods.has(method));
+        const pointerMatches = requiredMethods.every((method) => pointerMethods.has(method));
+        if (!valueMatches && !pointerMatches) return [];
+        const pointer = !valueMatches && pointerMatches;
+        const matchedMethods = requiredMethods.map((method) => (pointer ? pointerMethods : valueMethods).get(method)).filter(Boolean);
+        const asserted = assertions.some((assertion) => (
+          assertion.interfaceIdentity === interfaceRecord.identity && assertion.typeIdentity === record.identity
+        ));
+        return [{
+          ...record.definition,
+          displayName: `${pointer ? '*' : ''}${record.file.packageName}.${record.name}`,
+          pointer,
+          matchedMethods: matchedMethods.length,
+          methodCount: requiredMethods.length,
+          confidence: asserted ? 'asserted' : 'structural',
+          isTestDouble: record.file.generated || record.file.packageName?.endsWith('_test') || testDoublePath(record.definition.path)
+            || matchedMethods.some((method) => method.file?.generated || method.file?.packageName?.endsWith('_test') || testDoublePath(method.definition.path)),
+        }];
+      })
+      .sort((left, right) => {
+        if (left.isTestDouble !== right.isTestDouble) return left.isTestDouble ? 1 : -1;
+        if (left.confidence !== right.confidence) return left.confidence === 'asserted' ? -1 : 1;
+        return `${left.packagePath}/${left.name}`.localeCompare(`${right.packagePath}/${right.name}`);
+      });
+
+    const size = Math.max(1, Math.min(100, pageSize));
+    const start = cursor ? Math.max(0, candidates.findIndex((candidate) => locationCursor(candidate) === cursor) + 1) : 0;
+    const pageCandidates = candidates.slice(start, start + size);
+    return {
+      status: 'implementations',
+      interfaceDefinition,
+      methodCount: requiredMethods.length,
+      searchTerms,
+      candidates: pageCandidates,
+      hasMore: start + pageCandidates.length < candidates.length,
+      nextCursor: pageCandidates.length ? locationCursor(pageCandidates.at(-1)) : '',
+    };
+  }
+
+  resolve({ origin = '', project, ref, packagePath, path, line, character, identifier = '', occurrence = null }) {
+    const entry = this.packages.get(packageKey(origin, project, ref, packagePath));
+    const file = this.files.get(fileKey(origin, project, ref, path));
+    if (!entry || !file) return { status: 'notFound', reason: 'packageNotIndexed' };
+
+    const identifierNode = findIdentifierNode(this._treeFor(file).rootNode, file.source, line, character, identifier, occurrence, fileLines(file));
+    if (!identifierNode) return { status: 'notFound', reason: 'identifierNotFound' };
+    const symbol = textOf(file.source, identifierNode);
+    const parent = identifierNode.parent;
+    let candidates = [];
+    let uncertain = false;
+    const isSelectorField = parent?.type === 'selector_expression'
+      && parent.childForFieldName('field')?.id === identifierNode.id;
+    const isQualifiedTypeName = parent?.type === 'qualified_type'
+      && parent.childForFieldName('name')?.id === identifierNode.id;
+    const isQualifiedTypePackage = parent?.type === 'qualified_type'
+      && parent.childForFieldName('package')?.id === identifierNode.id;
+    const isSelectorOperand = parent?.type === 'selector_expression'
+      && parent.childForFieldName('operand')?.id === identifierNode.id;
+    const isImportAlias = parent?.type === 'import_spec'
+      && parent.childForFieldName('name')?.id === identifierNode.id;
+    const directDefinition = entry.definitionsByLocation.get(definitionLocationKey({
+      path,
+      line: identifierNode.startPosition.row + 1,
+      column: identifierNode.startPosition.column + 1,
+    }));
+
+    if (directDefinition) {
+      candidates = [directDefinition];
+    } else if (isKeyedElementKey(identifierNode)) {
+      const compositeType = compositeLiteralType(file, identifierNode);
+      if (compositeType) {
+        let memberEntry = entry;
+        if (compositeType.qualifier) {
+          const importPath = file.imports.get(compositeType.qualifier);
+          const importedPackagePath = this.importToPackagePath(entry.modulePath, importPath);
+          if (importedPackagePath === null) return { status: 'notFound', reason: 'memberSourceUnavailable', symbol };
+          memberEntry = this.packages.get(packageKey(origin, project, ref, importedPackagePath));
+          if (!memberEntry) return { status: 'needsPackage', packagePath: importedPackagePath, importPath, symbol };
+        }
+        candidates = memberDefinitions(memberEntry, symbol, compositeType.name, compositeType.qualifier ? memberEntry.packageName : file.packageName)
+          .filter((definition) => definition.kind === 'field');
+      }
+    } else if (isSelectorField || isQualifiedTypeName) {
+      const qualifierNode = isQualifiedTypeName
+        ? parent.childForFieldName('package')
+        : parent.childForFieldName('operand');
+      const qualifier = textOf(file.source, qualifierNode);
+      const importPath = file.imports.get(qualifier);
+      if (importPath) {
+        const importedPackagePath = this.importToPackagePath(entry.modulePath, importPath);
+        if (importedPackagePath === null) {
+          return externalImportResult(importPath, symbol);
+        }
+        const imported = this.packages.get(packageKey(origin, project, ref, importedPackagePath));
+        if (!imported) return { status: 'needsPackage', packagePath: importedPackagePath, importPath, symbol };
+        candidates = packageDefinitions(imported, symbol);
+      } else if (isSelectorField) {
+        const type = typeForExpression(entry, file, identifierNode, qualifierNode);
+        candidates = memberDefinitions(entry, symbol, type, file.packageName);
+        uncertain = !type;
+      }
+    } else if (isQualifiedTypePackage || isImportAlias) {
+      const importPath = file.imports.get(symbol);
+      if (importPath) {
+        const importedPackagePath = this.importToPackagePath(entry.modulePath, importPath);
+        if (importedPackagePath === null) return externalImportResult(importPath, symbol);
+        return { status: 'projectPackage', importPath, packagePath: importedPackagePath, symbol, ref };
+      }
+    } else if (isSelectorOperand) {
+      const localDefinition = localDefinitionFor(file, identifierNode, symbol);
+      if (localDefinition) {
+        candidates = [localDefinition];
+      } else {
+        const importPath = file.imports.get(symbol);
+        if (importPath) {
+          const importedPackagePath = this.importToPackagePath(entry.modulePath, importPath);
+          if (importedPackagePath === null) return externalImportResult(importPath, symbol);
+          return { status: 'projectPackage', importPath, packagePath: importedPackagePath, symbol, ref };
+        }
+        candidates = packageDefinitions(entry, symbol, file.packageName);
+      }
+    } else {
+      const localDefinition = localDefinitionFor(file, identifierNode, symbol);
+      candidates = localDefinition ? [localDefinition] : packageDefinitions(entry, symbol, file.packageName);
+    }
+
+    candidates = uniqueDefinitions(candidates);
+    if (!candidates.length && PREDECLARED_FUNCTIONS.has(symbol) && !shadowsPredeclaredFunction(file, identifierNode, symbol)) return { status: 'builtin', symbol };
+    if (!candidates.length) return { status: 'notFound', reason: 'definitionNotFound', symbol };
+    if (uncertain || candidates.length > 1) {
+      if (candidates.some((candidate) => this.files.get(fileKey(origin, project, ref, candidate.path))?.buildConstrained)) {
+        return { status: 'unsupported', reason: 'buildConstraint', symbol };
+      }
+      return { status: 'ambiguous', reason: uncertain || isSelectorField ? 'receiverOrSelector' : 'multipleDefinitions', symbol, definitions: candidates };
+    }
+    const definition = candidates[0];
+    return {
+      status: 'resolved',
+      symbol,
+      definition,
+      isDefinition: definition.path === path
+        && definition.line === identifierNode.startPosition.row + 1
+        && definition.column === identifierNode.startPosition.column + 1,
+    };
+  }
+
+  findReferences({ origin = '', project, ref, packagePath, definition, pageSize = 25, cursor = '' }) {
+    const sourceEntry = this.packages.get(packageKey(origin, project, ref, packagePath));
+    if (!sourceEntry || !definition) return { status: 'notFound', reason: 'packageNotIndexed' };
+
+    const locations = [];
+    const entries = [...this.packages.values()].filter((entry) => entry.origin === origin && entry.project === project && entry.ref === ref);
+    const candidates = entries
+      .flatMap((entry) => (entry.identifierCandidates.get(definition.name) || []).map((candidate) => ({ ...candidate, packagePath: entry.packagePath })))
+      .sort((left, right) => locationCursor({ path: left.file.path, line: left.node.startPosition.row + 1, column: left.node.startPosition.column + 1 })
+        .localeCompare(locationCursor({ path: right.file.path, line: right.node.startPosition.row + 1, column: right.node.startPosition.column + 1 })));
+    const size = Math.max(1, Math.min(100, pageSize));
+    for (const { file, node, packagePath: candidatePackagePath } of candidates) {
+      const location = {
+        path: file.path,
+        ref: file.ref,
+        line: node.startPosition.row + 1,
+        column: node.startPosition.column + 1,
+      };
+      if (cursor && locationCursor(location) <= cursor) continue;
+      if (sameDefinition({ ...definition, ...location }, definition)) continue;
+      const result = this.resolve({
+        origin,
+        project,
+        ref,
+        packagePath: candidatePackagePath,
+        path: file.path,
+        line: location.line,
+        character: utf16Column(fileLines(file)[node.startPosition.row] || '', node.startPosition.column),
+        identifier: definition.name,
+      });
+      if (result.status === 'resolved' && sameDefinition(result.definition, definition)) locations.push(location);
+      if (locations.length > size) break;
+    }
+
+    const pageLocations = locations.slice(0, size);
+    return {
+      status: 'references',
+      definition,
+      locations: pageLocations,
+      hasMore: locations.length > size,
+      nextCursor: pageLocations.length ? locationCursor(pageLocations.at(-1)) : '',
+    };
+  }
+
+  importToPackagePath(modulePath, importPath) {
+    if (!importPath) return null;
+    if (!modulePath || importPath === modulePath) return importPath === modulePath ? '' : null;
+    if (!importPath.startsWith(`${modulePath}/`)) return null;
+    return importPath.slice(modulePath.length + 1);
+  }
+
+  disposeProject({ origin = '', project, ref = '' }) {
+    this.mutationGeneration++;
+    const prefix = `${origin}\u0000${project}\u0000${ref}`;
+    for (const key of this.packages.keys()) if (key.startsWith(prefix)) this.packages.delete(key);
+    for (const key of this.files.keys()) if (key.startsWith(prefix)) this.files.delete(key);
+    for (const key of this.projects) if (key.startsWith(prefix)) this.projects.delete(key);
+    for (const key of this._scopeCache.keys()) if (key.startsWith(prefix)) this._scopeCache.delete(key);
+    return { status: 'disposed' };
+  }
+}

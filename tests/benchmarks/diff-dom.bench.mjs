@@ -1,14 +1,22 @@
-// Benchmarks for the DOM-facing hot paths in `go-navigation.js` identified
-// in `experiments/2026-08-03-performance-findings.md`:
+// Benchmarks for the DOM-facing hot paths formerly in `go-navigation.js`,
+// identified in `experiments/2026-08-03-performance-findings.md`:
 //   #7 `fileContextFor` runs on every un-throttled mousemove, uncached
 //      per diff root.
 //   #8 `occurrenceRanges` walks every code cell of every diff file with a
 //      fresh TreeWalker + Range per text node, on every DOM mutation while
 //      a symbol is selected.
 //
-// Loads `go-navigation.js` the same way `tests/go-navigation-context.test.js`
-// does: as a global-attaching IIFE against a `happy-dom` `Window`, reached
-// through `globalThis.GoLensGoNavigation.__test`.
+// Ticket 22: `go-navigation.js` is deleted; `fileContextFor`/`codeCellFor`
+// are reached directly from `page/platform/diff-dom.js` (ticket 26 moved
+// them there; this file previously reached them through go-navigation.js's
+// thin wrappers and dynamic-`import()` bridge, both gone now — a real,
+// synchronously-resolved static import replaces both). `caretAtPoint` and
+// `occurrenceRanges` moved to `page/features/code-intel.js` (ticket 21) and
+// are reached through that module's own `mount(ctx).__test` — see that
+// file's `__test` comment for why it carries one despite ticket 04 §1's
+// "handle + internal.js pure functions only" test surface: this baseline
+// (ticket 24) is what 13-21's "no perf regression" criterion compares
+// against, so the two case names/measured functions must stay stable.
 //
 // IMPORTANT SIZING NOTE (see docs/benchmarks/README.md for detail): the
 // `occurrenceRanges` case does NOT use the full 60x120 fixture. happy-dom's
@@ -26,6 +34,10 @@
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { buildDiffFixtureHTML } from './diff-fixture.mjs';
+import { mount as mountCodeIntel } from '../../page/features/code-intel.js';
+import * as diffDom from '../../page/platform/diff-dom.js';
+
+const DIFF_ROOT_SELECTOR = 'diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]';
 
 const SMOKE = process.env.GOLENS_BENCH_SCALE === 'smoke';
 
@@ -49,10 +61,13 @@ async function loadGoNavigation() {
       origin: 'https://gitlab.example',
       pathname: '/group/project/-/merge_requests/1/diffs',
     };
+    // A real, synchronously-resolved static import (ticket 22) — no more
+    // go-navigation.js dynamic-`import()` bridge to await. `helpers` keeps
+    // its old name/shape (fileContextFor/codeCellFor) for the rest of this
+    // file's setup/run functions, which are unchanged.
     modulePromise = (async () => {
       await import('../../bookmark-store.js?golens-benchmarks');
-      await import('../../go-navigation.js');
-      return globalThis.GoLensGoNavigation.__test;
+      return { fileContextFor: diffDom.fileContextFor, codeCellFor: diffDom.codeCellFor };
     })();
   }
   return modulePromise;
@@ -62,6 +77,23 @@ function mountFixture(html) {
   const window = new Window({ url: globalThis.location.href });
   window.document.body.innerHTML = html;
   return window;
+}
+
+// Releasing a fixture requires `happyDOM.close()` and nothing less: the
+// synchronous `window.close()` leaves the document reachable, and so does
+// dropping every reference to it from here (measured — assigning
+// `globalThis.document` alone is enough to pin it, and `delete` does not
+// unpin it). Each un-released full-size (60x120) fixture keeps ~1.3 GB
+// resident for the rest of the run; three of them in a row exhausted the
+// default V8 heap before the large semantic-core cases could run. This is a
+// `happy-dom` teardown characteristic of these benchmarks, not a retention
+// bug in `go-navigation.js` — the same growth occurs with no helper called
+// at all; see ticket 24.
+async function releaseFixture({ window, codeIntel }) {
+  codeIntel?.unmount();
+  delete globalThis.document;
+  delete globalThis.NodeFilter;
+  await window.happyDOM.close();
 }
 
 async function fileContextForSetup() {
@@ -75,7 +107,7 @@ async function fileContextForSetup() {
   const context = helpers.fileContextFor(cell);
   assert.ok(context, 'expected fileContextFor to resolve a file context');
   assert.match(context.path, /\.go$/);
-  return { helpers, cell };
+  return { helpers, cell, window };
 }
 
 async function codeCellForSetup() {
@@ -88,14 +120,15 @@ async function codeCellForSetup() {
   assert.ok(span, 'expected an identifier span inside a diff code cell');
   const cell = helpers.codeCellFor(span);
   assert.ok(cell, 'expected codeCellFor to resolve the containing code cell');
-  return { helpers, span };
+  return { helpers, span, window };
 }
 
 async function caretAtPointSetup() {
-  const helpers = await loadGoNavigation();
+  await loadGoNavigation();
   const html = buildDiffFixtureHTML({ fileCount: FULL_FILE_COUNT, rowsPerFile: FULL_ROWS_PER_FILE });
   const window = mountFixture(html);
   globalThis.document = window.document;
+  globalThis.window = window;
   globalThis.NodeFilter = window.NodeFilter;
   const cells = [...window.document.querySelectorAll('[data-testid="rd-diff-line-content"]')];
   const cell = cells[cells.length - 1];
@@ -111,9 +144,12 @@ async function caretAtPointSetup() {
   // The pointer coordinates below are therefore inert — the stub ignores
   // them — and what's timed is caretAtPoint's own cost, not a browser hit-test.
   window.document.caretPositionFromPoint = () => ({ offsetNode: textNode, offset: 0 });
-  const hit = helpers.caretAtPoint(cell, 0, 0);
+  // caretAtPoint doesn't touch `legacy` at all (it only reads `document` and
+  // the pure identifier helpers), so this mount needs no capabilities.
+  const codeIntel = mountCodeIntel({});
+  const hit = codeIntel.__test.caretAtPoint(cell, 0, 0);
   assert.ok(hit, 'expected caretAtPoint to resolve an identifier at the stubbed caret position');
-  return { helpers, cell };
+  return { codeIntel, cell, window };
 }
 
 async function occurrenceRangesSetup() {
@@ -121,10 +157,24 @@ async function occurrenceRangesSetup() {
   const html = buildDiffFixtureHTML({ fileCount: OCCURRENCE_FILE_COUNT, rowsPerFile: OCCURRENCE_ROWS_PER_FILE });
   const window = mountFixture(html);
   globalThis.document = window.document;
+  globalThis.window = window;
   globalThis.NodeFilter = window.NodeFilter;
-  const occurrences = helpers.occurrenceRanges('Client');
+  // occurrenceRanges reads `legacy.diffFileRoots()`/`legacy.fileContextFor()`
+  // to skip cells outside a resolvable diff file — delegate to go-navigation.js's
+  // real fileContextFor (same helpers this suite already loads) and a
+  // DIFF_ROOT_SELECTOR query matching code-intel.js's own, so this isn't a
+  // stub that silently short-circuits the walk (a `fileContextFor` that
+  // always returns falsy would make every root get skipped via `continue`
+  // and the case would measure ~nothing while still passing).
+  const codeIntel = mountCodeIntel({
+    legacy: {
+      diffFileRoots: () => [...window.document.querySelectorAll(DIFF_ROOT_SELECTOR)],
+      fileContextFor: helpers.fileContextFor,
+    },
+  });
+  const occurrences = codeIntel.__test.occurrenceRanges('Client');
   assert.ok(occurrences.length > 0, 'expected at least one "Client" occurrence in the fixture');
-  return { helpers };
+  return { codeIntel, window };
 }
 
 export const benchmarks = [
@@ -132,6 +182,7 @@ export const benchmarks = [
     name: `fileContextFor x1000 (uncached, ${FULL_FILE_COUNT}x${FULL_ROWS_PER_FILE} diff, un-throttled mousemove path)`,
     category: 'diff-dom',
     setup: fileContextForSetup,
+    teardown: releaseFixture,
     run: ({ helpers, cell }) => {
       for (let index = 0; index < 1000; index++) helpers.fileContextFor(cell);
     },
@@ -140,6 +191,7 @@ export const benchmarks = [
     name: `codeCellFor x1000 (uncached, ${FULL_FILE_COUNT}x${FULL_ROWS_PER_FILE} diff, hit-test path)`,
     category: 'diff-dom',
     setup: codeCellForSetup,
+    teardown: releaseFixture,
     run: ({ helpers, span }) => {
       for (let index = 0; index < 1000; index++) helpers.codeCellFor(span);
     },
@@ -148,8 +200,9 @@ export const benchmarks = [
     name: `caretAtPoint x1000 (uncached, ${FULL_FILE_COUNT}x${FULL_ROWS_PER_FILE} diff, hover hit-test path, stubbed browser caret hit-test)`,
     category: 'diff-dom',
     setup: caretAtPointSetup,
-    run: ({ helpers, cell }) => {
-      for (let index = 0; index < 1000; index++) helpers.caretAtPoint(cell, 0, 0);
+    teardown: releaseFixture,
+    run: ({ codeIntel, cell }) => {
+      for (let index = 0; index < 1000; index++) codeIntel.__test.caretAtPoint(cell, 0, 0);
     },
   },
   {
@@ -158,8 +211,9 @@ export const benchmarks = [
     iterations: SMOKE ? 1 : 4,
     warmup: SMOKE ? 0 : 1,
     setup: occurrenceRangesSetup,
-    run: ({ helpers }) => {
-      const occurrences = helpers.occurrenceRanges('Client');
+    teardown: releaseFixture,
+    run: ({ codeIntel }) => {
+      const occurrences = codeIntel.__test.occurrenceRanges('Client');
       assert.ok(occurrences.length > 0);
     },
   },
