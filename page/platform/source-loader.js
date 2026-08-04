@@ -14,38 +14,37 @@
 // ## `status` is injected, not owned here — read this before "fixing" it
 //
 // Ticket 28 lists `status()` (the `golens-go-status` CustomEvent dispatch)
-// as moving into this module. It is instead an injected dependency, and the
-// three-line `document.dispatchEvent` stays in go-navigation.js. This is a
-// deliberate deviation, documented the way platform/rpc-client.js documents
-// its own (`onDisconnect`/`dispose({reason})`):
+// as moving into this module. It is instead an injected dependency. This was
+// a deliberate deviation at the time, documented the way
+// platform/rpc-client.js documents its own (`onDisconnect`/
+// `dispose({reason})`): go-navigation.js's `init()` fired `status('idle', …)`
+// **synchronously**, and this module was reached through a dynamic
+// `import()` bridge, so a dispatch living here would have landed inside the
+// load window and been dropped. `tests/browser-smoke.mjs:268` registers the
+// listener that sets `document.body.dataset.goStatus`, and `:445` gates the
+// whole implementations-popover scenario on it reaching `'ready'` — this
+// event is live, and map.md's correction list records it already having
+// been mistaken for a dead contract once.
 //
-//   go-navigation.js's `init()` fires `status('idle', …)` **synchronously**,
-//   at init time. This module is reached through a dynamic `import()`
-//   bridge, so if the dispatch lived here that one event would land inside
-//   the load window and be dropped. `tests/browser-smoke.mjs:268` registers
-//   the listener that sets `document.body.dataset.goStatus`, and `:445`
-//   gates the whole implementations-popover scenario on it reaching
-//   `'ready'` — this event is live, and map.md's correction list records it
-//   already having been mistaken for a dead contract once.
+// Ticket 22 update: `status()` now lives in `page/lifecycle/mr-session.js`
+// (go-navigation.js is deleted) and is still injected here, for the same
+// reason restated in mr-session.js's own header — its dispatch must stay
+// reachable as a plain function call from wherever activation happens, not
+// bound to this module's own import timing. Injecting it also keeps the
+// original stated reason for wanting a factory ("zodat tests ze kunnen
+// stubben"): an injected `status` is strictly easier to assert on than a
+// dispatched DOM event.
 //
-// Injecting it also serves the ticket's own stated reason for wanting a
-// factory ("zodat tests ze kunnen stubben"): an injected `status` is
-// strictly easier to assert on than a dispatched DOM event.
-//
-// ## Dependencies come from go-navigation.js's wrappers
+// ## Dependencies are injected, not imported
 //
 // `createSourceLoader` takes the GitLab-API functions it needs as plain
 // deps rather than importing platform/gitlab-api.js itself. That keeps this
 // module honest as a unit under test: nothing here reaches the network
-// except through something the caller handed it.
-//
-// It does *not* remove the ordering constraint between the two bridges, and
-// an earlier version of this comment wrongly claimed it did. Some of those
-// wrappers (`projectContext`, `mapLimit`) are synchronous and dereference
-// go-navigation.js's gitlab-api module handle directly, so calling into
-// `loadPackage`/`loadProject` before the gitlab-api bridge has resolved
-// throws. go-navigation.js therefore chains this bridge behind that one
-// rather than racing them.
+// except through something the caller handed it. `page/lifecycle/
+// mr-session.js` is the one caller now, and — being a real ES module — it
+// constructs its `gitlabApi` instance before this module, so there is no
+// import-ordering race left to document (ticket 22; the two-bridge-race this
+// section used to describe was a go-navigation.js/content.js-era concern).
 
 // --- Progress view-models (pure) ------------------------------------------
 //

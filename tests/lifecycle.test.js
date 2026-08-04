@@ -2,32 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { start } from '../page/lifecycle/index.js';
 
-function fakeClock() {
-  const scheduled = [];
-  return {
-    scheduled,
-    setTimeout(fn, ms) {
-      const entry = { fn, ms, cancelled: false };
-      scheduled.push(entry);
-      return () => { entry.cancelled = true; };
-    },
-    // Fires the most recently scheduled, non-cancelled timer (the poll loop
-    // reschedules itself each time it fires).
-    fireLatest() {
-      for (let i = scheduled.length - 1; i >= 0; i -= 1) {
-        if (!scheduled[i].cancelled) {
-          scheduled[i].cancelled = true; // consumed: firing is a one-shot, like a real timer
-          scheduled[i].fn();
-          return;
-        }
-      }
-    },
-    pendingCount() {
-      return scheduled.filter((entry) => !entry.cancelled).length;
-    },
-  };
-}
-
 function fakeRuntime() {
   const listeners = [];
   return {
@@ -80,6 +54,7 @@ function fakeFeature(name) {
         unmount() { unmountCalled = true; calls.push({ event: 'unmount' }); },
         setEnabled(value) { calls.push({ event: 'setEnabled', value }); },
         invalidateCache() { calls.push({ event: 'invalidateCache' }); },
+        invalidatePreloadState() { calls.push({ event: 'invalidatePreloadState' }); return { kind: 'invalidated' }; },
       };
     },
   };
@@ -155,11 +130,11 @@ test('chrome.runtime.onMessage dispatch: golens-enabled routes to lifecycle, not
 });
 
 test('chrome.runtime.onMessage dispatch: routed messages call the mounted feature\'s handle method', () => {
-  const feature = fakeFeature('mr-preload');
+  const feature = fakeFeature('controls');
   const runtime = fakeRuntime();
   start({ platform: {}, features: [feature], runtime, location: null });
   runtime.dispatch({ type: 'golens-cache-invalidated' });
-  assert.deepEqual(feature.calls.filter((c) => c.event === 'invalidateCache'), [{ event: 'invalidateCache' }]);
+  assert.deepEqual(feature.calls.filter((c) => c.event === 'invalidatePreloadState'), [{ event: 'invalidatePreloadState' }]);
 });
 
 test('chrome.runtime.onMessage dispatch: unrouted/unknown messages are ignored (never sendResponse, never true)', () => {
@@ -185,23 +160,8 @@ test('stop() removes the chrome.runtime.onMessage listener', () => {
   assert.equal(runtime.listenerCount(), 0);
 });
 
-test('SPA detection: polls location.href via the injected clock and classifies transitions', () => {
-  const clock = fakeClock();
-  const location = { href: 'https://gitlab.com/a' };
-  const lifecycle = start({ platform: { clock }, features: [], runtime: null, location });
-
-  assert.equal(clock.pendingCount(), 1, 'a poll timer should be scheduled at start');
-  clock.fireLatest();
-  assert.equal(clock.pendingCount(), 1, 'the poll reschedules itself when nothing changed');
-
-  location.href = 'https://gitlab.com/b';
-  assert.doesNotThrow(() => clock.fireLatest());
-
-  lifecycle.stop();
-  assert.equal(clock.pendingCount(), 0, 'stop() cancels the pending poll');
-});
-
-test('SPA detection does not run when no clock or no location is provided', () => {
-  assert.doesNotThrow(() => start({ platform: {}, features: [], runtime: null, location: null }));
-  assert.doesNotThrow(() => start({ platform: { clock: fakeClock() }, features: [], runtime: null, location: null }));
-});
+// SPA-navigation reconciliation used to also be polled here (ticket 11's
+// inert stub). Ticket 22/31 replaced it with page/lifecycle/mr-session.js's
+// event+MutationObserver-driven reconcile loop (content.js's former
+// mechanism, survived verbatim) instead of running both — see this module's
+// header comment. That loop is covered by tests/lifecycle-mr-session.test.js.

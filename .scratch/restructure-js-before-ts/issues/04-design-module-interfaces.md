@@ -204,3 +204,26 @@ sonnet subagent, independently re-run and reviewed. Throwaway code lives on bran
 
 Not covered (accepted): real gitlab.com login/https and non-Chromium browsers; behavior is
 Chromium-level, not page-content-dependent.
+
+### Deviations found during ticket 22 (contract & reassess)
+
+- **Two message types are not "always `kind`-discriminated."** `golens-cache-invalidated` and
+  `golens-preload-full-project` route to `page/features/controls.js`'s `invalidatePreloadState`/
+  `startFullProjectPreload`, whose return shapes (`{kind:'invalidated'}` and
+  `{status, message, progress}` respectively) predate this ticket and are pinned by
+  `tests/features-controls.test.js`. `golens-full-project-status` (`refreshFullProjectPreloadStatus`)
+  is async and can reject — the one routed action with a failure path beyond "the module didn't
+  load." `bootstrap.js`'s `envelopeFor` handles these three positionally (outcome present vs.
+  `undefined`) rather than requiring a `.kind` field, preserving content.js's original envelopes
+  (`golens-cache-invalidated`/`golens-preload-full-project` were unconditionally `ok:true`) instead
+  of reshaping `controls.js`'s existing, tested return values for the message seam's benefit.
+- **`bootstrap.js`'s `chrome.runtime.onMessage` listener now awaits its outcome**
+  (`await Promise.resolve(handle.dispatch(message))`) before enveloping, to support
+  `golens-full-project-status`'s async action. Every other routed action is synchronous, and
+  `await` on a non-promise is a no-op microtask — no other route's observable envelope changed.
+- **`golens-enabled` is intentionally never claimed by `bootstrap.js`.** content.js's original
+  handler for it never called `sendResponse`; `page/lifecycle/internal.js`'s `routeMessage` already
+  classifies it as `{kind:'lifecycle', action:'setEnabled'}` (not a feature route), and
+  `page/lifecycle/index.js`'s own `settings.subscribe('enabled', …)` fanout applies it. No change
+  needed to preserve this — recorded here since ticket 22's brief flagged it as one of the four
+  message types needing "a home."

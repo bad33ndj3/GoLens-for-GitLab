@@ -18,10 +18,20 @@ export function classifyPageTransition(url, prev) {
 // message types) and their senders (popup.js, settings.js,
 // extension-cache-ui.js). Every entry here has both a real sender and a real
 // listener today; nothing dead is encoded.
+//
+// Ticket 22 correction: the three preload/cache-status types below were
+// originally pointed at `mr-preload` (ticket 16's forward guess, before
+// ticket 30 gave `page/features/controls.js` its own parallel preload state
+// machine). Production behavior — content.js's own message handler — always
+// went through `controlsHandle` (the toolbar's preload button state), not
+// mr-preload.js's raw handle, so these are repointed at `controls` for
+// behavior parity. Documented as a deviation in
+// .scratch/restructure-js-before-ts/issues/16-message-seam.md-equivalent
+// note (map.md / ticket 22's completion note) rather than left silent.
 const FEATURE_ROUTES = {
-  'golens-cache-invalidated': { feature: 'mr-preload', action: 'invalidateCache' },
-  'golens-preload-full-project': { feature: 'mr-preload', action: 'preloadFullProject' },
-  'golens-full-project-status': { feature: 'mr-preload', action: 'fullProjectStatus' },
+  'golens-cache-invalidated': { feature: 'controls', action: 'invalidatePreloadState' },
+  'golens-preload-full-project': { feature: 'controls', action: 'startFullProjectPreload' },
+  'golens-full-project-status': { feature: 'controls', action: 'refreshFullProjectPreloadStatus' },
   'golens-show-onboarding': { feature: 'onboarding', action: 'show' },
   'golens-show-settings': { feature: 'settings-overlay', action: 'show' },
   'golens-close-settings': { feature: 'settings-overlay', action: 'close' },

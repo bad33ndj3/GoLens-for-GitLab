@@ -25,9 +25,9 @@ test('routeMessage routes golens-enabled to the lifecycle itself, not a feature'
 });
 
 test('routeMessage routes known feature message types to {feature, action}', () => {
-  assert.deepEqual(routeMessage({ type: 'golens-cache-invalidated' }), { kind: 'routed', feature: 'mr-preload', action: 'invalidateCache' });
-  assert.deepEqual(routeMessage({ type: 'golens-preload-full-project' }), { kind: 'routed', feature: 'mr-preload', action: 'preloadFullProject' });
-  assert.deepEqual(routeMessage({ type: 'golens-full-project-status' }), { kind: 'routed', feature: 'mr-preload', action: 'fullProjectStatus' });
+  assert.deepEqual(routeMessage({ type: 'golens-cache-invalidated' }), { kind: 'routed', feature: 'controls', action: 'invalidatePreloadState' });
+  assert.deepEqual(routeMessage({ type: 'golens-preload-full-project' }), { kind: 'routed', feature: 'controls', action: 'startFullProjectPreload' });
+  assert.deepEqual(routeMessage({ type: 'golens-full-project-status' }), { kind: 'routed', feature: 'controls', action: 'refreshFullProjectPreloadStatus' });
   assert.deepEqual(routeMessage({ type: 'golens-show-onboarding' }), { kind: 'routed', feature: 'onboarding', action: 'show' });
   assert.deepEqual(routeMessage({ type: 'golens-show-settings' }), { kind: 'routed', feature: 'settings-overlay', action: 'show' });
   assert.deepEqual(routeMessage({ type: 'golens-close-settings' }), { kind: 'routed', feature: 'settings-overlay', action: 'close' });

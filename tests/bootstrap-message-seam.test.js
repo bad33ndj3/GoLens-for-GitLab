@@ -75,9 +75,10 @@ test('bootstrap answers the settings and onboarding messages, and only those', (
   const { RESPONDED_TYPES } = scope.globalThis.GoLensBootstrap.__test;
 
   // Every claimed type must be a real route to a feature page/main.js mounts.
-  // Claiming a type content.js/go-navigation.js already answers synchronously
-  // would put two responders on one message.
-  const answerableFeatures = ['settings-overlay', 'onboarding'];
+  // Claiming a type a legacy file already answered synchronously would put
+  // two responders on one message (both legacy files are deleted as of
+  // ticket 22, so this is now the only responder for any of these).
+  const answerableFeatures = ['settings-overlay', 'onboarding', 'controls'];
   for (const type of RESPONDED_TYPES) {
     const route = routeMessage({ type });
     assert.equal(route.kind, 'routed', `${type} is answered by bootstrap but routes nowhere`);
@@ -88,7 +89,15 @@ test('bootstrap answers the settings and onboarding messages, and only those', (
   }
   assert.deepEqual(
     [...RESPONDED_TYPES].sort(),
-    ['golens-close-settings', 'golens-settings-ready', 'golens-show-onboarding', 'golens-show-settings'],
+    [
+      'golens-cache-invalidated',
+      'golens-close-settings',
+      'golens-full-project-status',
+      'golens-preload-full-project',
+      'golens-settings-ready',
+      'golens-show-onboarding',
+      'golens-show-settings',
+    ],
   );
 });
 

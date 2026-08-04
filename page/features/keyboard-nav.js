@@ -7,39 +7,45 @@
 //
 // mount(ctx) -> { unmount, offerShortcutCoach(actionID) }. `ctx.overlays`
 // replaces the old #golens-*-root DOM read for coach suppression (ticket 12).
-// Three capabilities page/main.js injects, since none are reachable any
-// other way without a feature -> legacy-global dependency (ticket 03 §3):
+// Capabilities page/main.js injects, since none are reachable any other way
+// without a feature -> feature edge (ticket 03 §3):
 //   - navigationAction(action) -> boolean (ticket 21) — forwards the five
 //     actions page/features/code-intel.js now owns (semanticJump,
 //     previousOccurrence, nextOccurrence, historyBack, historyForward) to
-//     that module's handle, reached through go-navigation.js's live
-//     `.codeIntel` accessor. Tried first; returns false for actions it
+//     that module's handle. Tried first; returns false for actions it
 //     doesn't own (its own closed action set), so this file falls through
 //     to runLegacyNavigationAction below for those.
-//   - runLegacyNavigationAction(action) -> boolean — forwards the three
-//     remaining actions this module doesn't own (toggleBookmark,
-//     previousBookmark, nextBookmark) to go-navigation.js's still-legacy
-//     runNavigationAction(), shrunk to just those by ticket 21.
-//   - legacyToast: { message(text), shortcutHint(hint), isShowing() } —
-//     go-navigation.js's toast element is shared UI serving ~15 unmigrated
-//     call sites (bookmarks, semantic jump, copy, project search, …); giving
-//     this module its own toast host would mean two toast surfaces that can
-//     show at once, which the "gedragen zich identiek" acceptance criterion
-//     forbids. So the element stays in go-navigation.js, reached through
-//     this capability, while this module owns the *decision* of whether and
-//     what to show (isCoachBlocked, messageForAction) — the former
-//     shortcutCoachBlocked()/SHORTCUT_COACH_MESSAGES/offerShortcutCoach().
+//   - runLegacyNavigationAction(action) -> boolean — the three remaining
+//     actions (toggleBookmark, previousBookmark, nextBookmark), reproducing
+//     go-navigation.js's former (shrunk-by-ticket-21) runNavigationAction()
+//     body directly against page/features/bookmarks.js's real handle
+//     (ticket 22 — the name survives, the implementation moved into
+//     page/main.js's closure instead of a globalThis bridge).
+//   - legacyToast: { message(text), shortcutHint(hint), isShowing() } — the
+//     shared toast surface (page/lifecycle/mr-session.js's `toast` instance,
+//     ticket 29) serving ~15 call sites (bookmarks, semantic jump, copy,
+//     project search, …); giving this module its own toast host would mean
+//     two toast surfaces that can show at once, which the "gedragen zich
+//     identiek" acceptance criterion forbids. This module still owns the
+//     *decision* of whether and what to show (isCoachBlocked,
+//     messageForAction) — the former shortcutCoachBlocked()/
+//     SHORTCUT_COACH_MESSAGES/offerShortcutCoach().
+//   - minimizeProjectSearch()/handleCodeIntelEscape(event) (ticket 22/20/21)
+//     — document-level Escape routing, formerly go-navigation.js's onKeyDown.
+//     Wired here (not a new page/lifecycle-level keydown listener) since
+//     this module already owns document-level keydown dispatch; see
+//     onEscapeKeyDown below for the exact behavior preserved.
 //
-// Reverse bridge: go-navigation.js's own remaining offerShortcutCoach() call
+// Reverse bridge: code-intel.js's own remaining offerShortcutCoach() call
 // sites (historyBack, nextOccurrence, semanticJump — none of them this
 // module's own hunk/file actions) reach this module's offerShortcutCoach
-// through a dynamic import() bridge and the module-scope `active` export
-// below, mirroring celebration.js's requestMoment() pattern exactly (ticket
-// 14): there is only ever one mounted instance, so a bare module-level
-// export forwarding to whichever instance is currently mounted is simpler
-// than plumbing a capability the other direction. A call while nothing is
-// mounted is a silent no-op, same as celebration's requestMoment during the
-// mount/unmount gap.
+// through the module-scope `active` export below (page/main.js passes it
+// into code-intel's `legacy.offerShortcutCoach`), mirroring celebration.js's
+// requestMoment() pattern exactly (ticket 14): there is only ever one
+// mounted instance, so a bare module-level export forwarding to whichever
+// instance is currently mounted is simpler than plumbing a capability the
+// other direction. A call while nothing is mounted is a silent no-op, same
+// as celebration's requestMoment during the mount/unmount gap.
 //
 // Mount-once lifetime, not pageKey-tracked (same deviation ticket 14/16
 // documented): bootstrap.js remounts the whole page/main.js module graph on
@@ -74,6 +80,8 @@ export function mount(ctx = {}) {
   const runLegacyNavigationAction = ctx.runLegacyNavigationAction;
   const navigationAction = ctx.navigationAction;
   const legacyToast = ctx.legacyToast || {};
+  const minimizeProjectSearch = ctx.minimizeProjectSearch;
+  const handleCodeIntelEscape = ctx.handleCodeIntelEscape;
 
   let unmounted = false;
   // Starts true (not the usual "false until settings.ready()" feature-module
@@ -237,7 +245,35 @@ export function mount(ctx = {}) {
     void offerShortcutCoachImpl('focusFileSearch');
   }
 
+  // --- Escape routing (ticket 22/20/21) ---------------------------------
+  //
+  // Byte-identical to go-navigation.js's former document-level onKeyDown:
+  // same guard (composedPath()/activeElement against the same selector,
+  // independent of isBlockedShortcutEvent's different shortcut-typing
+  // semantics above), same two branches in the same priority order
+  // (project-search-minimize first, then code-intel's popover), same
+  // `document`-target/capture-phase registration. Kept as its own listener
+  // rather than folded into onKeyDown above: onKeyDown's shortcut dispatch
+  // is gated by isComposing/isBlockedShortcutEvent, neither of which
+  // go-navigation.js's Escape handler ever checked. Gated on `enabled` and
+  // isMergeRequestPage() — the merge-request activation latch
+  // (page/lifecycle/mr-session.js's activate()/deactivate(), reached
+  // in the original only while attached) is equivalent in practice: the
+  // latch is only ever set while both are true.
+  const ESCAPE_GUARD_SELECTOR = 'input, textarea, select, [contenteditable], dialog, [role="dialog"], [aria-modal="true"]';
+  function onEscapeKeyDown(event) {
+    if (event.key !== 'Escape' || !enabled || !isMergeRequestPage()) return;
+    if ([...event.composedPath(), doc.activeElement].some((target) => target?.closest?.(ESCAPE_GUARD_SELECTOR))) return;
+    if (minimizeProjectSearch?.()?.kind === 'minimized') {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    handleCodeIntelEscape?.(event);
+  }
+
   doc.addEventListener('keydown', onKeyDown, true);
+  doc.addEventListener('keydown', onEscapeKeyDown, true);
   doc.addEventListener('click', onShortcutCoachManualClick, true);
 
   let unsubscribeEnabled = null;
@@ -259,6 +295,7 @@ export function mount(ctx = {}) {
       unmounted = true;
       if (active && active.offerShortcutCoach === offerShortcutCoachImpl) active = null;
       doc.removeEventListener('keydown', onKeyDown, true);
+      doc.removeEventListener('keydown', onEscapeKeyDown, true);
       doc.removeEventListener('click', onShortcutCoachManualClick, true);
       unsubscribeEnabled?.();
       elementNavigation = { hunk: null, file: null };

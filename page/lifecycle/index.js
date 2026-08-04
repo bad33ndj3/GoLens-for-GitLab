@@ -1,32 +1,24 @@
 // page/lifecycle — the imperative shell that wires features (ticket 03 §2,
-// interface ticket 04 §3). Not a feature itself: it hides page-transition
-// detection, `enabled`-gating, `chrome.runtime.onMessage` routing, and
-// mount/unmount ordering behind one entry point:
+// interface ticket 04 §3). Not a feature itself: it hides `enabled`-gating,
+// `chrome.runtime.onMessage` routing, and mount/unmount ordering behind one
+// entry point:
 //   start({ platform, features }) -> { stop() }
 //
-// Coexistence with the legacy path (ticket 11): as long as features aren't
-// migrated (07-22 land later), `features` is an empty/minimal array here and
-// everything else keeps flowing through content.js/go-navigation.js
-// unchanged. This module does not import or alter either legacy file.
-//
-// Transitional double SPA-observation (documented deviation, see ticket 11's
-// file for the same note): bootstrap.js (ticket 05) already polls
-// `location.href` to remount the whole `page/main.js` module graph on
-// navigation (verified in ticket 04 §7's prototype). This module *also*
-// polls `location.href`, independently, because ticket 04 §7 assigns that
-// observation to lifecycle itself ("lifecycle must poll/observe
-// location.href"), for a different purpose: reconciling the *mounted feature
-// set* on in-page navigation without a full module remount, once features
-// exist to reconcile. Today `features` is empty, so this poll is inert (it
-// only tracks `lastUrl`) and the two observers do not conflict. Left as-is
-// rather than removing bootstrap's poll, since that poll is ticket 05's
-// verified, tested behavior and the (currently unrunnable) browser-smoke
-// coverage keys off it.
-import { classifyPageTransition, routeMessage } from './internal.js';
+// Ticket 22 (folding in ticket 31's answer): this module used to also poll
+// `location.href` itself (ticket 11's inert stub, documented at the time as
+// "a different mechanism than content.js's event+MutationObserver
+// detection, for reconciling the mounted feature set without a full module
+// remount, once features exist to reconcile"). Ticket 31 settled that
+// question the other way: `page/lifecycle/mr-session.js`'s reconcile loop
+// (content.js's former event+MutationObserver detection, survived verbatim)
+// is what now does this job, and does it per-navigation without waiting on
+// any poll interval — so the poll here was superseded, not merely made
+// redundant, and is removed rather than left running alongside it.
+// bootstrap.js's own separate `location.href` poll (full module-graph
+// remount scheduling) is a different mechanism and is untouched.
+import { routeMessage } from './internal.js';
 
-const NAV_POLL_MS = 200;
-
-// start({ platform, features, runtime, location }) -> { stop() }
+// start({ platform, features, runtime }) -> { stop() }
 //
 // - `platform`: bag of already-constructed platform services (e.g. `{ clock,
 //   settings }`) merged into every feature's `ctx`, plus per-feature
@@ -35,11 +27,10 @@ const NAV_POLL_MS = 200;
 // - `features`: array of `{ name, mount(ctx) -> handle, capabilities? }`,
 //   mounted in array order; `stop()` unmounts in the reverse order (resource
 //   teardown mirrors acquisition).
-// - `runtime`/`location`: injectable seams for `chrome.runtime` and the page
-//   `location`, defaulting to the real globals; overridable in tests.
-export function start({ platform = {}, features = [], runtime, location: loc } = {}) {
+// - `runtime`: injectable seam for `chrome.runtime`, defaulting to the real
+//   global; overridable in tests.
+export function start({ platform = {}, features = [], runtime } = {}) {
   const resolvedRuntime = runtime !== undefined ? runtime : globalThis.chrome?.runtime;
-  const resolvedLocation = loc !== undefined ? loc : (typeof location !== 'undefined' ? location : undefined);
 
   let stopped = false;
   const mounted = [];
@@ -67,25 +58,6 @@ export function start({ platform = {}, features = [], runtime, location: loc } =
       applyEnabled(platform.settings.get('enabled'));
       unsubscribeEnabled = platform.settings.subscribe('enabled', applyEnabled);
     });
-  }
-
-  // SPA-navigation detection (ticket 04 §7): poll `location.href` through the
-  // injected clock rather than raw `setInterval`, keeping time a test seam.
-  let cancelPoll = null;
-  if (platform.clock && resolvedLocation) {
-    let lastUrl = resolvedLocation.href;
-    const poll = () => {
-      if (stopped) return;
-      const kind = classifyPageTransition(resolvedLocation.href, lastUrl);
-      if (kind === 'navigation') {
-        lastUrl = resolvedLocation.href;
-        // No mounted features to reconcile yet (ticket 11 scope). Once
-        // feature tickets land, a navigation here would re-run each mounted
-        // feature's own reconcile step.
-      }
-      cancelPoll = platform.clock.setTimeout(poll, NAV_POLL_MS);
-    };
-    cancelPoll = platform.clock.setTimeout(poll, NAV_POLL_MS);
   }
 
   // dispatch(message) -> the routed feature handle's own return value, or
@@ -138,7 +110,6 @@ export function start({ platform = {}, features = [], runtime, location: loc } =
   function stop() {
     if (stopped) return;
     stopped = true;
-    cancelPoll?.();
     removeMessageListener?.();
     unsubscribeEnabled?.();
     unmountAll();

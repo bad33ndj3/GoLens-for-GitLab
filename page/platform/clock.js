@@ -52,6 +52,14 @@ export function createClock() {
 
 // --- Legacy bridge (ticket 08) --------------------------------------------
 //
+// Ticket 22 update: both `go-navigation.js` and `content.js`, described
+// throughout this section in the past tense, are deleted.
+// `createLegacyDebounceIdle` survives unchanged — `page/lifecycle/
+// mr-session.js` is its only caller now, using it exactly the way
+// content.js's `schedulePageReconcile` did (a real, synchronously-resolved
+// import, no dynamic-`import()` bridge needed any more since mr-session.js
+// is a real ES module).
+//
 // go-navigation.js and content.js are classic (non-module) content scripts,
 // each with its own local, test-swappable `clock` object (`defaultClock()`
 // / `setClock()`), not an instance from `createClock()` above. Their

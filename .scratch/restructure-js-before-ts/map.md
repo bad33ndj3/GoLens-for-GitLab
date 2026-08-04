@@ -402,6 +402,35 @@ aanmaakt.
     **This supersedes 22's own correction note** ("deze ticket blijft ongewijzigd"), which
     contradicted this line: rehoming live behaviour is 36's job, bridge-deletion is 22's.
 
+## Batch 4 (22) — uitgevoerd 2026-08-04
+
+Ticket 22 staat op `resolved`; het volledige plan en de deviations staan in
+`issues/22-contract-and-reassess.md`'s eigen "Voltooiing"-sectie (2026-08-04) — dit is de
+map-samenvatting. `go-navigation.js` (1056 regels) en `content.js` (296 regels) zijn verwijderd.
+Nieuw: `page/lifecycle/mr-session.js` (activatie-latch, SPA-reconcile-loop, diff-invalidatie-
+observer, gedeelde platform-service-instanties). `page/main.js` bouwt nu voor elke feature een
+echte `legacy`-bag rechtstreeks; geen enkele feature is nog een "tweede, inerte instantie".
+`page/lifecycle/index.js`'s eigen `NAV_POLL_MS`-poll is verwijderd (superseded door mr-session's
+reconcile-loop, niet ernaast gelaten — ticket 31's precisering). `FEATURE_ROUTES`'s drie preload/
+cache-status-types zijn gerepareerd naar `controls` (production-waarheid, niet ticket 16's
+`mr-preload`-gok). Escape-routing verhuisd naar `keyboard-nav.js` als eigen listener. Bookmark-
+navigatie-acties nu rechtstreeks in `page/main.js`'s closure tegen de echte handles (geen
+feature→feature-rand). `enableRapidDiffs`/`watchForRapidDiffs` verhuisd in `controls.js` zelf.
+`triggerPitstopMoment` via statische import van `celebration.js`'s `requestMoment`.
+
+**Bug gevonden tijdens uitvoering, buiten de browser-smoke niet zichtbaar geweest:** de eerste
+versie mountte `mr-preload` zonder `legacy`-bag (kopieerfout t.o.v. de andere vier features). Elke
+`mr-preload`-methode degradeerde stil naar `unavailable`; alle 508 unit-tests bleven groen (ze
+mocken hun eigen `legacy`-bag per testbestand), maar de browser-smoke ving het direct (preload bleef
+op "idle" hangen na een echte reload). Bevestigt map.md's eerdere les dat de browser-smoke een
+ander soort fout vangt dan de unit-suite — hier letterlijk het enige vangnet.
+
+**Gates:** `npm run check:syntax` groen, `node --test tests/*.test.js` 508/508 groen, `npm run
+test:browser` solo tweemaal groen na één geïsoleerde, niet-reproduceerbare timeout onder machine-
+load (zelfde flakiness-patroon als eerder gedocumenteerd, niet hetzelfde scenario tweemaal). Geen
+pre-existing ticket-37-fout waargenomen op deze machine bij aanvang — eindresultaat is dus volledig
+groen.
+
 ## Not yet specified
 
 - Niets meer — de capability-migraties zijn geticket als 05–22 (2026-08-03, via `/to-tickets`,

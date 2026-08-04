@@ -109,3 +109,31 @@ add a compiler. The `globalThis.GoLens*` contracts disappear. Worker side is alr
    test-only transport stays, as two transports behind one wire-contract interface.
 
 Interface design (method signatures, error modes, invariants) is ticket 04's job.
+
+### Deviations found during ticket 22 (contract & reassess)
+
+- **A new lifecycle sub-module, `page/lifecycle/mr-session.js`.** §2's table lists `page/lifecycle`
+  as one module; execution added a second file inside it rather than growing `index.js` further.
+  Still "lifecycle, not a feature" per §2/§3 — `mr-session.js` has no `mount(ctx)` of its own, isn't
+  in `page/main.js`'s `features` array, and is imported only by `page/main.js`/`page/lifecycle`
+  itself. It owns: the merge-request activation latch (distinct from the `enabled` setting, ticket
+  34's answer), the SPA reconcile loop (`reconcilePage`/`leaveMergeRequestPage`, ticket 31's
+  answer), the diff-invalidation `MutationObserver`, and the shared platform-service instances
+  (`gitlabApi`/`sourceLoader`/`toast`/`workerRPC`) every feature's `legacy` bag is now built from.
+- **`page/lifecycle/index.js`'s own `NAV_POLL_MS` poll is deleted**, not merely left inert as §7
+  implied it might stay. It existed to "reconcile the mounted feature set on navigation… once
+  features exist to reconcile" — `mr-session.js`'s event+`MutationObserver`-driven reconcile loop
+  now does exactly that, per-navigation rather than on a 200ms poll, so running both would be two
+  mechanisms for one job. `tests/lifecycle.test.js`'s poll test is removed with it.
+- **`page/main.js` builds every feature's `legacy` capability bag directly**, not through any
+  bridge. §3's "cross-feature needs become capabilities that lifecycle injects at mount" is
+  satisfied literally: `page/main.js` (the module that constructs and injects capabilities) imports
+  `page/platform/diff-dom.js`/`gitlab-api.js` and `page/lifecycle/mr-session.js`'s shared instances
+  directly, plus late-bound closures onto other features' handle variables (assigned as each
+  mounts, read only by callers invoked later — never a captured value, per batch 1's
+  platform-services decision).
+- **`FEATURE_ROUTES`'s three preload/cache-status entries were repointed from `mr-preload` to
+  `controls`** (`page/lifecycle/internal.js`). Ticket 16 pointed them at `mr-preload`'s own handle
+  as a forward guess, before ticket 30 gave `page/features/controls.js` its own parallel preload
+  state machine; content.js's actual message handler always went through `controlsHandle`. Ticket
+  22 repoints the table at the module production behavior actually used, not the ticket-16 guess.

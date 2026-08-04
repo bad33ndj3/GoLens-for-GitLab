@@ -11,30 +11,27 @@
 // mount(ctx) -> { unmount, setEnabled(bool), navigationAction(name) ->
 // boolean, ...six self-bridge-only extras — see the return statement below }.
 //
-// Same entanglement shape ticket 18/19/20 already documented: the real
-// functional instance is mounted by go-navigation.js's own self-bridge (see
-// that file's "Bridge onto page/features/code-intel.js" comment), which
-// injects a `legacy` capability bag of go-navigation.js's own bound
-// functions — diff-DOM primitives (fileContextFor/lineContextFor/
-// codeCellFor/diffFileRoots), package/project loading and worker RPC
-// (loadPackage/preloadMergeRequest/mergeRequestRefsForFile/mergeRequestIID/
-// sourceRefFor/dirname/workerRPC), URL builders (projectContext/
-// documentationURL/projectPackageURL), the shared "reveal a location in the
-// diff" primitives also used by bookmarks.js (visibleDiffRootForDefinition/
-// navigateToLocation — ticket 18's `reveal()`, so they stay in
-// go-navigation.js rather than becoming this module's own copy), the shared
-// toast surface (toast), the shortcut-coach bridge (offerShortcutCoach), the
+// Same entanglement shape ticket 18/19/20 already documented: this module
+// needs a `legacy` capability bag — diff-DOM primitives (fileContextFor/
+// lineContextFor/codeCellFor/diffFileRoots), package/project loading and
+// worker RPC (loadPackage/preloadMergeRequest/mergeRequestRefsForFile/
+// mergeRequestIID/sourceRefFor/dirname/workerRPC), URL builders
+// (projectContext/documentationURL/projectPackageURL), the shared "reveal a
+// location in the diff" primitives also used by bookmarks.js
+// (visibleDiffRootForDefinition/navigateToLocation), the shared toast
+// surface (toast), the shortcut-coach bridge (offerShortcutCoach), the
 // frame-throttle clock (requestFrame), and project-search's modal opener
-// (openFullSearch) — none of which have migrated out of go-navigation.js.
-// `page/main.js` mounts a second,
-// capability-less instance purely for message-routing consistency (ticket
-// 04 §1's "the module graph is the single source of truth for what features
-// exist"); every method on that instance degrades to false/null/{kind:
-// 'unavailable'} instead of crashing, exactly like mr-preload/project-search/
-// bookmarks before it.
+// (openFullSearch). Ticket 22: `page/main.js` builds this bag directly from
+// `page/platform/diff-dom.js`/`gitlab-api.js`, `page/lifecycle/mr-session.js`'s
+// shared instances, and late-bound accessors onto the mr-preload/
+// project-search handles — no more go-navigation.js self-bridge, this is
+// the only mounted instance (the "second, capability-less instance for
+// message-routing consistency" this comment used to describe no longer
+// exists as a distinct thing).
 //
-// Toast-surface decision (ticket 21): stays in go-navigation.js, reached
-// through `legacy.toast`. Ticket 17 already established the toast host as a
+// Toast-surface decision (ticket 21): the shared instance
+// page/lifecycle/mr-session.js now owns, reached through `legacy.toast`.
+// Ticket 17 already established the toast host as a
 // shared surface across features precisely because giving each feature its
 // own toast element risks two toasts showing at once; moving it into
 // code-intel.js now would additionally make keyboard-nav.js, bookmarks.js,

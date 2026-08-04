@@ -1,8 +1,17 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { Window } from 'happy-dom';
 import { mount } from '../page/features/bookmarks.js';
 import { normalizePath } from '../page/features/bookmarks.internal.js';
+
+// Moved from tests/content-bookmarks.test.js (ticket 22 — that file's other
+// test was content.js-specific and is superseded elsewhere; this CSS-only
+// check never depended on content.js).
+test('moves bookmark markers away from GitLab comment buttons', async () => {
+  const css = await readFile(new URL('../gitlab-lens.css', import.meta.url), 'utf8');
+  assert.match(css, /:has\(button:not\(\.golens-bookmark-marker\)\) > \.golens-bookmark-marker\s*\{\s*left: 18px;/);
+});
 
 // --- a faithful-enough re-implementation of go-navigation.js's diff-DOM
 // primitives, matching exactly what its self-bridge hands bookmarks.js as

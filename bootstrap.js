@@ -32,14 +32,24 @@
   // Message types this listener answers. Must stay a subset of
   // page/lifecycle/internal.js's FEATURE_ROUTES whose feature is actually
   // mounted by page/main.js — tests/bootstrap-message-seam.test.js asserts
-  // that. Anything outside this set is still forwarded to the module graph,
-  // but left for content.js/go-navigation.js to answer: claiming a type they
-  // already respond to synchronously would put two responders on one message.
+  // that. Anything outside this set is still forwarded to the module graph
+  // but left unanswered here (golens-enabled: content.js never sent a
+  // response for it either — see internal.js's routeMessage, which routes it
+  // to lifecycle's own `enabled`-fanout, not a feature).
+  //
+  // Ticket 22/35: the three preload/cache-status types below are claimed
+  // here now that content.js (their sole former responder) is deleted —
+  // claimed in the same change its own responder was removed, per map.md's
+  // message-seam rule ("two responders on one message means one of them
+  // loses").
   const RESPONDED_TYPES = [
     'golens-show-settings',
     'golens-close-settings',
     'golens-settings-ready',
     'golens-show-onboarding',
+    'golens-cache-invalidated',
+    'golens-preload-full-project',
+    'golens-full-project-status',
   ];
 
   let currentHandle = null;
@@ -82,12 +92,34 @@
     return currentHandle;
   }
 
-  // Mirrors, exactly, the envelopes content.js produced for these three
-  // messages before the feature moved (ticket 16). `outcome` is the feature
-  // handle's kind-discriminated return value, or `undefined` when the module
-  // graph failed to load — the one case content.js could never produce, and
-  // the only one that reports a load failure rather than a page-type problem.
+  // Mirrors, exactly, the envelopes content.js/go-navigation.js produced for
+  // these message types before their features moved (ticket 16 for the first
+  // four; ticket 22/35 for the three preload/cache-status ones). `outcome` is
+  // the feature handle's return value, or `undefined` when the module graph
+  // failed to load — the one case content.js could never produce, and the
+  // only one that reports a load failure rather than a page-type problem.
+  //
+  // The first four types are kind-discriminated action-result messages
+  // (map.md's message-seam rule: a feature handle returns a `kind` from a
+  // closed set, never a silent early return). The three preload/cache-status
+  // types are status-report messages: content.js's own handler for them
+  // never had a failure path of its own beyond "the module didn't load" —
+  // `golens-cache-invalidated`/`golens-preload-full-project` were
+  // unconditionally `ok: true`, and `golens-full-project-status` could only
+  // fail via a rejected promise. So these three are enveloped positionally
+  // (outcome-present-or-not), not by a `.kind` field — reshaping
+  // page/features/controls.js's existing `{status, message, progress}`
+  // return shapes to carry a `kind` would be an incidental interface change
+  // tests/features-controls.test.js pins against, for no behavioral gain.
   function envelopeFor(type, outcome) {
+    if (type === 'golens-cache-invalidated' || type === 'golens-preload-full-project') {
+      if (outcome === undefined) return { ok: false, error: 'GoLens could not load on this page.' };
+      return { ok: true, result: type === 'golens-cache-invalidated' ? { invalidated: true } : outcome };
+    }
+    if (type === 'golens-full-project-status') {
+      if (outcome === undefined) return { ok: false, error: 'GoLens could not load on this page.' };
+      return { ok: true, result: outcome };
+    }
     const kind = outcome && outcome.kind;
     if (!kind) return { ok: false, error: 'GoLens could not load on this page.' };
     if (type === 'golens-show-settings') {
@@ -104,6 +136,23 @@
     return { ok: isReady, result: { ready: isReady } };
   }
 
+  // dispatch(message) is synchronous for every currently-routed feature
+  // action except `golens-full-project-status` (async, and the only one with
+  // a rejection path — content.js's own handler awaited it and reported a
+  // rejection as `ok: false`). `await Promise.resolve(...)` is a no-op
+  // microtask for every synchronous outcome and does not change their
+  // observable envelope; it only makes the async one awaitable through the
+  // same code path, so this stays one small addition rather than a new
+  // async-outcome protocol.
+  async function resolveOutcome(handle, message) {
+    if (!handle) return { outcome: undefined, error: null };
+    try {
+      return { outcome: await Promise.resolve(handle.dispatch(message)), error: null };
+    } catch (error) {
+      return { outcome: undefined, error: (error && error.message) || String(error) };
+    }
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const type = message && message.type;
     if (!type) return undefined;
@@ -112,8 +161,9 @@
       withHandle().then((handle) => { if (handle) handle.dispatch(message); });
       return undefined;
     }
-    withHandle().then((handle) => {
-      sendResponse(envelopeFor(type, handle && handle.dispatch(message)));
+    withHandle().then(async (handle) => {
+      const { outcome, error } = await resolveOutcome(handle, message);
+      sendResponse(error ? { ok: false, error } : envelopeFor(type, outcome));
     });
     return true;
   });

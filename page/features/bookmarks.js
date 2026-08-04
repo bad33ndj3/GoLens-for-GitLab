@@ -19,25 +19,21 @@
 // of being registered by go-navigation.js from the outside.
 //
 // Same entanglement shape ticket 19/20 hit: bookmark anchoring needs
-// go-navigation.js's diff-DOM primitives (diffFileRoots, diffRootFor,
-// rapidFileData, parseBlobLink, codeCellFor, lineContextFor), its MR/network
-// helpers (projectContext, mergeRequestIID, mergeRequestRefs,
-// clearMergeRequestRefs, fetchSource), its reveal/navigation helpers
-// (navigateToLocation, waitForDiffUpdate, lineAnchorFor), its toast surface,
-// and its code-intel selection state (the active hovered/selected symbol,
-// for the anchor's `symbol` field) — none of which have migrated out of
-// go-navigation.js yet (later tickets). Ticket 03 §3's escape hatch applies
-// exactly as it did for mr-preload/project-search: `ctx.legacy` is a
-// capability bag go-navigation.js's own self-bridge builds from its own
-// closures; `ctx.bookmarkStore` is the `GoLensBookmarks.createStore()`
-// instance (bookmark-store.js, out of scope per ticket 18 — it stays a
-// global, entering here only via `ctx`) plus its `hashText` helper. When
-// page/main.js mounts this feature for message-routing consistency, `ctx`
-// carries neither — every method below degrades to a no-op/false/0/
-// `{kind:'unavailable'}` instead of running a second, competing diff
-// observer and a second set of markers on the same page (bookmarks, unlike
-// project-search, genuinely owns live DOM in the diff — a second functional
-// instance would double-render markers and double-observe the diff).
+// diff-DOM primitives (diffFileRoots, diffRootFor, rapidFileData,
+// parseBlobLink, codeCellFor, lineContextFor), MR/network helpers
+// (projectContext, mergeRequestIID, mergeRequestRefs, clearMergeRequestRefs,
+// fetchSource), reveal/navigation helpers (navigateToLocation,
+// waitForDiffUpdate, lineAnchorFor), a toast surface, and code-intel's
+// selection state (the active hovered/selected symbol, for the anchor's
+// `symbol` field). Ticket 03 §3's escape hatch applies exactly as it did for
+// mr-preload/project-search: `ctx.legacy` is a capability bag. Ticket 22:
+// `page/main.js` now builds it directly from `page/platform/diff-dom.js`/
+// `gitlab-api.js` and `page/lifecycle/mr-session.js`'s shared instances,
+// plus a late-bound accessor onto `page/features/code-intel.js`'s handle —
+// no more go-navigation.js self-bridge, this is the only mounted instance.
+// `ctx.bookmarkStore` is the `GoLensBookmarks.createStore()` instance
+// (bookmark-store.js, out of scope per ticket 18 — it stays a global,
+// entering here only via `ctx`) plus its `hashText` helper.
 //
 // Deviation from ticket 18's literal `{subscribe, snapshot, toggleAt,
 // reveal, remove, clear, recover}` text: four more methods exist on the

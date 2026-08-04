@@ -40,13 +40,12 @@
 // `methodNamespace` export and overlay-registry.js's module-scope-singleton
 // pattern, this module exports a bare `requestMoment(kind)` that forwards to
 // whichever instance is currently mounted (there is only ever one: this
-// feature is not dual-mounted the way ticket 19's mr-preload is).
-// content.js reaches it through the same dynamic-`import()` bridge it
-// already uses for settings-store, clock, and overlay-registry. A call while
-// nothing is mounted (page-load race, SPA remount gap) is a silent no-op —
-// a dropped pitstop moment in that ~15-30ms window, not a crash;
-// content.js already accepts the equivalent for its onboarding/settings
-// overlays.
+// feature is not dual-mounted the way ticket 19's mr-preload is). Ticket 22:
+// `page/main.js` imports it statically alongside `mount` and hands it to
+// `page/features/controls.js`'s `legacy.triggerPitstopMoment` capability
+// (content.js, the former caller, is deleted). A call while nothing is
+// mounted (page-load race, SPA remount gap) is a silent no-op — a dropped
+// pitstop moment in that window, not a crash.
 import { createClock } from '../platform/clock.js';
 import { createOverlayRegistry } from '../platform/overlay-registry.js';
 import {

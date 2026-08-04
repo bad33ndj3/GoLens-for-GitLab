@@ -1,30 +1,36 @@
 // page/main.js — first entry point of the real ES-module page skeleton
 // (ticket 05). Loaded via `import(chrome.runtime.getURL('page/main.js'))`
-// from the thin bootstrap content script. Mounts alongside the legacy
-// content scripts.
+// from the thin bootstrap content script.
 //
 // Follows the uniform page-module contract (ticket 04 §1):
 //   export function mount(ctx) -> handle
 // where `handle.unmount()` is total and mount-after-unmount is safe (SPA
 // navigation re-mounts this module on every page transition).
 //
-// Ticket 11 wired page/lifecycle in alongside the skeleton. Ticket 13 is the
-// first feature to actually populate `features: []` below: generated-files
-// migrated whole out of content.js (legacy code deleted in the same
-// ticket), landing here as the pattern tickets 14-21 repeat. `settings` is
-// constructed here (not by the feature — ticket 04 §1's "accept
-// dependencies, don't create them") and passed via `platform` so every
-// mounted feature's `ctx` includes it.
+// Ticket 22 (contract & reassess, folding in 31/34/35/36's deferred work —
+// see map.md's "Batch 3" section): `go-navigation.js` and `content.js` are
+// deleted. Every feature below now gets a REAL, fully capable `legacy`
+// bag/capability set built from this file's own imports and
+// `page/lifecycle/mr-session.js` — there is no more "second, inert instance"
+// distinction; each feature mounted here is the only instance. Cross-feature
+// needs (ticket 03 §3's sanctioned escape hatch: "capabilities that
+// lifecycle injects at mount") are wired below via late-bound accessor
+// closures onto each handle variable, never a captured value (batch 1's
+// platform-services decision) and never `globalThis`.
 import { createClock } from './platform/clock.js';
 import { createSettingsStore } from './platform/settings-store.js';
 import { createOverlayRegistry } from './platform/overlay-registry.js';
+import * as diffDom from './platform/diff-dom.js';
+import * as gitlabApiPure from './platform/gitlab-api.js';
+import { projectLoadingProgress } from './platform/source-loader.js';
 import { start as startLifecycle } from './lifecycle/index.js';
+import { createMrSession } from './lifecycle/mr-session.js';
 import { mount as mountGeneratedFiles } from './features/generated-files.js';
 import { mount as mountSettingsOverlay } from './features/settings-overlay.js';
 import { mount as mountOnboarding } from './features/onboarding.js';
-import { mount as mountKeyboardNav } from './features/keyboard-nav.js';
+import { mount as mountKeyboardNav, offerShortcutCoach } from './features/keyboard-nav.js';
 import { mount as mountMrPreload } from './features/mr-preload.js';
-import { mount as mountCelebration } from './features/celebration.js';
+import { mount as mountCelebration, requestMoment } from './features/celebration.js';
 import { mount as mountProjectSearch } from './features/project-search.js';
 import { mount as mountBookmarks } from './features/bookmarks.js';
 import { mount as mountCodeIntel } from './features/code-intel.js';
@@ -44,6 +50,34 @@ export function mount(ctx = {}) {
   root.dataset.golensPageSkeletonMounted = 'true';
   root.dataset.golensPageSkeletonMountedAt = String(clock.now());
 
+  // Late-bound handle variables (batch 1's platform-services decision:
+  // accessors, never captured values). Each is assigned by the wrapping
+  // `mount` below, in the array order features actually mount in — but every
+  // reader here is a closure invoked later (a click, a keydown, a message),
+  // long after every feature in the list below has finished mounting, so
+  // mount order relative to a *reader's* position in the list never matters.
+  let bookmarksHandle = null;
+  let codeIntelHandle = null;
+  let projectSearchHandle = null;
+  let mrPreloadHandle = null;
+  let controlsHandle = null;
+
+  const session = createMrSession({
+    clock: ctx.mrSessionClock,
+    getSettings: () => settings,
+    getControlsHandle: () => controlsHandle,
+    getBookmarksHandle: () => bookmarksHandle,
+    getCodeIntelHandle: () => codeIntelHandle,
+  });
+
+  function trackHandle(setter, mountFn) {
+    return (featureCtx) => {
+      const handle = mountFn(featureCtx);
+      setter(handle);
+      return handle;
+    };
+  }
+
   const lifecycle = startLifecycle({
     platform: { clock, settings, overlays },
     features: [
@@ -53,69 +87,184 @@ export function mount(ctx = {}) {
       {
         name: 'keyboard-nav',
         mount: mountKeyboardNav,
-        // Capabilities (ticket 03 §3): keyboard-nav.js can't reach
-        // go-navigation.js's still-legacy functions/DOM any other way
-        // (feature -> legacy-global is not a "no globalThis contract"
-        // violation the same way feature -> feature would be, since
-        // go-navigation.js is not itself a migrated feature yet — see
-        // keyboard-nav.js's own header comment for the fuller rationale).
+        // Capabilities (ticket 03 §3): keyboard-nav.js can't reach the other
+        // features' state any other way without a feature -> feature edge.
         capabilities: {
           // Ticket 21: code-intel.js's own five navigation actions
           // (semanticJump/previousOccurrence/nextOccurrence/historyBack/
-          // historyForward), reached through go-navigation.js's live
-          // `.codeIntel` accessor rather than its (now bookmark-only)
-          // runNavigationAction() below.
-          navigationAction: (action) => globalThis.GoLensGoNavigation?.codeIntel?.navigationAction?.(action) === true,
-          runLegacyNavigationAction: (action) => globalThis.GoLensGoNavigation?.runNavigationAction?.(action) === true,
+          // historyForward).
+          navigationAction: (action) => codeIntelHandle?.navigationAction?.(action) === true,
+          // Ticket 22/18: the three bookmark actions (toggleBookmark/
+          // previousBookmark/nextBookmark) — go-navigation.js's former
+          // runNavigationAction(), shrunk by ticket 21 to just these, is
+          // gone; this closure reproduces its exact body (the selected-
+          // occurrence fallback chain, then bookmarksHandle.toggleAtSelection/
+          // navigate) directly against the real handles instead of a
+          // globalThis bridge (constraint 6: a feature -> feature edge is
+          // removed here, not relocated).
+          runLegacyNavigationAction: (action) => {
+            // go-navigation.js's former runNavigationAction() gated its whole
+            // body on `state.enabled` — the MR-activation latch (ticket 34:
+            // distinct from the settings `enabled` flag keyboard-nav.js
+            // already gates on). Preserved verbatim: gate on session
+            // activation, not the settings flag, or these three actions
+            // would fire on an inactive session.
+            if (!session.isActive()) return false;
+            if (action === 'toggleBookmark') {
+              const selectedTarget = codeIntelHandle?.selectedOccurrenceSourceLocation?.() ?? null;
+              const fallback = selectedTarget
+                ? { path: selectedTarget.path, side: selectedTarget.side, startLine: selectedTarget.line, endLine: selectedTarget.line }
+                : null;
+              bookmarksHandle?.toggleAtSelection(fallback);
+              return true;
+            }
+            if (action === 'previousBookmark') { void bookmarksHandle?.navigate(-1); return true; }
+            if (action === 'nextBookmark') { void bookmarksHandle?.navigate(1); return true; }
+            return false;
+          },
           legacyToast: {
-            message: (text) => globalThis.GoLensGoNavigation?.showToast?.(text),
-            shortcutHint: (hint) => globalThis.GoLensGoNavigation?.showShortcutCoachHint?.(hint) ?? false,
-            isShowing: () => globalThis.GoLensGoNavigation?.isToastShowing?.() ?? false,
+            message: (text) => session.toast.toast(text),
+            shortcutHint: (hint) => session.toast.showShortcutCoachHint(hint),
+            isShowing: () => session.toast.isToastShowing(),
+          },
+          // Ticket 22/20/21: document-level Escape routing, in the original
+          // priority order (project-search-minimize first, then the
+          // popover) — see this file's own onEscapeKeyDown wiring below in
+          // keyboard-nav.js for why it lives there rather than a new
+          // lifecycle-level keydown listener.
+          minimizeProjectSearch: () => projectSearchHandle?.minimize?.(),
+          handleCodeIntelEscape: (event) => codeIntelHandle?.handleEscape?.(event),
+        },
+      },
+      {
+        name: 'mr-preload',
+        mount: trackHandle((handle) => { mrPreloadHandle = handle; }, mountMrPreload),
+        capabilities: {
+          legacy: {
+            projectContext: gitlabApiPure.projectContext,
+            mergeRequestHeadRef: (...args) => session.gitlabApi.mergeRequestHeadRef(...args),
+            mergeRequestIID: gitlabApiPure.mergeRequestIID,
+            workerRPC: session.workerRPC,
+            loadPackage: (...args) => session.sourceLoader.loadPackage(...args),
+            loadProject: (...args) => session.sourceLoader.loadProject(...args),
+            listMergeRequestChangedFiles: (...args) => session.gitlabApi.listMergeRequestChangedFiles(...args),
+            modulePathFor: (...args) => session.gitlabApi.modulePathFor(...args),
+            searchProjectBlobPaths: (...args) => session.gitlabApi.searchProjectBlobPaths(...args),
+            projectLoadingProgress,
+            // Ticket 28: both used to reach into `state.packages`/
+            // `state.projects`/`state.projectProgressListeners` directly.
+            // The source-loader instance owns those caches, and with them
+            // the "never drop a project load that still has subscribers"
+            // rule.
+            forgetStaleProjectCache(scope) {
+              session.sourceLoader.forgetStaleProject(scope);
+            },
+            resetCaches() {
+              session.sourceLoader.reset();
+            },
           },
         },
       },
-      { name: 'mr-preload', mount: mountMrPreload },
       { name: 'celebration', mount: mountCelebration },
-      // Same "second, inert instance" shape as mr-preload above: this
-      // mount has no ctx.legacy (page/lifecycle has no access to
-      // go-navigation.js's closures), so open()/close() degrade to
-      // `unavailable` — the functional instance is go-navigation.js's own
-      // self-bridge (see its "Bridge onto page/features/project-search.js"
-      // comment). Registered here anyway so the module graph stays the
-      // single source of truth for "what features exist" (ticket 04 §1).
-      { name: 'project-search', mount: mountProjectSearch },
-      // Same "second, inert instance" shape as mr-preload/project-search
-      // above: this mount has no ctx.legacy (page/lifecycle has no access
-      // to go-navigation.js's diff-DOM/MR-network closures), so every
-      // method degrades to false/0/`{kind:'unavailable'}` — no diff
-      // observer runs, no markers render. The functional instance is
-      // go-navigation.js's own self-bridge (see its "Bridge onto
-      // page/features/bookmarks.js" comment), reached by content.js's
-      // drawer through `globalThis.GoLensGoNavigation.bookmarks`. Registered
-      // here anyway so the module graph stays the single source of truth
-      // for "what features exist" (ticket 04 §1).
-      { name: 'bookmarks', mount: mountBookmarks },
-      // Same "second, inert instance" shape as bookmarks/project-search
-      // above: this mount has no ctx.legacy (page/lifecycle has no access
-      // to go-navigation.js's diff-DOM/worker-RPC closures), so every
-      // method degrades to false/null/`{kind:'unavailable'}` — no hover/
-      // click listeners attach, no popover renders. The functional instance
-      // is go-navigation.js's own self-bridge (see its "Bridge onto
-      // page/features/code-intel.js" comment). Registered here anyway so
-      // the module graph stays the single source of truth for "what
-      // features exist" (ticket 04 §1).
-      { name: 'code-intel', mount: mountCodeIntel },
+      {
+        name: 'project-search',
+        mount: trackHandle((handle) => { projectSearchHandle = handle; }, mountProjectSearch),
+        capabilities: {
+          legacy: {
+            searchProjectBlobPaths: (...args) => session.gitlabApi.searchProjectBlobPaths(...args),
+            loadPackage: (...args) => session.sourceLoader.loadPackage(...args),
+            findReferencesAt: (target, definition, cursor = '', scopeOverride = null) =>
+              codeIntelHandle ? codeIntelHandle.findReferences(target, definition, cursor, scopeOverride) : Promise.resolve({ status: 'notFound' }),
+            findImplementationsAt: (target, definition, progress = () => {}, cursor = '', scopeOverride = null) =>
+              codeIntelHandle ? codeIntelHandle.findImplementations(target, definition, progress, cursor, scopeOverride) : Promise.resolve({ status: 'notFound' }),
+            showResult: (result, pointer) => (codeIntelHandle ? codeIntelHandle.showResult(result, pointer) : false),
+            pinPopover: (target = null) => codeIntelHandle?.pinPopover(target),
+            hidePopover: () => codeIntelHandle?.hidePopover(),
+            toast: (message) => session.toast.toast(message),
+            isEnabled: () => session.isActive(),
+          },
+        },
+      },
+      {
+        name: 'bookmarks',
+        mount: trackHandle((handle) => { bookmarksHandle = handle; }, mountBookmarks),
+        capabilities: {
+          bookmarkStore: globalThis.GoLensBookmarks?.createStore ? globalThis.GoLensBookmarks.createStore() : null,
+          hashText: globalThis.GoLensBookmarks?.hashText,
+          legacy: {
+            projectContext: gitlabApiPure.projectContext,
+            mergeRequestIID: gitlabApiPure.mergeRequestIID,
+            mergeRequestRefs: (...args) => session.gitlabApi.mergeRequestRefs(...args),
+            clearMergeRequestRefs: (...args) => session.gitlabApi.clearMergeRequestRefs(...args),
+            diffFileRoots: diffDom.diffFileRoots,
+            diffRootFor: diffDom.diffRootFor,
+            rapidFileData: diffDom.rapidFileData,
+            parseBlobLink: gitlabApiPure.parseBlobLink,
+            codeCellFor: diffDom.codeCellFor,
+            lineContextFor: diffDom.lineContextFor,
+            fetchSource: (...args) => session.gitlabApi.fetchSource(...args),
+            navigateToLocation: (...args) => diffDom.navigateToLocation(...args),
+            waitForDiffUpdate: (...args) => diffDom.waitForDiffUpdate(...args),
+            lineAnchorFor: (...args) => diffDom.lineAnchorFor(...args),
+            toast: (message) => session.toast.toast(message),
+            isEnabled: () => session.isActive(),
+            // Ticket 21: the hovered target's source location is
+            // code-intel.js's own state — forwards to its selectedSymbolLocation()
+            // handle method instead of reading it directly.
+            selectedSymbolLocation: () => codeIntelHandle?.selectedSymbolLocation?.() ?? null,
+          },
+        },
+      },
+      {
+        name: 'code-intel',
+        mount: trackHandle((handle) => { codeIntelHandle = handle; }, mountCodeIntel),
+        capabilities: {
+          legacy: {
+            fileContextFor: diffDom.fileContextFor,
+            lineContextFor: diffDom.lineContextFor,
+            codeCellFor: diffDom.codeCellFor,
+            diffFileRoots: diffDom.diffFileRoots,
+            projectContext: gitlabApiPure.projectContext,
+            documentationURL: gitlabApiPure.documentationURL,
+            projectPackageURL: gitlabApiPure.projectPackageURL,
+            visibleDiffRootForDefinition: (...args) => diffDom.visibleDiffRootForDefinition(...args),
+            navigateToLocation: (...args) => diffDom.navigateToLocation(...args),
+            loadPackage: (...args) => session.sourceLoader.loadPackage(...args),
+            preloadMergeRequest: (progress = () => {}) => mrPreloadHandle.preloadMergeRequest({ progress }),
+            mergeRequestRefsForFile: (...args) => session.gitlabApi.mergeRequestRefsForFile(...args),
+            mergeRequestIID: gitlabApiPure.mergeRequestIID,
+            sourceRefFor: gitlabApiPure.sourceRefFor,
+            dirname: gitlabApiPure.dirname,
+            workerRPC: session.workerRPC,
+            toast: (message) => session.toast.toast(message),
+            offerShortcutCoach: (actionID) => offerShortcutCoach(actionID),
+            requestFrame: (fn) => session.requestFrame(fn),
+            openFullSearch: (result, pointer) => projectSearchHandle?.open?.(result, pointer),
+          },
+        },
+      },
       { name: 'discussion-line-link', mount: mountDiscussionLineLink },
       { name: 'go-test-file-rows', mount: mountGoTestFileRows },
-      // Same "second, inert instance" shape as bookmarks/project-search/
-      // code-intel above: this mount has no ctx.legacy (page/lifecycle has
-      // no access to go-navigation.js's preload/bookmark closures), so
-      // every legacy-bag call degrades to a no-op via optional chaining and
-      // no toolbar DOM ever renders. The functional instance is content.js's
-      // own self-mount (see its "legacy capability bag" comment). Registered
-      // here anyway so the module graph stays the single source of truth
-      // for "what features exist" (ticket 04 §1).
-      { name: 'controls', mount: mountControls },
+      {
+        name: 'controls',
+        mount: trackHandle((handle) => { controlsHandle = handle; }, mountControls),
+        capabilities: {
+          legacy: {
+            preloadMergeRequest: (progress = () => {}) => mrPreloadHandle.preloadMergeRequest({ progress }),
+            mergeRequestPreloadStatus: () => mrPreloadHandle.preloadStatus(),
+            preloadFullProject: (progress = () => {}, requestedRef = '') => mrPreloadHandle.preloadFullProject({ progress, ref: requestedRef }),
+            fullProjectPreloadStatus: () => mrPreloadHandle.fullProjectStatus(),
+            invalidateCacheState: () => mrPreloadHandle.invalidateCache(),
+            init: session.activate,
+            teardown: session.deactivate,
+            bookmarks: () => bookmarksHandle,
+            enableRapidDiffs: () => undefined, // rapid-diffs stays controls.js's own, see its header
+            watchForRapidDiffs: () => undefined,
+            triggerPitstopMoment: () => requestMoment('pitstop'),
+            schedulePageReconcile: () => session.schedulePageReconcile(),
+          },
+        },
+      },
     ],
     // Opt out of lifecycle's own chrome.runtime.onMessage registration:
     // bootstrap.js registers synchronously, before this module graph even
@@ -124,12 +273,15 @@ export function mount(ctx = {}) {
     runtime: null,
   });
 
+  session.start();
+
   let unmounted = false;
   return {
     dispatch: lifecycle.dispatch,
     unmount() {
       if (unmounted) return;
       unmounted = true;
+      session.stop();
       lifecycle.stop();
       delete root.dataset.golensPageSkeletonMounted;
       delete root.dataset.golensPageSkeletonMountedAt;

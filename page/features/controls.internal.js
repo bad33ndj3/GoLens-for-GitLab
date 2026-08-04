@@ -10,6 +10,15 @@ export function isMergeRequestPath(pathname) {
   return /\/-\/merge_requests\/\d+/.test(pathname || '');
 }
 
+// isMergeRequestDiffPath(pathname, search) -> true for a merge-request diffs
+// tab, byte-identical to content.js's former isMergeRequestDiff() (ticket 22:
+// rapid-diffs opt-in — enableRapidDiffs/watchForRapidDiffs — moved into this
+// module directly, its only remaining caller, per ticket 31's deferral).
+// Total.
+export function isMergeRequestDiffPath(pathname, search) {
+  return /\/-\/merge_requests\/\d+\/diffs(?:$|\/|\?)/.test(`${pathname || ''}${search || ''}`);
+}
+
 // preloadCompleteMessage({ searchStatus, coverage }) -> the status label
 // shown once an MR-head preload finishes, shared by both the
 // preloadMergeRequest success path and refreshPreloadStatus's "already

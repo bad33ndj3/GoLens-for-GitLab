@@ -12,36 +12,35 @@
 // itself forbids introducing (no new globalThis contracts) — so they stay
 // one feature.
 //
-// Same "second, inert instance" shape as bookmarks.js/project-search.js/
-// code-intel.js: page/main.js mounts this for message-routing consistency
-// with no ctx.legacy, so every legacy-bag call below degrades to a no-op via
-// optional chaining and no toolbar DOM ever renders. The functional instance
-// is content.js's own self-mount, which builds a full `legacy` bag from its
-// own module-scope functions/`globalThis.GoLensGoNavigation` reads — per
-// ticket 30's explicit instruction, the bookmark drawer consumes
-// page/features/bookmarks.js's handle exactly as before, through
-// `legacy.bookmarks()` (a late-bound accessor onto
-// `globalThis.GoLensGoNavigation.bookmarks`, same idiom as batch 1's
-// platform-services decision — never a new bridge).
+// Ticket 22: this is now the only mounted instance (content.js, its former
+// self-mount, is deleted). `page/main.js` builds a full `legacy` bag from its
+// own imports and `page/lifecycle/mr-session.js` — the bookmark drawer
+// consumes page/features/bookmarks.js's handle exactly as before, through
+// `legacy.bookmarks()` (a late-bound accessor onto page/main.js's own
+// `bookmarksHandle` variable, same idiom as batch 1's platform-services
+// decision — never a globalThis bridge). `legacy.init`/`legacy.teardown` are
+// `page/lifecycle/mr-session.js`'s `activate`/`deactivate` — the merge-request
+// activation latch (ticket 34's answer: a concept distinct from the
+// `enabled` chrome.storage setting lifecycle's own `settings.subscribe`
+// fanout applies via `setEnabled` below).
 //
-// rapid-diffs opt-in (enableRapidDiffs/watchForRapidDiffs) stays out of
-// scope here per ticket 31 (deferred to its own round): content.js still
-// owns and calls those directly from its setEnabled, and passes
-// `legacy.enableRapidDiffs` down only for toggleReviewFocus's entering
-// branch, which needs it exactly where content.js's own toggleReviewFocus
-// called it before.
+// rapid-diffs opt-in (enableRapidDiffs/watchForRapidDiffs) moved into this
+// module directly (ticket 22, folding in ticket 31's deferral): this is now
+// their only caller, so they no longer need a `legacy` capability — see
+// their own definitions below.
 //
 // Every DOM lookup below goes through the module-scoped `host`/`drawerHost`
 // references, never `document.getElementById('gitlab-lens-root')` or
 // `#golens-bookmark-drawer-root` the way content.js's originals defaulted —
-// the inert instance's unmount()/destroy() must only ever be able to touch
-// DOM it itself created, since page/lifecycle mounts and unmounts that
-// instance on every SPA navigation.
+// this instance's unmount()/destroy() must only ever be able to touch DOM it
+// itself created, since page/lifecycle mounts and unmounts it on every SPA
+// navigation.
 import { createClock } from '../platform/clock.js';
 import {
   bookmarkButtonView,
   bookmarkDrawerPosition,
   bookmarkRangeLabel,
+  isMergeRequestDiffPath,
   isMergeRequestPath,
   preloadButtonView,
   preloadCompleteMessage,
@@ -71,6 +70,32 @@ export function mount(ctx) {
 
   function inReviewFocus() {
     return doc.documentElement.classList.contains('gitlab-lens-review-focus');
+  }
+
+  // Rapid-diffs opt-in (ticket 22, moved out of content.js — ticket 31 had
+  // deferred it, deliberately keeping it out of scope for ticket 30):
+  // byte-identical to content.js's former isMergeRequestDiff()/
+  // enableRapidDiffs()/watchForRapidDiffs(). This module is now the only
+  // caller, so the two DOM-touching functions live here directly instead of
+  // through a `legacy` capability.
+  function enableRapidDiffs() {
+    if (!isMergeRequestDiffPath(win.location.pathname, win.location.search)) return false;
+    const optIn = [...doc.querySelectorAll('button')].find((button) =>
+      /^try\s+rapid\s+diffs\b/i.test(button.textContent.trim()) && !button.disabled
+    );
+    if (!optIn) return false;
+    optIn.click();
+    return true;
+  }
+
+  function watchForRapidDiffs() {
+    if (!isMergeRequestDiffPath(win.location.pathname, win.location.search) || enableRapidDiffs()) return;
+    const observer = new MutationObserver(() => {
+      if (!enableRapidDiffs()) return;
+      observer.disconnect();
+    });
+    observer.observe(doc.body, { childList: true, subtree: true });
+    setTimeout(() => observer.disconnect(), 15000);
   }
 
   function currentBookmarkSnapshot() {
@@ -520,7 +545,7 @@ export function mount(ctx) {
     const entering = !inReviewFocus();
     doc.documentElement.classList.toggle('gitlab-lens-review-focus', entering);
     if (entering && !doc.fullscreenElement) {
-      legacy.enableRapidDiffs?.();
+      enableRapidDiffs();
       // Fullscreen is best-effort: browsers may reject it when a policy forbids it.
       await doc.documentElement.requestFullscreen?.().then(() => {
         ownsFullscreen = Boolean(doc.fullscreenElement);
@@ -559,7 +584,7 @@ export function mount(ctx) {
       renderControlState();
       const persisted = persist && settings ? settings.set('enabled', nextEnabled) : Promise.resolve();
       if (nextEnabled && isMergeRequestPath(win.location.pathname)) {
-        legacy.watchForRapidDiffs?.();
+        watchForRapidDiffs();
         legacy.init?.();
       } else {
         legacy.teardown?.();
@@ -572,12 +597,21 @@ export function mount(ctx) {
     leaveReviewFocus,
     createControls,
     refreshPreloadStatus,
+    // Message-routed by bootstrap.js as `golens-cache-invalidated`'s action
+    // (ticket 22/35): content.js's old handler for that message called
+    // `globalThis.GoLensGoNavigation.invalidateCacheState()` (the real
+    // mr-preload cache reset) *then* this method's own UI-state reset, in
+    // that order — preserved here since this is now the sole call site.
+    // Returns a `kind` (map.md's message-seam rule: every routed action
+    // reports a closed-set outcome) though this call never fails.
     invalidatePreloadState() {
+      legacy.invalidateCacheState?.();
       preloadCheckID++;
       preloadRunID++;
       fullPreloadRunID++;
       setPreloadState('idle');
       fullPreload = { status: 'idle', message: 'Not cached', progress: null };
+      return { kind: 'invalidated' };
     },
     startFullProjectPreload,
     refreshFullProjectPreloadStatus,

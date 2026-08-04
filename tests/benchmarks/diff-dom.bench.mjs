@@ -1,14 +1,16 @@
-// Benchmarks for the DOM-facing hot paths in `go-navigation.js` identified
-// in `experiments/2026-08-03-performance-findings.md`:
+// Benchmarks for the DOM-facing hot paths formerly in `go-navigation.js`,
+// identified in `experiments/2026-08-03-performance-findings.md`:
 //   #7 `fileContextFor` runs on every un-throttled mousemove, uncached
 //      per diff root.
 //   #8 `occurrenceRanges` walks every code cell of every diff file with a
 //      fresh TreeWalker + Range per text node, on every DOM mutation while
 //      a symbol is selected.
 //
-// Loads `go-navigation.js` the same way `tests/go-navigation-context.test.js`
-// does: as a global-attaching IIFE against a `happy-dom` `Window`, reached
-// through `globalThis.GoLensGoNavigation.__test`. `caretAtPoint` and
+// Ticket 22: `go-navigation.js` is deleted; `fileContextFor`/`codeCellFor`
+// are reached directly from `page/platform/diff-dom.js` (ticket 26 moved
+// them there; this file previously reached them through go-navigation.js's
+// thin wrappers and dynamic-`import()` bridge, both gone now — a real,
+// synchronously-resolved static import replaces both). `caretAtPoint` and
 // `occurrenceRanges` moved to `page/features/code-intel.js` (ticket 21) and
 // are reached through that module's own `mount(ctx).__test` — see that
 // file's `__test` comment for why it carries one despite ticket 04 §1's
@@ -33,6 +35,7 @@ import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { buildDiffFixtureHTML } from './diff-fixture.mjs';
 import { mount as mountCodeIntel } from '../../page/features/code-intel.js';
+import * as diffDom from '../../page/platform/diff-dom.js';
 
 const DIFF_ROOT_SELECTOR = 'diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]';
 
@@ -58,16 +61,13 @@ async function loadGoNavigation() {
       origin: 'https://gitlab.example',
       pathname: '/group/project/-/merge_requests/1/diffs',
     };
+    // A real, synchronously-resolved static import (ticket 22) — no more
+    // go-navigation.js dynamic-`import()` bridge to await. `helpers` keeps
+    // its old name/shape (fileContextFor/codeCellFor) for the rest of this
+    // file's setup/run functions, which are unchanged.
     modulePromise = (async () => {
       await import('../../bookmark-store.js?golens-benchmarks');
-      await import('../../go-navigation.js');
-      const helpers = globalThis.GoLensGoNavigation.__test;
-      // Ticket 26: `fileContextFor`/`codeCellFor` are now thin wrappers onto
-      // page/platform/diff-dom.js, loaded through go-navigation.js's dynamic
-      // `import()` bridge. Await it so the measured calls never race the
-      // load; the case names and measured functions are unchanged.
-      await helpers.diffDomReady;
-      return helpers;
+      return { fileContextFor: diffDom.fileContextFor, codeCellFor: diffDom.codeCellFor };
     })();
   }
   return modulePromise;
