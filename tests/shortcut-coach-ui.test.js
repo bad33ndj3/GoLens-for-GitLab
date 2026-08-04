@@ -16,8 +16,12 @@ test('renders a compact, dismissible shortcut tip and can disable future tips', 
   };
 
   await import('../go-navigation.js?shortcut-coach-ui-test');
+  // Ticket 17: showShortcutCoachHint() no longer looks up the message from
+  // an actionID itself (that decision moved to
+  // page/features/keyboard-nav.js) — it renders whatever message it is
+  // handed, which is now this test's job to supply.
   const helpers = globalThis.GoLensGoNavigation.__test;
-  assert.equal(helpers.showShortcutCoachHint({ actionID: 'semanticJump', displayBinding: 'Ctrl+F12' }), true);
+  assert.equal(helpers.showShortcutCoachHint({ actionID: 'semanticJump', message: 'Open the selected symbol directly from the keyboard.', displayBinding: 'Ctrl+F12' }), true);
 
   const shadow = window.document.getElementById('golens-go-intelligence-root').shadowRoot;
   const tip = shadow.querySelector('.toast');
@@ -29,7 +33,7 @@ test('renders a compact, dismissible shortcut tip and can disable future tips', 
   shadow.querySelector('[data-action="shortcut-tip-dismiss"]').click();
   assert.equal(tip.classList.contains('show'), false);
 
-  assert.equal(helpers.showShortcutCoachHint({ actionID: 'focusFileSearch', displayBinding: 'Ctrl+P' }), true);
+  assert.equal(helpers.showShortcutCoachHint({ actionID: 'focusFileSearch', message: "Focus GitLab's file search without reaching for the mouse.", displayBinding: 'Ctrl+P' }), true);
   shadow.querySelector('[data-action="shortcut-tip-disable"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(coachEnabled, false);

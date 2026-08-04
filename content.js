@@ -1,6 +1,5 @@
 (() => {
-  const shortcutDefaults = globalThis.GoLensShortcuts?.defaultBindings?.() || {};
-  const defaults = { enabled: true, shortcutCoachEnabled: true, shortcutBindings: shortcutDefaults };
+  const defaults = { enabled: true, shortcutCoachEnabled: true };
   const RECONCILE_DEBOUNCE_MS = 50;
   // Injectable time source (test-only) so debounce tests are deterministic
   // and don't sleep. Mirrors the pattern in `go-navigation.js`.
@@ -723,64 +722,11 @@
     return fullPreloadSnapshot();
   }
 
-  function nativeFileSearch() {
-    return document.querySelector('[aria-label="File browser"] input[placeholder]')
-      || document.querySelector('[data-testid="file-browser"] input[placeholder]')
-      || [...document.querySelectorAll('input[placeholder]')].find((input) => /search\s*\(e\.g\.\s*\*\.vue\)/i.test(input.placeholder));
-  }
-
-  function isBlockedShortcutEvent(event) {
-    const search = nativeFileSearch();
-    const targets = [...event.composedPath(), document.activeElement].filter(Boolean);
-    return targets.some((target) => {
-      if (target === search) return true;
-      const blocked = target?.closest?.('input, textarea, select, [contenteditable], dialog, [role="dialog"], [aria-modal="true"]');
-      if (!blocked) return false;
-      if (!blocked.matches?.('input, textarea, select, [contenteditable]')) return true;
-      return !blocked.disabled && !blocked.readOnly && blocked.getAttribute('contenteditable') !== 'false';
-    });
-  }
-
-  function focusNativeFileSearch() {
-    const search = nativeFileSearch();
-    if (!search) return false;
-    search.focus();
-    search.select();
-    return true;
-  }
-
-  function closeNativeFileSearch() {
-    const search = nativeFileSearch();
-    if (!search) return false;
-    search.value = '';
-    search.dispatchEvent(new Event('input', { bubbles: true }));
-    search.blur();
-    return true;
-  }
-
-  function onShortcutCoachManualClick(event) {
-    const search = nativeFileSearch();
-    if (!state.enabled || !search || !event.composedPath().includes(search)) return;
-    void globalThis.GoLensGoNavigation?.offerShortcutCoach?.('focusFileSearch');
-  }
-
-  document.addEventListener('keydown', (event) => {
-    if (!state.enabled || !isMergeRequest() || event.isComposing || isBlockedShortcutEvent(event)) return;
-    const shortcuts = globalThis.GoLensShortcuts;
-    const bindings = shortcuts?.mergeBindings(state.settings.shortcutBindings);
-    if (!shortcuts || !bindings) return;
-    const action = shortcuts.actions.find(({ id }) => shortcuts.matchesEvent(bindings[id], event))?.id;
-    if (!action) return;
-    let handled = false;
-    if (action === 'focusFileSearch') handled = focusNativeFileSearch();
-    else if (action === 'clearFileSearch') handled = closeNativeFileSearch();
-    else handled = globalThis.GoLensGoNavigation?.runNavigationAction?.(action) === true;
-    if (handled) {
-      event.preventDefault();
-      void globalThis.GoLensShortcutCoach?.markShortcutUsed?.(action);
-    }
-  }, true);
-  document.addEventListener('click', onShortcutCoachManualClick, true);
+  // The global keydown/click shortcut-dispatch loop (key matching, native
+  // file-search helpers, the shortcut-coach manual-click trigger) moved to
+  // page/features/keyboard-nav.js (ticket 17; covered by
+  // tests/features-keyboard-nav.test.js). This file no longer listens for
+  // keydown/click at the document level for shortcuts.
 
   async function toggleReviewFocus() {
     const entering = !inReviewFocus();
@@ -876,7 +822,6 @@
       state.settings = {
         enabled: settingsStore.get('enabled'),
         shortcutCoachEnabled: settingsStore.get('shortcutCoachEnabled'),
-        shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(settingsStore.get('shortcutBindings')) || settingsStore.get('shortcutBindings'),
       };
     } catch {
       settingsStore = null;
@@ -899,9 +844,6 @@
       schedulePageReconcile();
     });
     new MutationObserver(schedulePageReconcile).observe(document.body, { childList: true, subtree: true });
-    settingsStore?.subscribe('shortcutBindings', (value) => {
-      state.settings = { ...state.settings, shortcutBindings: globalThis.GoLensShortcuts?.mergeBindings(value) || value };
-    });
     settingsStore?.subscribe('enabled', (value) => {
       if (value !== state.enabled) setEnabled(value).catch(() => undefined);
     });

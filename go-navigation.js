@@ -81,43 +81,45 @@
       // loadClockModule failure handling).
     });
 
-  // Bridge onto page/platform/overlay-registry.js (ticket 12 — breaks the
-  // ticket 02 §4 near-cycle: `shortcutCoachBlocked` used to read
-  // content.js-owned `#golens-onboarding-root` / `#golens-settings-root`
-  // straight off the page DOM instead of asking through an API). Same
-  // dynamic-`import()` bridge and IIFE-top-level kickoff as the clock
-  // bridge above, for the same reason: `shortcutCoachBlocked` is called
-  // synchronously from `showShortcutCoachHint`/`offerShortcutCoach` and
-  // cannot itself await a module load.
-  //
-  // Unlike the clock bridge, no queue-until-ready placeholder is needed:
-  // before this resolves, `overlayRegistry` just stays null and
-  // `shortcutCoachBlocked` falls back to "not blocked" — exactly what the
-  // old DOM read would also have found, since content.js cannot have
-  // claimed (opened) an overlay before its own copy of this same module
-  // has finished loading either.
-  async function loadOverlayRegistryModule() {
+  // Bridge onto page/features/keyboard-nav.js (ticket 17): the shortcut
+  // coach's blocked-check, message-for-action decision, and hint DOM
+  // trigger used to be this file's own shortcutCoachBlocked()/
+  // SHORTCUT_COACH_MESSAGES/offerShortcutCoach(). This file's
+  // showShortcutCoachHint() stays (the `.toast` element is this file's own
+  // shadow host), reached back through keyboard-nav.js's injected
+  // `legacyToast.shortcutHint` capability — but the *decision* of whether
+  // and what to show now lives in keyboard-nav.js, and this file's three
+  // remaining offerShortcutCoach() call sites (historyBack, nextOccurrence,
+  // semanticJump — none of them keyboard-nav's own hunk/file actions) need
+  // to reach it. Same dynamic-`import()` bridge and IIFE-top-level kickoff
+  // as the bridges above; `offerShortcutCoach` below keeps its original
+  // name and fire-and-forget shape so none of those three call sites (or
+  // the public `offerShortcutCoach` export other legacy code may still
+  // reach) had to change.
+  async function loadKeyboardNavModule() {
     try {
-      return await import(chrome.runtime.getURL('page/platform/overlay-registry.js'));
+      return await import(chrome.runtime.getURL('page/features/keyboard-nav.js'));
     } catch {
-      return await import('./page/platform/overlay-registry.js');
+      return await import('./page/features/keyboard-nav.js');
     }
   }
-  let overlayRegistry = null;
-  // Exposed via __test.overlayRegistryReady so tests can deterministically
-  // await the load instead of racing it; production code never awaits this
-  // itself.
-  const overlayRegistryReady = loadOverlayRegistryModule()
-    .then(({ createOverlayRegistry }) => {
-      overlayRegistry = createOverlayRegistry();
+  let keyboardNavModule = null;
+  // Exposed via __test.keyboardNavReady so tests can deterministically await
+  // the load instead of racing it; production code never awaits this itself.
+  const keyboardNavReady = loadKeyboardNavModule()
+    .then((mod) => {
+      keyboardNavModule = mod;
     })
     .catch(() => {
       // Both the chrome.runtime.getURL and relative import fallbacks failed
-      // (should not happen in production). Leave overlayRegistry null;
-      // shortcutCoachBlocked() then permanently falls back to "not
-      // blocked" from this check — degraded, not crashed (mirrors the
-      // clock bridge's failure handling above).
+      // (should not happen in production). offerShortcutCoach() below then
+      // permanently no-ops — a dropped coach hint, not a crash (mirrors the
+      // clock/overlay-registry bridges' failure handling above).
     });
+
+  function offerShortcutCoach(actionID) {
+    return keyboardNavModule?.offerShortcutCoach?.(actionID) ?? Promise.resolve(false);
+  }
 
   // Bridge onto page/features/mr-preload.js (ticket 19): preloadMergeRequest,
   // mergeRequestPreloadStatus, preloadFullProject, fullProjectPreloadStatus,
@@ -249,7 +251,6 @@
     diffObserver: null,
     history: [],
     historyIndex: -1,
-    elementNavigation: { hunk: null, file: null },
     bookmarkStore: null,
     bookmarkScope: null,
     bookmarkRecords: [],
@@ -2056,41 +2057,28 @@
     state.toastTimer = setTimeout(hideToast, 2600);
   }
 
-  const SHORTCUT_COACH_MESSAGES = {
-    focusFileSearch: "Focus GitLab's file search without reaching for the mouse.",
-    semanticJump: 'Open the selected symbol directly from the keyboard.',
-    nextOccurrence: 'Move through the selected occurrences from the keyboard.',
-    historyBack: 'Return to the previous semantic location.',
-  };
-
-  function shortcutCoachBlocked() {
-    const toastElement = state.ui?.shadowRoot.querySelector('.toast');
-    return document.visibilityState === 'hidden'
-      || (overlayRegistry?.isAnyOpen() ?? false)
-      || Boolean(toastElement?.classList.contains('show'));
+  // isToastShowing()/showShortcutCoachHint() are exposed on this module's
+  // public surface (ticket 17) as capabilities page/features/keyboard-nav.js
+  // is given at mount, since the coach hint reuses this same `.toast`
+  // element (dataset.kind distinguishes 'message' from 'shortcut') and the
+  // element itself stays here rather than becoming a second toast surface.
+  // keyboard-nav.js now owns the blocked-check and the message-for-action
+  // decision (formerly shortcutCoachBlocked()/SHORTCUT_COACH_MESSAGES here);
+  // this function only renders a hint it is handed, message included.
+  function isToastShowing() {
+    return Boolean(state.ui?.shadowRoot.querySelector('.toast')?.classList.contains('show'));
   }
 
   function showShortcutCoachHint(hint) {
-    const message = SHORTCUT_COACH_MESSAGES[hint?.actionID];
-    if (!message || shortcutCoachBlocked()) return false;
+    if (!hint?.message) return false;
     const element = ensureUI().querySelector('.toast');
     clearTimeout(state.toastTimer);
     element.dataset.kind = 'shortcut';
-    element.querySelector('.toast-message').textContent = message;
+    element.querySelector('.toast-message').textContent = hint.message;
     element.querySelector('.toast-binding').textContent = hint.displayBinding;
     element.classList.add('show');
     state.toastTimer = setTimeout(hideToast, 8000);
     return true;
-  }
-
-  async function offerShortcutCoach(actionID) {
-    if (!state.enabled || shortcutCoachBlocked()) return false;
-    try {
-      const hint = await globalThis.GoLensShortcutCoach?.consider?.(actionID);
-      return hint ? showShortcutCoachHint(hint) : false;
-    } catch {
-      return false;
-    }
   }
 
   function targetAtEvent(event) {
@@ -2223,43 +2211,6 @@
 
   function targetForSelectedOccurrence() {
     return targetForOccurrence(state.occurrences[state.occurrenceIndex], state.selectedIdentifier);
-  }
-
-  function changedRow(row) {
-    if (row.matches?.('.new, .old, .added, .deleted, [data-hunk-lines]')) return true;
-    return [...row.querySelectorAll('a[aria-label]')].some((anchor) => /^(?:added|removed) line\s+\d+/i.test(anchor.getAttribute('aria-label') || ''));
-  }
-
-  function hunkTargets() {
-    const explicit = [...document.querySelectorAll('[data-hunk-lines], .diff-hunk, [data-testid="diff-hunk"], [data-testid="rd-diff-hunk"]')];
-    if (explicit.length) return explicit;
-    const hunks = [];
-    for (const root of diffFileRoots()) {
-      let previousChanged = false;
-      for (const row of root.querySelectorAll('tr, [role="row"]')) {
-        const changed = changedRow(row);
-        if (changed && !previousChanged) hunks.push(row);
-        previousChanged = changed;
-      }
-    }
-    return hunks;
-  }
-
-  function navigateElements(elements, direction, emptyMessage, kind) {
-    if (!elements.length) { toast(emptyMessage); return false; }
-    const currentIndex = elements.indexOf(state.elementNavigation[kind]);
-    let index;
-    if (currentIndex >= 0) index = (currentIndex + direction + elements.length) % elements.length;
-    else {
-      const viewportPoint = innerHeight * .35;
-      const firstAfter = elements.findIndex((element) => element.getBoundingClientRect().top >= viewportPoint);
-      index = direction > 0 ? (firstAfter < 0 ? 0 : firstAfter) : (firstAfter <= 0 ? elements.length - 1 : firstAfter - 1);
-    }
-    const target = elements[index];
-    state.elementNavigation[kind] = target;
-    target.scrollIntoView({ behavior: globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
-    flashDestination(target);
-    return true;
   }
 
   function bookmarkScopeKey(scope) {
@@ -2627,10 +2578,6 @@
     }
     if (action === 'previousOccurrence') return navigateOccurrence(-1);
     if (action === 'nextOccurrence') return navigateOccurrence(1);
-    if (action === 'previousHunk') return navigateElements(hunkTargets(), -1, 'No loaded diff hunks.', 'hunk');
-    if (action === 'nextHunk') return navigateElements(hunkTargets(), 1, 'No loaded diff hunks.', 'hunk');
-    if (action === 'previousFile') return navigateElements(diffFileRoots(), -1, 'No loaded diff files.', 'file');
-    if (action === 'nextFile') return navigateElements(diffFileRoots(), 1, 'No loaded diff files.', 'file');
     if (action === 'historyBack') { navigateHistory(-1); return true; }
     if (action === 'historyForward') { navigateHistory(1); return true; }
     if (action === 'toggleBookmark') {
@@ -2915,7 +2862,6 @@
     clearSelectedSymbol();
     state.history = [];
     state.historyIndex = -1;
-    state.elementNavigation = { hunk: null, file: null };
     state.bookmarkNavigationIndex = -1;
     state.focusedBookmarkLocation = null;
     clearTimeout(state.bookmarkRefreshTimer);
@@ -2959,6 +2905,13 @@
     invalidateCacheState,
     runNavigationAction,
     offerShortcutCoach,
+    // showToast/showShortcutCoachHint/isToastShowing (ticket 17): given to
+    // page/features/keyboard-nav.js as its `legacyToast` capability — see
+    // the keyboard-nav bridge comment above for why the toast element
+    // itself stays here rather than becoming a second toast surface.
+    showToast: toast,
+    showShortcutCoachHint,
+    isToastShowing,
     subscribeBookmarks,
     refreshBookmarks,
     bookmarkSnapshot,
@@ -2968,7 +2921,7 @@
     clearBookmarks,
     recoverBookmark,
     registerBookmarkSurface,
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, changedRow, hunkTargets, locationKey, showShortcutCoachHint, shortcutCoachBlocked, setClock, clockReady: legacyDebounceIdleReady, overlayRegistryReady, mrPreloadReady,
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, identifierAtCharacter, caretElementMatchesIdentifier, caretAtPoint, fileContextFor, bookmarkFileContextFor, codeCellFor, lineContextFor, bookmarkLineContextFor, bookmarkLocationForNode, bookmarkSelectionState, bookmarkAnchorForLocation, bookmarkRecoveryCandidates, reconcileDiffBookmarkMarkers, orderedCurrentBookmarks, referenceNavigationAction, isInterfaceDeclaration, shouldShowReferencesOnHover, destinationLineForDefinition, definitionDestination, sourceLocationText, symbolPresentation, implementationGroups, resultScopeText, absenceText, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, showLoading, showResult, pinPopover, schedulePassivePopoverDismissal, dismissPinnedPopoverFromOutside, hidePopover, onMouseMove, onKeyDown, identifierBoundary, occurrenceRanges, targetForOccurrence, locationKey, showShortcutCoachHint, setClock, clockReady: legacyDebounceIdleReady, keyboardNavReady, mrPreloadReady,
       // Live accessor (ticket 08): scheduleDiffReconciliation is reassigned
       // over time (null -> queue-until-ready placeholder -> real debounced
       // function), so tests need a getter rather than the value captured

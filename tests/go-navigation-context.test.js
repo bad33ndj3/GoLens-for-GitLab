@@ -847,7 +847,8 @@ test('finds identifier-boundary occurrences only in loaded Go diff code', () => 
     );
     assert.equal(keyboardTarget.cell, occurrences[2].cell);
     assert.equal(helpers.identifierBoundary('_'), false);
-    assert.equal(helpers.hunkTargets().length, 1);
+    // hunkTargets() moved to page/features/keyboard-nav.js (ticket 17,
+    // covered by tests/features-keyboard-nav.test.js).
     assert.equal(helpers.locationKey({ path: 'pkg/run.go', line: 2 }), 'pkg/run.go:2:new');
   } finally {
     globalThis.document = previousDocument;
@@ -1142,30 +1143,6 @@ test('go-navigation.js: tearing down before the clock module import resolves dis
   }
 });
 
-// Ticket 12: shortcutCoachBlocked() used to read content.js-owned
-// `#golens-onboarding-root` / `#golens-settings-root` straight off the
-// page DOM. It now asks page/platform/overlay-registry.js's isAnyOpen()
-// instead — go-navigation.js's own dynamic import() of that module is a
-// separate content-script-side load from content.js's, but both resolve
-// to the same cached module instance (the property the registry module's
-// own singleton test asserts directly), so a claim made through *any*
-// createOverlayRegistry() call is visible to go-navigation.js's check.
-// This exercises that path end to end, standing in for content.js's own
-// claim()/release() calls around opening/closing the onboarding and
-// settings overlays.
-test('shortcutCoachBlocked(): an overlay-registry claim blocks the coach toast, exactly like the old DOM read did', async () => {
-  const { createOverlayRegistry } = await import('../page/platform/overlay-registry.js');
-  await helpers.overlayRegistryReady;
-  const registry = createOverlayRegistry();
-  assert.equal(helpers.shortcutCoachBlocked(), false, 'nothing has claimed an overlay yet');
-
-  const releaseOnboarding = registry.claim('onboarding');
-  assert.equal(helpers.shortcutCoachBlocked(), true, 'a claimed onboarding overlay blocks the coach, same as the old DOM read');
-  releaseOnboarding();
-  assert.equal(helpers.shortcutCoachBlocked(), false, 'releasing the claim unblocks the coach again');
-
-  const releaseSettings = registry.claim('settings-overlay');
-  assert.equal(helpers.shortcutCoachBlocked(), true, 'a claimed settings overlay blocks the coach too');
-  releaseSettings();
-  assert.equal(helpers.shortcutCoachBlocked(), false);
-});
+// Ticket 17: shortcutCoachBlocked() moved to page/features/keyboard-nav.js
+// (isCoachBlocked() in its internal.js, composed with ctx.overlays in the
+// shell) — covered by tests/features-keyboard-nav.test.js now.

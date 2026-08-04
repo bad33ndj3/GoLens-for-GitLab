@@ -22,6 +22,7 @@ import { start as startLifecycle } from './lifecycle/index.js';
 import { mount as mountGeneratedFiles } from './features/generated-files.js';
 import { mount as mountSettingsOverlay } from './features/settings-overlay.js';
 import { mount as mountOnboarding } from './features/onboarding.js';
+import { mount as mountKeyboardNav } from './features/keyboard-nav.js';
 import { mount as mountMrPreload } from './features/mr-preload.js';
 import { mount as mountCelebration } from './features/celebration.js';
 
@@ -43,6 +44,24 @@ export function mount(ctx = {}) {
       { name: 'generated-files', mount: mountGeneratedFiles },
       { name: 'settings-overlay', mount: mountSettingsOverlay },
       { name: 'onboarding', mount: mountOnboarding },
+      {
+        name: 'keyboard-nav',
+        mount: mountKeyboardNav,
+        // Capabilities (ticket 03 §3): keyboard-nav.js can't reach
+        // go-navigation.js's still-legacy functions/DOM any other way
+        // (feature -> legacy-global is not a "no globalThis contract"
+        // violation the same way feature -> feature would be, since
+        // go-navigation.js is not itself a migrated feature yet — see
+        // keyboard-nav.js's own header comment for the fuller rationale).
+        capabilities: {
+          runLegacyNavigationAction: (action) => globalThis.GoLensGoNavigation?.runNavigationAction?.(action) === true,
+          legacyToast: {
+            message: (text) => globalThis.GoLensGoNavigation?.showToast?.(text),
+            shortcutHint: (hint) => globalThis.GoLensGoNavigation?.showShortcutCoachHint?.(hint) ?? false,
+            isShowing: () => globalThis.GoLensGoNavigation?.isToastShowing?.() ?? false,
+          },
+        },
+      },
       { name: 'mr-preload', mount: mountMrPreload },
       { name: 'celebration', mount: mountCelebration },
     ],
