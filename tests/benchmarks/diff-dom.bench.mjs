@@ -61,7 +61,13 @@ async function loadGoNavigation() {
     modulePromise = (async () => {
       await import('../../bookmark-store.js?golens-benchmarks');
       await import('../../go-navigation.js');
-      return globalThis.GoLensGoNavigation.__test;
+      const helpers = globalThis.GoLensGoNavigation.__test;
+      // Ticket 26: `fileContextFor`/`codeCellFor` are now thin wrappers onto
+      // page/platform/diff-dom.js, loaded through go-navigation.js's dynamic
+      // `import()` bridge. Await it so the measured calls never race the
+      // load; the case names and measured functions are unchanged.
+      await helpers.diffDomReady;
+      return helpers;
     })();
   }
   return modulePromise;

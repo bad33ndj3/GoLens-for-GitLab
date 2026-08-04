@@ -18,6 +18,11 @@ before(async () => {
   await import('../bookmark-store.js?go-navigation-context-test');
   await import('../go-navigation.js');
   helpers = globalThis.GoLensGoNavigation.__test;
+  // Ticket 26: the diff-DOM primitives below are thin wrappers onto
+  // page/platform/diff-dom.js, loaded through go-navigation.js's dynamic
+  // `import()` bridge. Await it here instead of racing it — production never
+  // does, because every wrapper is reached long after the load resolves.
+  await helpers.diffDomReady;
 });
 
 test('normalizes GitLab file-title spacing and bidi markers', () => {

@@ -18,6 +18,56 @@
     clock = overrides ? { ...defaultClock(), ...overrides } : defaultClock();
   }
 
+  // Bridge onto page/platform/diff-dom.js (ticket 26): the diff-DOM
+  // primitives (diffFileRoots/diffRootFor/rapidFileData/computeFileContext/
+  // fileContextFor/codeCellFor/lineFromAnchor/lineAnchorFor/
+  // expansionDirectionForLine/waitForDiffUpdate/revealLine/
+  // visibleDiffRootForDefinition/flashDestination/navigateToLocation/
+  // lineContextFor) and `fileContextFor`'s generation-keyed cache used to be
+  // defined directly in this file and handed to all four `legacy` bags
+  // below. They now live in that module; this file keeps same-named thin
+  // wrappers so no `legacy` bag entry, `__test` key, or call site had to
+  // change. The wrappers exist because this file is still a *classic*
+  // content script: `import()` is the only way in and it cannot resolve at
+  // top level, so the primitives cannot be plain imported bindings until
+  // ticket 22 removes this file. Same dynamic-`import()` bridge and
+  // IIFE-top-level kickoff as the feature bridges below.
+  //
+  // Every wrapper below is only ever reached from an event handler, a
+  // runtime message, or a mounted feature's `legacy` bag — all of them long
+  // after this sub-30ms load resolves (ticket 04 §7's measurement). The one
+  // exception is `bumpFileContextGeneration()`, called synchronously from
+  // `init()`'s diff observer: it is optional-chained because a bump that
+  // lands before the module loads is a no-op on an empty cache — nothing can
+  // be cached until a `fileContextFor` call succeeds, which itself requires
+  // the module.
+  //
+  // `dirname` and `normalizePath`/`parseBlobLink` stay in this file (still
+  // used by its GitLab-API helpers and code-intel's `legacy.dirname`); the
+  // module carries its own private copies until ticket 27 moves the owning
+  // copy to the gitlab-api layer.
+  async function loadDiffDomModule() {
+    try {
+      return await import(chrome.runtime.getURL('page/platform/diff-dom.js'));
+    } catch {
+      return await import('./page/platform/diff-dom.js');
+    }
+  }
+  let diffDom = null;
+  // Exposed via __test.diffDomReady so tests and benchmarks can
+  // deterministically await the load instead of racing it; production code
+  // never awaits this itself.
+  const diffDomReady = loadDiffDomModule()
+    .then((mod) => {
+      diffDom = mod;
+    })
+    .catch(() => {
+      // Both the chrome.runtime.getURL and relative import fallbacks failed
+      // (should not happen in production). The wrappers below then throw on
+      // the null module rather than silently answering "no diff here", which
+      // would look to every feature like a page without a diff.
+    });
+
   // Bridge onto page/features/keyboard-nav.js (ticket 17): the shortcut
   // coach's blocked-check, message-for-action decision, and hint DOM
   // trigger used to be this file's own shortcutCoachBlocked()/
@@ -459,191 +509,57 @@
     return slash < 0 ? null : { ref: rest.slice(0, slash), path: normalizePath(rest.slice(slash + 1)) };
   }
 
+  // Diff-DOM primitives: thin wrappers onto page/platform/diff-dom.js
+  // (ticket 26) — see that bridge's comment at the top of this file for why
+  // they are wrappers and not imported bindings. Signatures and behavior are
+  // unchanged; `computeFileContext` and `fileContextFor`'s generation-keyed
+  // cache moved into the module with them.
   function diffRootFor(node) {
-    // Rapid Diffs wraps every file in a <diff-file data-file-data="…">
-    // custom element. Prefer that outer element over the inner article so the
-    // commit-pinned old/new paths remain available to the resolver.
-    return node?.closest('diff-file')
-      || node?.closest('.diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path], .rd-diff-file')
-      || node?.closest('table')?.parentElement;
+    return diffDom.diffRootFor(node);
   }
 
   function rapidFileData(root) {
-    const value = root?.getAttribute?.('data-file-data');
-    if (!value) return {};
-    try { return JSON.parse(value); } catch { return {}; }
+    return diffDom.rapidFileData(root);
   }
-
-  function computeFileContext(root) {
-    const fileData = rapidFileData(root);
-    const title = root.querySelector('[data-testid="file-title"], .file-title-name, .diff-file-header a[href*="/-/blob/"], .rd-diff-file-link, [data-testid="rd-diff-file-header"] a[href*="/-/blob/"]');
-    const dataPath = root.getAttribute('data-file-path')
-      || title?.getAttribute('data-file-path')
-      || fileData.new_path
-      || fileData.old_path;
-    const path = normalizePath(dataPath || title?.textContent || '');
-    if (!GO_FILE.test(path)) return null;
-    const oldPath = normalizePath(fileData.old_path || path);
-    const newPath = normalizePath(fileData.new_path || path);
-    const links = [...root.querySelectorAll('a[href*="/-/blob/"]')];
-    const link = links.find((candidate) => {
-      const parsed = parseBlobLink(candidate, newPath) || parseBlobLink(candidate, oldPath);
-      return parsed?.path === newPath || parsed?.path === oldPath;
-    }) || links[0];
-    const parsed = parseBlobLink(link, newPath) || parseBlobLink(link, oldPath) || parseBlobLink(link, path);
-    if (!parsed) return null;
-    return { root, path: newPath, oldPath, newPath, packagePath: dirname(newPath), ref: parsed.ref };
-  }
-
-  // Cached per diff-file root: `fileContextFor` runs on every un-throttled
-  // mousemove target and its DOM work (title/blob-link queries) is the same
-  // for every cell in a file. `fileContextGeneration` is bumped synchronously
-  // (not debounced) by the diff observer whenever the diff DOM actually
-  // changes, so a hover right after an expansion/re-render never resolves a
-  // stale root/path/ref. Negative results (non-Go files) are cached too, so
-  // hovering unsupported files stays cheap.
-  let fileContextGeneration = 0;
-  const fileContextCache = new WeakMap();
 
   function fileContextFor(node) {
-    const root = diffRootFor(node);
-    if (!root) return null;
-    const cached = fileContextCache.get(root);
-    if (cached && cached.generation === fileContextGeneration) return cached.context;
-    const context = computeFileContext(root);
-    fileContextCache.set(root, { generation: fileContextGeneration, context });
-    return context;
+    return diffDom.fileContextFor(node);
   }
 
   function codeCellFor(target) {
-    const direct = target?.closest('td.line_content, td[class*="line-content"], [data-testid="diff-line-content"], [data-testid="rd-diff-line-content"], .rd-diff-code, .rd-diff-line-code');
-    if (direct) return direct;
-    const cell = target?.closest('td, [role="cell"], [role="gridcell"]');
-    if (!cell || cell.querySelector('a[href*="#"]')) return null;
-    const row = cell.closest('tr, [role="row"]');
-    if (!row?.querySelector('a[href*="#"], [data-line-number]')) return null;
-    return cell;
+    return diffDom.codeCellFor(target);
   }
 
   function lineFromAnchor(anchor) {
-    if (!anchor) return 0;
-    const data = anchor.getAttribute?.('data-line-number') || anchor.dataset?.lineNumber;
-    if (/^\d+$/.test(data || '')) return Number(data);
-    const label = `${anchor.getAttribute?.('aria-label') || ''} ${anchor.title || ''}`;
-    const labelMatch = label.match(/(?:added|deleted|line)\D*(\d+)\s*$/i);
-    if (labelMatch) return Number(labelMatch[1]);
-    const text = (anchor.textContent || '').trim();
-    if (/^\d+$/.test(text)) return Number(text);
-    const hash = anchor.hash || anchor.getAttribute?.('href') || '';
-    const hashMatch = hash.match(/(?:_|L)(\d+)$/i);
-    return hashMatch ? Number(hashMatch[1]) : 0;
+    return diffDom.lineFromAnchor(anchor);
   }
 
   function lineAnchorFor(root, line, preferredSide = '') {
-    const matches = [...root.querySelectorAll('a[href*="#"], [data-line-number]')]
-      .filter((anchor) => lineFromAnchor(anchor) === line);
-    if (preferredSide) {
-      const preferred = matches.find((anchor) => {
-        const context = `${anchor.getAttribute('aria-label') || ''} ${anchor.closest('td, [role="cell"], [role="gridcell"]')?.className || ''}`;
-        return preferredSide === 'old' ? /deleted|old/i.test(context) : !/deleted|old/i.test(context);
-      });
-      if (preferred) return preferred;
-    }
-    return matches.find((anchor) => !/deleted|old/i.test(`${anchor.getAttribute('aria-label') || ''} ${anchor.closest('td, [role="cell"], [role="gridcell"]')?.className || ''}`)) || matches[0] || null;
+    return diffDom.lineAnchorFor(root, line, preferredSide);
   }
 
   function expansionDirectionForLine(line, visibleLines) {
-    const lines = [...new Set(visibleLines.filter((candidate) => Number.isFinite(candidate) && candidate > 0))].sort((a, b) => a - b);
-    if (!lines.length) return null;
-    if (line < lines[0]) return 'up';
-    if (line > lines[lines.length - 1]) return 'down';
-    return null;
+    return diffDom.expansionDirectionForLine(line, visibleLines);
   }
 
   function waitForDiffUpdate(root) {
-    return new Promise((resolve) => {
-      let observer;
-      const MutationObserverConstructor = root.ownerDocument?.defaultView?.MutationObserver || globalThis.MutationObserver;
-      const finish = () => {
-        clearTimeout(timeout);
-        observer?.disconnect();
-        resolve();
-      };
-      const timeout = setTimeout(finish, 400);
-      if (!MutationObserverConstructor) return;
-      observer = new MutationObserverConstructor(finish);
-      observer.observe(root, { childList: true, subtree: true });
-    });
+    return diffDom.waitForDiffUpdate(root);
   }
 
-  async function revealLine(root, line, preferredSide = '') {
-    for (let attempt = 0; attempt < 25; attempt++) {
-      const target = lineAnchorFor(root, line, preferredSide);
-      if (target) return target;
-      const visibleLines = [...root.querySelectorAll('a[href*="#"], [data-line-number]')].map(lineFromAnchor);
-      const direction = expansionDirectionForLine(line, visibleLines);
-      const selector = direction
-        ? `button[data-click="expandLines"][data-expand-direction="${direction}"]`
-        : '.js-unfold-all, button[data-click="showFullFile"]';
-      const button = [...root.querySelectorAll(selector)].find((candidate) => !candidate.disabled);
-      if (!button) return null;
-      const updated = waitForDiffUpdate(root);
-      button.click();
-      await updated;
-    }
-    return lineAnchorFor(root, line, preferredSide);
+  function revealLine(root, line, preferredSide = '') {
+    return diffDom.revealLine(root, line, preferredSide);
   }
 
-  // visibleDiffRootForDefinition/flashDestination/navigateToLocation: shared
-  // "reveal a source location inside the currently-loaded diff" primitives —
-  // NOT code-intel-exclusive despite living next to its former popover code.
-  // Both bookmarks.js's `legacy.navigateToLocation` (ticket 18, `reveal()`)
-  // and code-intel.js's `legacy.navigateToLocation` (ticket 21, semantic-jump
-  // navigation) call this, so it stays here rather than being duplicated.
   function visibleDiffRootForDefinition(definition) {
-    const matchingRoots = [...document.querySelectorAll('diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]')];
-    return matchingRoots.find((candidate) => {
-      const data = rapidFileData(candidate);
-      const paths = [candidate.getAttribute('data-file-path'), data.new_path, data.old_path, candidate.querySelector('[data-testid="file-title"], .file-title-name, .rd-diff-file-link')?.textContent]
-        .filter(Boolean).map(normalizePath);
-      return paths.includes(normalizePath(definition.path));
-    });
+    return diffDom.visibleDiffRootForDefinition(definition);
   }
 
-  function flashDestination(target) {
-    if (!target) return;
-    target.removeAttribute('data-golens-navigation-destination');
-    void target.offsetWidth;
-    target.setAttribute('data-golens-navigation-destination', '');
-    setTimeout(() => target.removeAttribute('data-golens-navigation-destination'), 1300);
-  }
-
-  async function navigateToLocation(location, { smooth = true } = {}) {
-    const root = visibleDiffRootForDefinition(location);
-    if (!root) return false;
-    const line = await revealLine(root, location.line, location.side);
-    const target = line?.closest('tr, [role="row"]') || root;
-    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    target.scrollIntoView({ behavior: smooth && !reducedMotion ? 'smooth' : 'auto', block: 'center' });
-    flashDestination(target);
-    return true;
+  function navigateToLocation(location, options = {}) {
+    return diffDom.navigateToLocation(location, options);
   }
 
   function lineContextFor(cell) {
-    const row = cell.closest('tr, [role="row"]');
-    if (!row) return null;
-    const cells = [...row.querySelectorAll(':scope > td, :scope > [role="cell"], :scope > [role="gridcell"]')];
-    const cellIndex = Math.max(0, cells.indexOf(cell));
-    const preceding = cells.slice(0, cellIndex).reverse();
-    for (const candidate of preceding) {
-      const anchor = candidate.querySelector('a[href*="#"], [data-line-number]');
-      const line = lineFromAnchor(anchor || candidate);
-      if (!line) continue;
-      const position = cell.getAttribute('data-position') || candidate.getAttribute('data-position') || '';
-      const label = `${anchor?.getAttribute('aria-label') || ''} ${candidate.className || ''}`;
-      return { line, side: position === 'old' || (!position && /deleted|old/i.test(label)) ? 'old' : 'new' };
-    }
-    return null;
+    return diffDom.lineContextFor(cell);
   }
 
   function status(kind, message, progress) {
@@ -1206,13 +1122,10 @@
     return true;
   }
 
-  const DIFF_ROOT_SELECTOR = 'diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]';
-
+  // Ticket 26: the diff-root selector and this walk live in
+  // page/platform/diff-dom.js; this stays a wrapper for the `legacy` bags.
   function diffFileRoots() {
-    return [...document.querySelectorAll(DIFF_ROOT_SELECTOR)].filter((candidate) => {
-      const outerRapid = candidate.parentElement?.closest?.('diff-file');
-      return !outerRapid || outerRapid === candidate;
-    });
+    return diffDom.diffFileRoots();
   }
 
   // targetAtEvent/identifierBoundary/occurrenceRanges/paintOccurrences/
@@ -1327,8 +1240,11 @@
       // needlessly.
       if (mutations.length && mutations.every(isBookmarkOnlyMutation)) return;
       // Invalidation is synchronous — a hover right after this fires must
-      // never resolve a stale cached file context.
-      fileContextGeneration++;
+      // never resolve a stale cached file context. Ticket 26: the counter
+      // itself is owned by page/platform/diff-dom.js; optional-chained
+      // because a bump before that module loads is a no-op on a cache that
+      // cannot have entries yet (see the bridge comment at the top).
+      diffDom?.bumpFileContextGeneration();
     });
     const diffObserverRoot = document.getElementById('diffs') || document.body;
     state.diffObserver.observe(diffObserverRoot, { childList: true, subtree: true, characterData: true });
@@ -1403,6 +1319,6 @@
     // `navigationAction` capability (page/main.js) reaches
     // `.navigationAction(action)` through this.
     get codeIntel() { return codeIntelHandle; },
-    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, fileContextFor, codeCellFor, lineContextFor, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, onKeyDown, showShortcutCoachHint, setClock, keyboardNavReady, mrPreloadReady, projectSearchReady, bookmarksReady, codeIntelReady },
+    __test: { normalizePath, standardLibraryURL, packageDocumentationURL, documentationURL, projectPackageURL, parseBlobLink, lineFromAnchor, lineAnchorFor, expansionDirectionForLine, revealLine, fileContextFor, codeCellFor, lineContextFor, isProjectGoPath, nextPageNumber, fetchSource, fetchBlob, listPackageFiles, listProjectFiles, searchProjectBlobPaths, packageLoadingProgress, packageLoadingMessage, projectLoadingProgress, projectLoadingMessage, refsDisagreeWithFile, sourceRefFor, onKeyDown, showShortcutCoachHint, setClock, diffDomReady, keyboardNavReady, mrPreloadReady, projectSearchReady, bookmarksReady, codeIntelReady },
   };
 })();
