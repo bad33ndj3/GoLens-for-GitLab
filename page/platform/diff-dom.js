@@ -154,17 +154,31 @@ export function lineFromAnchor(anchor) {
   return hashMatch ? Number(hashMatch[1]) : 0;
 }
 
+// Same signal lineContextFor() uses to tell a row's old/new side apart:
+// `data-position` first (Rapid Diffs sets it on the cell), then the
+// `#old_`/`#new_` anchor-hash convention every GitLab diff markup shares,
+// and only then the aria-label/class text regex — which Rapid Diffs' side
+// number cells don't reliably carry, unlike the legacy `.old_line`/
+// `.new_line` markup.
+function sideForAnchor(anchor) {
+  const cell = anchor.closest?.('td, [role="cell"], [role="gridcell"]');
+  const position = anchor.getAttribute?.('data-position') || cell?.getAttribute('data-position');
+  if (position === 'old' || position === 'new') return position;
+  const hash = anchor.hash || anchor.getAttribute?.('href') || '';
+  if (/^#?old_/i.test(hash)) return 'old';
+  if (/^#?new_/i.test(hash)) return 'new';
+  const context = `${anchor.getAttribute?.('aria-label') || ''} ${cell?.className || ''}`;
+  return /deleted|old/i.test(context) ? 'old' : 'new';
+}
+
 export function lineAnchorFor(root, line, preferredSide = '') {
   const matches = [...root.querySelectorAll('a[href*="#"], [data-line-number]')]
     .filter((anchor) => lineFromAnchor(anchor) === line);
   if (preferredSide) {
-    const preferred = matches.find((anchor) => {
-      const context = `${anchor.getAttribute('aria-label') || ''} ${anchor.closest('td, [role="cell"], [role="gridcell"]')?.className || ''}`;
-      return preferredSide === 'old' ? /deleted|old/i.test(context) : !/deleted|old/i.test(context);
-    });
+    const preferred = matches.find((anchor) => sideForAnchor(anchor) === preferredSide);
     if (preferred) return preferred;
   }
-  return matches.find((anchor) => !/deleted|old/i.test(`${anchor.getAttribute('aria-label') || ''} ${anchor.closest('td, [role="cell"], [role="gridcell"]')?.className || ''}`)) || matches[0] || null;
+  return matches.find((anchor) => sideForAnchor(anchor) === 'new') || matches[0] || null;
 }
 
 export function expansionDirectionForLine(line, visibleLines) {
@@ -191,16 +205,76 @@ export function waitForDiffUpdate(root) {
   });
 }
 
+// Fold-expansion controls GitLab renders per hunk boundary, across both the
+// Rapid Diffs markup (`data-click="expandLines"` + `data-expand-direction`)
+// and the legacy Vue diff markup (`.js-unfold`/`.js-unfold-down`).
+const FOLD_CONTROL_SELECTOR = 'button[data-click="expandLines"][data-expand-direction], .js-unfold, .js-unfold-down';
+// A single click that expands the whole file at once.
+const FULL_FILE_SELECTOR = '.js-unfold-all, button[data-click="showFullFile"]';
+
+function directionalExpandSelector(direction) {
+  if (direction === 'up') return 'button[data-click="expandLines"][data-expand-direction="up"], .js-unfold';
+  if (direction === 'down') return 'button[data-click="expandLines"][data-expand-direction="down"], .js-unfold-down';
+  return '';
+}
+
+// A file can have several collapsed hunks; when we don't know which
+// direction to expand (the target sits inside the already-visible line
+// range, i.e. a *middle* hunk — see revealLine below) there may be several
+// fold controls in the DOM, one per hunk boundary. Clicking the first one
+// in document order can expand the wrong hunk entirely (e.g. the file's
+// top-of-file control) while the actual gap around `line` stays collapsed.
+// Pick the control whose row sits closest, in row order, to a visible line
+// number nearest `line` instead.
+function nearestFoldControl(root, line) {
+  const buttons = [...root.querySelectorAll(FOLD_CONTROL_SELECTOR)].filter((candidate) => !candidate.disabled);
+  if (buttons.length <= 1) return buttons[0] || null;
+  const rows = [...root.querySelectorAll('tr, [role="row"]')];
+  let best = null;
+  let bestSpan = Infinity;
+  for (const button of buttons) {
+    const row = button.closest('tr, [role="row"]') || button;
+    const rowIndex = rows.indexOf(row);
+    let before = -Infinity;
+    for (let i = rowIndex - 1; i >= 0; i--) {
+      const anchor = rows[i].querySelector('a[href*="#"], [data-line-number]');
+      const candidateLine = anchor && lineFromAnchor(anchor);
+      if (candidateLine) { before = candidateLine; break; }
+    }
+    let after = Infinity;
+    for (let i = rowIndex + 1; i < rows.length; i++) {
+      const anchor = rows[i].querySelector('a[href*="#"], [data-line-number]');
+      const candidateLine = anchor && lineFromAnchor(anchor);
+      if (candidateLine) { after = candidateLine; break; }
+    }
+    // Only a control whose gap actually straddles the target line is a
+    // candidate — a control bordering an unrelated hunk always has `line`
+    // outside its [before, after] span. Among straddling controls (there
+    // should be at most one), prefer the narrowest span.
+    if (before >= line || after <= line) continue;
+    const span = after - before;
+    if (span < bestSpan) { bestSpan = span; best = button; }
+  }
+  return best || buttons[0];
+}
+
 export async function revealLine(root, line, preferredSide = '') {
   for (let attempt = 0; attempt < 25; attempt++) {
     const target = lineAnchorFor(root, line, preferredSide);
     if (target) return target;
     const visibleLines = [...root.querySelectorAll('a[href*="#"], [data-line-number]')].map(lineFromAnchor);
     const direction = expansionDirectionForLine(line, visibleLines);
-    const selector = direction
-      ? `button[data-click="expandLines"][data-expand-direction="${direction}"]`
-      : '.js-unfold-all, button[data-click="showFullFile"]';
-    const button = [...root.querySelectorAll(selector)].find((candidate) => !candidate.disabled);
+    let button;
+    if (direction) {
+      // Off either edge of the visible range: the file-boundary control for
+      // that direction is unambiguous.
+      const directionalSelector = directionalExpandSelector(direction);
+      button = [...root.querySelectorAll(directionalSelector)].find((candidate) => !candidate.disabled);
+    } else {
+      // Inside the visible range but not rendered: a collapsed middle hunk.
+      button = nearestFoldControl(root, line);
+    }
+    if (!button) button = [...root.querySelectorAll(FULL_FILE_SELECTOR)].find((candidate) => !candidate.disabled);
     if (!button) return null;
     const updated = waitForDiffUpdate(root);
     button.click();

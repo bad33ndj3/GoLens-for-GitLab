@@ -192,6 +192,69 @@ test('gives up on revealing a line when no expansion control remains', async () 
   assert.equal(await revealLine(window.document.querySelector('.diff-file'), 12), null);
 });
 
+test('expands a collapsed middle hunk (no direction) using its own fold control', async () => {
+  const window = mountFixture(`
+    <section class="diff-file"><table><tbody>
+      <tr><td><a href="#line_10" aria-label="Added line 10">10</a></td></tr>
+      <tr class="match"><td><button type="button" data-click="expandLines" data-expand-direction="down">Expand hunk</button></td></tr>
+      <tr><td><a href="#line_40" aria-label="Added line 40">40</a></td></tr>
+    </tbody></table></section>`);
+  const root = window.document.querySelector('.diff-file');
+  root.querySelector('button').addEventListener('click', () => {
+    root.querySelector('tbody').insertAdjacentHTML('beforeend', '<tr><td><a href="#line_25" aria-label="Added line 25">25</a></td></tr>');
+  });
+  const line = await revealLine(root, 25);
+  assert.equal(line?.getAttribute('aria-label'), 'Added line 25');
+});
+
+test('expands the fold nearest the target line, not the first control in document order', async () => {
+  const window = mountFixture(`
+    <section class="diff-file"><table><tbody>
+      <tr class="match"><td><button type="button" data-click="expandLines" data-expand-direction="up">Expand top</button></td></tr>
+      <tr><td><a href="#line_10" aria-label="Added line 10">10</a></td></tr>
+      <tr class="match"><td><button type="button" data-click="expandLines" data-expand-direction="down">Expand middle</button></td></tr>
+      <tr><td><a href="#line_40" aria-label="Added line 40">40</a></td></tr>
+    </tbody></table></section>`);
+  const root = window.document.querySelector('.diff-file');
+  const [topButton, middleButton] = root.querySelectorAll('button');
+  topButton.addEventListener('click', () => {
+    root.querySelector('tbody').insertAdjacentHTML('afterbegin', '<tr><td><a href="#line_1" aria-label="Added line 1">1</a></td></tr>');
+  });
+  middleButton.addEventListener('click', () => {
+    middleButton.closest('tr').insertAdjacentHTML('afterend', '<tr><td><a href="#line_25" aria-label="Added line 25">25</a></td></tr>');
+  });
+  const line = await revealLine(root, 25);
+  assert.equal(line?.getAttribute('aria-label'), 'Added line 25');
+  assert.equal(topButton.isConnected, true, 'the unrelated top-of-file control should not have been clicked');
+});
+
+test('picks the side GitLab marks via data-position, even without an old/deleted label or class', () => {
+  const window = mountFixture(`
+    <table><tbody><tr>
+      <td data-position="old"><a data-line-number="12">12</a></td>
+      <td data-position="new"><a data-line-number="12">12</a></td>
+    </tr></tbody></table>`);
+  const root = window.document.body;
+  const [oldAnchor, newAnchor] = root.querySelectorAll('a');
+  assert.equal(lineAnchorFor(root, 12, 'old'), oldAnchor, 'data-position="old" must win with no label/class to fall back on');
+  assert.equal(lineAnchorFor(root, 12, 'new'), newAnchor);
+  assert.equal(lineAnchorFor(root, 12), newAnchor, 'defaults to the new side');
+});
+
+test('falls back to the legacy .js-unfold controls when Rapid Diffs markup is absent', async () => {
+  const window = mountFixture(`
+    <section class="diff-file"><table><tbody>
+      <tr><td><a href="#line_30" aria-label="Added line 30">30</a></td></tr>
+    </tbody></table>
+    <a class="js-unfold" href="#">Show lines before</a></section>`);
+  const root = window.document.querySelector('.diff-file');
+  root.querySelector('.js-unfold').addEventListener('click', () => {
+    root.querySelector('tbody').insertAdjacentHTML('afterbegin', '<tr><td><a href="#line_12" aria-label="Added line 12">12</a></td></tr>');
+  });
+  const line = await revealLine(root, 12);
+  assert.equal(line?.getAttribute('aria-label'), 'Added line 12');
+});
+
 test('matches a definition path against the loaded diff roots', () => {
   const window = mountFixture(rapidDiffFile({ oldPath: 'pkg/old.go', newPath: 'pkg/new.go' }));
   assert.equal(visibleDiffRootForDefinition({ path: 'pkg/new.go' }), window.document.querySelector('diff-file'));
