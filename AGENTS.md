@@ -123,3 +123,11 @@ Issues and PRDs are tracked in GitHub Issues for this repository. See `docs/agen
 ### Domain docs
 
 This is a single-context repository. See `docs/agents/domain.md`.
+
+### Browser smoke tests
+
+`tests/browser-smoke.mjs` drives real headless Chrome over the DevTools Protocol against local GitLab
+fixtures — no Playwright/Puppeteer. See `docs/agents/browser-smoke-tests.md` for how to run it against
+CI's exact pinned Chrome build and known environment-specific failure modes (rAF stalls in headless
+Chrome, an extension-message/SPA-remount race, machine-load sensitivity, macOS-only Keychain noise)
+before assuming a scenario failure is a real regression.

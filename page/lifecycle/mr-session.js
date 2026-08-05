@@ -63,9 +63,34 @@ function defaultClock() {
   return {
     setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
     clearTimeout: (id) => globalThis.clearTimeout(id),
-    requestFrame: (fn) => (globalThis.requestAnimationFrame ? globalThis.requestAnimationFrame(fn) : globalThis.setTimeout(fn, 16)),
+    requestFrame: (fn) => requestFrameWithFallback(fn),
     requestIdle: (fn) => (globalThis.requestIdleCallback ? globalThis.requestIdleCallback(fn, { timeout: 300 }) : globalThis.setTimeout(fn, 0)),
   };
+}
+
+// requestAnimationFrame can go silent on a headless/backgrounded tab that
+// isn't actively compositing (observed in CI's headless Chrome, unlike a
+// foregrounded dev-browser tab) — unlike setTimeout throttling, none of the
+// launch flags in tests/browser-smoke.mjs touch this. A hover that depends on
+// rAF ever firing would then hang forever, so this races it against a plain
+// timer and takes whichever settles first.
+function requestFrameWithFallback(fn) {
+  if (!globalThis.requestAnimationFrame) return globalThis.setTimeout(fn, 16);
+  let settled = false;
+  let rafID;
+  const timeoutID = globalThis.setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    if (rafID !== undefined) globalThis.cancelAnimationFrame?.(rafID);
+    fn();
+  }, 32);
+  rafID = globalThis.requestAnimationFrame(() => {
+    if (settled) return;
+    settled = true;
+    globalThis.clearTimeout(timeoutID);
+    fn();
+  });
+  return rafID;
 }
 
 function isGitLab(doc, win) {
