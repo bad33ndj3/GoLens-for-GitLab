@@ -1,0 +1,73 @@
+/*
+  GoLens redesign — shared design tokens.
+  Single source of truth for all demo-*.html files in this folder.
+  Mirrors (a subset that will eventually feed back into) golens-theme.css.
+*/
+:root {
+  --golens-font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --golens-font-sans: var(--golens-font-ui);
+  --golens-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --golens-surface-canvas: #16191d;
+  --golens-surface-panel: #1d2126;
+  --golens-surface-raised: #242a31;
+  --golens-surface-hover: #2c333b;
+  --golens-surface-pressed: #343c45;
+  --golens-surface-inset: #13161a;
+
+  --golens-border-subtle: #353d46;
+  --golens-border-default: #46515d;
+  --golens-border-strong: #55616e;
+
+  --golens-text-primary: #f4f1ed;
+  --golens-text-secondary: #c7c2bb;
+  --golens-text-muted: #9f9a93;
+  --golens-text-inverse: #1d2126;
+
+  --golens-accent-primary: #e97840;
+  --golens-accent-primary-hover: #f28a54;
+  --golens-accent-primary-pressed: #cf6332;
+  --golens-accent-info: #58b8d6;
+  --golens-accent-focus: #68c5e1;
+  --golens-accent-success: #7fc58c;
+  --golens-accent-error: #f48771;
+  --golens-accent-warning: #d99530;
+
+  --golens-primary: var(--golens-accent-primary);
+  --golens-primary-hover: var(--golens-accent-primary-hover);
+  --golens-primary-pressed: var(--golens-accent-primary-pressed);
+  --golens-primary-soft: rgba(233, 120, 64, .12);
+
+  --golens-info: var(--golens-accent-info);
+  --golens-info-hover: #77cce5;
+  --golens-info-soft: rgba(88, 184, 214, .12);
+
+  --golens-focus-ring: var(--golens-accent-focus);
+
+  --golens-success: var(--golens-accent-success);
+  --golens-success-soft: rgba(127, 197, 140, .12);
+
+  --golens-error: var(--golens-accent-error);
+  --golens-error-soft: rgba(244, 135, 113, .12);
+
+  --golens-warning: var(--golens-accent-warning);
+  --golens-warning-soft: rgba(217, 149, 48, .12);
+
+  --golens-space-1: 4px;
+  --golens-space-2: 8px;
+  --golens-space-3: 12px;
+  --golens-space-4: 16px;
+  --golens-space-5: 20px;
+  --golens-space-6: 24px;
+
+  --golens-radius-xs: 4px;
+  --golens-radius-sm: 5px;
+  --golens-radius-lg: 9px;
+  --golens-radius-xl: 14px;
+
+  --golens-shadow-lg: 0 24px 72px rgba(2, 12, 21, .58);
+  --golens-shadow-sm: 0 5px 14px rgba(4, 15, 25, .28);
+
+  --golens-motion-fast: 140ms;
+  --golens-motion-base: 180ms;
+}

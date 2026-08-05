@@ -1,0 +1,318 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GoLens onboarding — redesign demo (IntelliJ-style)</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { margin:0; padding:32px; background:#0e1013; font-family:var(--golens-font-sans); color:var(--golens-text-primary); }
+  .state-section { margin-bottom:64px; }
+  .state-title { margin:0 0 8px; font:600 11px/1.4 var(--golens-font-mono); color:var(--golens-accent-info); text-transform:uppercase; letter-spacing:.08em; }
+  .state-container { display:inline-block; border:1px solid var(--golens-border-subtle); border-radius:8px; background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); overflow:hidden; }
+  * { box-sizing:border-box; }
+
+  /* Setup Dialog — Step 1: Keymap Selection (compact IntelliJ style) */
+  .setup-dialog { width:600px; display:grid; grid-template-rows:auto minmax(0,1fr) auto; max-height:620px; }
+  .setup-header { display:grid; gap:var(--golens-space-2); padding:var(--golens-space-5) var(--golens-space-6); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+  .setup-eyebrow { margin:0; font:800 10px/1.3 var(--golens-font-mono); color:var(--golens-primary-hover); text-transform:uppercase; letter-spacing:.08em; }
+  .setup-title { margin:var(--golens-space-1) 0 0; font:700 20px/1.2 var(--golens-font-sans); color:var(--golens-text-primary); letter-spacing:-.015em; }
+  .setup-intro { margin:var(--golens-space-1) 0 0; font:12px/1.45 var(--golens-font-sans); color:var(--golens-text-secondary); }
+  .setup-content { overflow:auto; padding:var(--golens-space-6); }
+  .step-label { margin:0 0 var(--golens-space-2); font:600 11px/1.3 var(--golens-font-mono); color:var(--golens-primary-hover); text-transform:uppercase; letter-spacing:.08em; }
+  .step-heading { margin:0 0 var(--golens-space-3); font:700 18px/1.2 var(--golens-font-sans); color:var(--golens-text-primary); }
+  .step-desc { margin:0 0 var(--golens-space-5); font:12px/1.55 var(--golens-font-sans); color:var(--golens-text-secondary); max-width:58ch; }
+
+  .keymap-grid { display:grid; grid-template-columns:1fr 1fr; gap:var(--golens-space-3); }
+  .keymap-card { position:relative; display:grid; grid-template-rows:auto minmax(0,1fr); gap:var(--golens-space-2); padding:var(--golens-space-3) var(--golens-space-4); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-sm); background:var(--golens-surface-inset); cursor:pointer; transition:border-color 140ms, background 140ms, box-shadow 140ms; }
+  .keymap-card:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-raised); }
+  .keymap-card.selected { border-color:var(--golens-primary); background:var(--golens-surface-raised); box-shadow:inset 0 0 0 1px var(--golens-primary), inset 2px 0 0 var(--golens-primary); }
+  .keymap-label { font:600 11.5px/1.3 var(--golens-font-mono); color:var(--golens-text-primary); }
+  .keymap-desc { font:10.5px/1.4 var(--golens-font-mono); color:var(--golens-text-muted); }
+
+  /* Setup Dialog — Step 3: Essentials (compact single-line style) */
+  .essentials-list { display:grid; gap:0; margin:0; padding:0; list-style:none; }
+  .essential-row { display:grid; grid-template-columns:36px minmax(0,1fr); gap:var(--golens-space-3); align-items:start; padding:var(--golens-space-3) var(--golens-space-4); border-bottom:1px solid var(--golens-border-subtle); }
+  .essential-row:last-child { border-bottom:0; }
+  .essential-icon { display:grid; place-items:center; width:36px; height:36px; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); flex-shrink:0; }
+  .essential-icon svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; color:var(--golens-info-hover); }
+  .essential-content { min-width:0; }
+  .essential-title { display:block; font:600 11.5px/1.35 var(--golens-font-sans); color:var(--golens-text-primary); margin:0; }
+  .essential-desc { display:block; font:11px/1.45 var(--golens-font-sans); color:var(--golens-text-secondary); margin:2px 0 0; }
+
+  /* Tour Dialog */
+  .tour-dialog { width:720px; display:grid; grid-template-rows:auto minmax(0,1fr) auto; max-height:580px; }
+  .tour-header { display:grid; gap:var(--golens-space-2); padding:var(--golens-space-5) var(--golens-space-6); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+  .tour-eyebrow { margin:0; font:800 11px/1.3 var(--golens-font-mono); color:var(--golens-primary-hover); text-transform:uppercase; letter-spacing:.08em; }
+  .tour-title { margin:var(--golens-space-1) 0 0; font:700 22px/1.2 var(--golens-font-sans); color:var(--golens-text-primary); letter-spacing:-.015em; }
+  .tour-intro { margin:var(--golens-space-1) 0 0; font:12px/1.45 var(--golens-font-sans); color:var(--golens-text-secondary); max-width:560px; }
+
+  .tour-wrapper { display:grid; grid-template-columns:160px minmax(0,1fr); min-height:0; }
+  .tour-nav { display:grid; align-content:start; gap:var(--golens-space-1); padding:var(--golens-space-3) var(--golens-space-3); border-right:1px solid var(--golens-border-subtle); background:var(--golens-surface-inset); }
+  .tour-tab { display:grid; grid-template-columns:24px minmax(0,1fr); gap:var(--golens-space-2); align-items:center; min-height:38px; padding:var(--golens-space-2); border:1px solid transparent; border-left:2px solid transparent; border-radius:var(--golens-radius-sm); background:transparent; color:var(--golens-text-secondary); font:600 11px/1.3 var(--golens-font-sans); cursor:pointer; text-align:left; transition:border-color 140ms, background 140ms, color 140ms; }
+  .tour-tab:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+  .tour-tab.active { border-left-color:var(--golens-accent-info); background:transparent; color:var(--golens-accent-info); }
+  .tour-tab-icon { width:24px; height:24px; display:grid; place-items:center; flex-shrink:0; color:var(--golens-text-muted); }
+  .tour-tab-icon svg { width:18px; height:18px; stroke:currentColor; fill:none; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
+  .tour-tab.active .tour-tab-icon { color:var(--golens-accent-info); }
+
+  .tour-content { min-width:0; min-height:0; overflow:auto; padding:var(--golens-space-5) var(--golens-space-6); }
+  .chapter-label { margin:0 0 var(--golens-space-1); font:800 10px/1.3 var(--golens-font-mono); color:var(--golens-primary-hover); text-transform:uppercase; letter-spacing:.08em; }
+  .chapter-title { margin:0; font:700 18px/1.2 var(--golens-font-sans); color:var(--golens-text-primary); }
+  .chapter-intro { margin:var(--golens-space-2) 0 var(--golens-space-4); font:12px/1.55 var(--golens-font-sans); color:var(--golens-text-secondary); max-width:58ch; }
+
+  .feature-list { display:grid; gap:0; margin:0; padding:0; list-style:none; }
+  .feature-row { display:grid; grid-template-columns:32px minmax(0,1fr); gap:var(--golens-space-3); align-items:start; padding:var(--golens-space-3) 0; border-top:1px solid var(--golens-border-subtle); }
+  .feature-row:first-child { border-top:0; }
+  .feature-icon { width:32px; height:32px; display:grid; place-items:center; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-xs); background:var(--golens-surface-raised); flex-shrink:0; color:var(--golens-info); }
+  .feature-icon svg { width:18px; height:18px; stroke:currentColor; fill:none; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
+  .feature-text { min-width:0; }
+  .feature-name { display:block; font:600 11.5px/1.35 var(--golens-font-sans); color:var(--golens-text-primary); margin:0; }
+  .feature-desc { display:block; font:11px/1.45 var(--golens-font-sans); color:var(--golens-text-secondary); margin:2px 0 0; }
+
+  .setup-footer { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-3); align-items:center; padding:var(--golens-space-3) var(--golens-space-5); border-top:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+  .progress-text { margin:0; font:600 10px/1.4 var(--golens-font-mono); color:var(--golens-text-muted); text-align:center; }
+  .btn { min-height:36px; padding:0 var(--golens-space-4); border-radius:var(--golens-radius-sm); font:700 12px/1 var(--golens-font-sans); border:1px solid var(--golens-border-default); background:transparent; color:var(--golens-text-secondary); cursor:pointer; transition:border-color 140ms, background 140ms, color 140ms; white-space:nowrap; }
+  .btn:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+  .btn:active { transform:translateY(1px); }
+  .keymap-card:active { transform:translateY(1px); }
+  .btn-primary { border-color:var(--golens-primary); background:var(--golens-primary); color:#000; font-weight:800; }
+  .btn-primary:hover { border-color:var(--golens-primary-hover); background:var(--golens-primary-hover); }
+
+  /* kbd — matches popover-demo.html's .shortcut-hint kbd */
+  kbd { display:inline-flex; min-width:16px; min-height:16px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:3px; background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
+
+  /* Comment explaining the demo */
+  .demo-note { font:11px/1.5 var(--golens-font-mono); color:var(--golens-text-muted); margin:0 0 32px; padding:12px 16px; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-inset); max-width:600px; }
+  .demo-note strong { color:var(--golens-text-primary); }
+</style>
+</head>
+<body>
+<div style="position:fixed;top:12px;right:16px;z-index:99999;display:flex;gap:4px;padding:5px;border:1px solid var(--golens-border-default);border-radius:9px;background:var(--golens-surface-panel);box-shadow:0 8px 24px rgba(0,0,0,.45);font:600 11px/1.2 var(--golens-font-mono,monospace);">
+<a href="popover-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Popover</a>
+<a href="settings-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Settings</a>
+<a href="onboarding-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-primary);background:var(--golens-surface-hover);">Onboarding</a>
+<a href="controls-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Controls</a>
+<a href="project-search-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Project search</a>
+</div>
+
+
+<!--
+  DEMO NOTE: This is a visual prototype only — static HTML, no interactive state management.
+  The onboarding dialogs are being redesigned from the original setup/tour templates
+  (page/features/onboarding.internal.js) into an IntelliJ/GoLand-inspired visual language:
+  donker thema, Darcula-achtige tokenkleuren, compacte single-line rijen in plaats van
+  dikke kaarten, subtiele borders i.p.v. zware schaduwen. This demo is not production code —
+  it will be manually refined and later integrated into the actual extension.
+-->
+
+<p class="demo-note">
+  <strong>Demo:</strong> Static prototype of onboarding dialogs redesigned in IntelliJ-style.
+  Based on page/features/onboarding.internal.js. Will be manually refined later.
+</p>
+
+<!-- STATE 1: Setup Dialog — Step 1 (Keymap Selection) -->
+<div class="state-section">
+  <p class="state-title">State 1: Setup — Keymap Selection</p>
+  <div class="state-container">
+    <div class="setup-dialog">
+      <div class="setup-header">
+        <p class="setup-eyebrow">Quick setup</p>
+        <h1 class="setup-title">Make GoLens feel familiar</h1>
+        <p class="setup-intro">Two choices, then the essentials.</p>
+      </div>
+      <div class="setup-content">
+        <p class="step-label">Keyboard</p>
+        <h2 class="step-heading">Which shortcuts should GoLens use?</h2>
+        <p class="step-desc">Choose a familiar keymap. You can customize every action later.</p>
+        <div class="keymap-grid">
+          <label class="keymap-card selected">
+            <span class="keymap-label">GoLens</span>
+            <span class="keymap-desc">Default bindings</span>
+          </label>
+          <label class="keymap-card">
+            <span class="keymap-label">VS Code</span>
+            <span class="keymap-desc">VS Code-style shortcuts</span>
+          </label>
+          <label class="keymap-card">
+            <span class="keymap-label">IntelliJ IDEA</span>
+            <span class="keymap-desc">IntelliJ-style navigation</span>
+          </label>
+          <label class="keymap-card">
+            <span class="keymap-label">Vim</span>
+            <span class="keymap-desc">Non-modal Vim bindings</span>
+          </label>
+        </div>
+      </div>
+      <div class="setup-footer">
+        <button class="btn" style="visibility:hidden;">Back</button>
+        <p class="progress-text">1 of 3 · Keyboard</p>
+        <button class="btn btn-primary">Continue</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STATE 2: Setup Dialog — Step 3 (Essentials) -->
+<div class="state-section">
+  <p class="state-title">State 2: Setup — Four Essentials (Compact)</p>
+  <div class="state-container">
+    <div class="setup-dialog">
+      <div class="setup-header">
+        <p class="setup-eyebrow">Quick setup</p>
+        <h1 class="setup-title">Make GoLens feel familiar</h1>
+        <p class="setup-intro">Two choices, then the essentials.</p>
+      </div>
+      <div class="setup-content">
+        <p class="step-label">Ready</p>
+        <h2 class="step-heading">Four things to remember</h2>
+        <p class="step-desc">The complete feature guide stays available in Settings under Help.</p>
+        <ul class="essentials-list">
+          <li class="essential-row">
+            <div class="essential-icon">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="currentColor"/><circle cx="12" cy="12" r="5" fill="#0e1013"/></svg>
+            </div>
+            <div class="essential-content">
+              <strong class="essential-title">Use the review controls</strong>
+              <p class="essential-desc">Toggle GoLens, enter review focus, or cache related packages.</p>
+            </div>
+          </li>
+          <li class="essential-row">
+            <div class="essential-icon">
+              <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/></svg>
+            </div>
+            <div class="essential-content">
+              <strong class="essential-title">Hover for Go insight</strong>
+              <p class="essential-desc">See signatures, documentation, source locations, and usages.</p>
+            </div>
+          </li>
+          <li class="essential-row">
+            <div class="essential-icon">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+            </div>
+            <div class="essential-content">
+              <strong class="essential-title">Plain-click selects occurrences</strong>
+              <p class="essential-desc">Move through matching identifiers in the loaded diff.</p>
+            </div>
+          </li>
+          <li class="essential-row">
+            <div class="essential-icon">
+              <svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v7M6 10h12"/></svg>
+            </div>
+            <div class="essential-content">
+              <strong class="essential-title"><kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click follows code</strong>
+              <p class="essential-desc">Resolve definitions, usages, and interface implementations.</p>
+            </div>
+          </li>
+        </ul>
+      </div>
+      <div class="setup-footer">
+        <button class="btn">Back</button>
+        <p class="progress-text">3 of 3 · Ready</p>
+        <button class="btn btn-primary">Start using GoLens</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STATE 3: Tour Dialog — Go Intelligence Tab -->
+<div class="state-section">
+  <p class="state-title">State 3: Tour — Go Intelligence (Flat Rows)</p>
+  <div class="state-container">
+    <div class="tour-dialog">
+      <div class="tour-header">
+        <p class="tour-eyebrow">Quick tour</p>
+        <h1 class="tour-title">Welcome to GoLens for GitLab</h1>
+        <p class="tour-intro">A concise reference for every GoLens review tool.</p>
+      </div>
+      <div class="tour-wrapper">
+        <nav class="tour-nav">
+          <button class="tour-tab">
+            <span class="tour-tab-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="currentColor"/></svg></span>
+            <span>Page controls</span>
+          </button>
+          <button class="tour-tab active">
+            <span class="tour-tab-icon"><svg viewBox="0 0 16 16"><path d="M8 2l4 4M8 2l-4 4M4 6h8M12 10l4 4M12 10l-4 4M8 14h8"/></svg></span>
+            <span>Go intelligence</span>
+          </button>
+          <button class="tour-tab">
+            <span class="tour-tab-icon"><svg viewBox="0 0 16 16"><path d="M3 1.75h10M3 14.25h10M8 3.25v3.5m0-3.5L6.25 5M8 3.25 9.75 5M8 12.75v-3.5m0 3.5L6.25 11M8 12.75 9.75 11"/></svg></span>
+            <span>Diff helpers</span>
+          </button>
+          <button class="tour-tab">
+            <span class="tour-tab-icon"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></span>
+            <span>Settings</span>
+          </button>
+        </nav>
+        <div class="tour-content">
+          <p class="chapter-label">Browser-native Go navigation</p>
+          <h2 class="chapter-title">Inspect and follow symbols</h2>
+          <p class="chapter-intro">Commit-pinned browser indexing provides safe navigation without speculative results.</p>
+          <ul class="feature-list">
+            <li class="feature-row">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/></svg>
+              </div>
+              <div class="feature-text">
+                <strong class="feature-name">Hover for Go insight</strong>
+                <p class="feature-desc">See kind, signature, documentation, location, and usages for definitions.</p>
+              </div>
+            </li>
+            <li class="feature-row">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v7M6 10h12"/></svg>
+              </div>
+              <div class="feature-text">
+                <strong class="feature-name">Navigate by click or shortcut</strong>
+                <p class="feature-desc"><kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click or <kbd>Cmd/Ctrl F12</kbd> resolves definitions, usages, and implementations.</p>
+              </div>
+            </li>
+            <li class="feature-row">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+              </div>
+              <div class="feature-text">
+                <strong class="feature-name">Select and revisit occurrences</strong>
+                <p class="feature-desc">Plain-click highlights loaded-diff occurrences; shortcuts move between them.</p>
+              </div>
+            </li>
+            <li class="feature-row">
+              <div class="feature-icon">
+                <svg viewBox="0 0 16 16"><path d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg>
+              </div>
+              <div class="feature-text">
+                <strong class="feature-name">Stay in the diff when possible</strong>
+                <p class="feature-desc">Loaded targets scroll into view; other sources open at their exact destination.</p>
+              </div>
+            </li>
+            <li class="feature-row">
+              <div class="feature-icon">
+                <svg viewBox="0 0 24 24"><path d="M13 2L4 14h7v8l9-12h-7z"/></svg>
+              </div>
+              <div class="feature-text">
+                <strong class="feature-name">Retrace semantic jumps</strong>
+                <p class="feature-desc">Move through in-diff semantic history without changing browser history.</p>
+              </div>
+            </li>
+            <li class="feature-row">
+              <div class="feature-icon">
+                <svg viewBox="0 0 16 16"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg>
+              </div>
+              <div class="feature-text">
+                <strong class="feature-name">Use the small popover tools</strong>
+                <p class="feature-desc">Pin results, copy <code>file:line:column</code>, expand signatures, choose matches, or close with <kbd>Esc</kbd>.</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+      <div class="setup-footer">
+        <button class="btn" style="visibility:hidden;">Back</button>
+        <p class="progress-text">2 of 4 · Go intelligence</p>
+        <button class="btn btn-primary">Next</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
