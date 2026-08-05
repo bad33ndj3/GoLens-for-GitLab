@@ -78,6 +78,7 @@ const MARKUP = `
     * { box-sizing:border-box; }
     .popover { position:fixed; display:none; width:min(440px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:8px; background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); color:var(--golens-text-primary); pointer-events:auto; }
     .popover.show { display:grid; grid-template-rows:auto minmax(0,1fr); }
+    .popover.popover--list { width:min(560px,calc(100vw - 24px)); height:320px; max-height:min(320px,calc(100vh - 24px)); }
     .popover-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-2); align-items:start; padding:10px var(--golens-space-3) 9px; border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
     .popover-heading { min-width:0; padding-top:1px; }
     .popover-title { overflow:hidden; color:var(--golens-text-primary); font:600 12.5px/1.3 var(--golens-font-mono); letter-spacing:-.01em; text-overflow:ellipsis; white-space:nowrap; }
@@ -129,6 +130,9 @@ const MARKUP = `
     .usage-row-skeleton i:first-child { width:16px; }
     .usage-row-skeleton:nth-child(1) i:last-child { width:78%; }
     .usage-row-skeleton:nth-child(2) i:last-child { width:52%; }
+    .popover-body.usages-body { gap:0; padding:var(--golens-space-1) 0; scrollbar-color:var(--golens-border-strong) transparent; scrollbar-width:thin; }
+    .popover-body.usages-body::-webkit-scrollbar { width:9px; }
+    .popover-body.usages-body::-webkit-scrollbar-thumb { border:2px solid var(--golens-surface-panel); border-radius:99px; background:var(--golens-border-strong); }
     .choice--compact { display:flex; min-height:0; align-items:center; gap:6px; padding:4px var(--golens-space-3); overflow:hidden; }
     .choice--compact .symbol-badge { flex:0 0 auto; margin-top:0; }
     .choice--compact .choice-title { flex:0 1 auto; font-size:11px; }
@@ -591,7 +595,6 @@ export function mount(ctx = {}) {
     lineElement.textContent = String(location.line);
     const snippetElement = doc.createElement('span');
     snippetElement.className = 'usage-snippet';
-    snippetElement.textContent = `${location.path}:${location.line}`;
     button.append(lineElement, snippetElement);
     button.title = `${location.path}:${location.line}`;
     button.setAttribute('aria-label', `${location.path}:${location.line}. ${destination.label}`);
@@ -638,6 +641,7 @@ export function mount(ctx = {}) {
   function showResult(result, pointer, { compact = false } = {}) {
     const shadow = ensureUI();
     const popover = shadow.querySelector('.popover');
+    const popoverBody = popover.querySelector('.popover-body');
     const wasPinned = pinnedPopover;
     const loadingProgress = popover.querySelector('.loading-progress');
     const badge = popover.querySelector('.popover-header .symbol-badge');
@@ -652,6 +656,8 @@ export function mount(ctx = {}) {
     const usagesCount = popover.querySelector('.usages-count');
     loadingProgress.hidden = true;
     popover.removeAttribute('aria-busy');
+    popover.classList.remove('popover--list');
+    popoverBody.classList.remove('usages-body');
     renderSignature(popover);
     docs.textContent = '';
     scope.textContent = resultScopeText(result.scope);
@@ -734,6 +740,8 @@ export function mount(ctx = {}) {
       });
       shouldPin = result.definitions.length > 0;
     } else if (kind === 'references') {
+      popover.classList.add('popover--list');
+      popoverBody.classList.add('usages-body');
       const count = `${result.locations.length}${result.hasMore ? '+' : ''}`;
       setHeader(result.definition.kind, `Usages of ${result.definition.name}`, `${result.definition.path}:${result.definition.line}`);
       renderSignature(popover, result.definition);
@@ -799,6 +807,7 @@ export function mount(ctx = {}) {
   function showLoading(message, pointer, progress, { usages = false } = {}) {
     const shadow = ensureUI();
     const popover = shadow.querySelector('.popover');
+    const popoverBody = popover.querySelector('.popover-body');
     const wasPinned = pinnedPopover;
     const loadingProgress = popover.querySelector('.loading-progress');
     const loadingPhase = loadingProgress.querySelector('.loading-progress-phase');
@@ -812,6 +821,8 @@ export function mount(ctx = {}) {
     const copyButton = popover.querySelector('.copy-button');
     const shortcutHint = popover.querySelector('.shortcut-hint');
     const usagesCount = popover.querySelector('.usages-count');
+    popover.classList.toggle('popover--list', usages);
+    popoverBody.classList.toggle('usages-body', usages);
     if (progress) {
       loadingProgress.hidden = false;
       loadingPhase.textContent = loadingPhaseLabel(progress.phase);
