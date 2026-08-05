@@ -99,6 +99,7 @@ const MARKUP = `
     .scope { margin:0; color:var(--golens-text-muted); font:10.5px/1.4 var(--golens-font-mono); }
     .choices { display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:4px; background:var(--golens-surface-inset); }
     .choices:empty { display:none; }
+    .choices.choices--flush { overflow:visible; border:0; border-radius:0; background:transparent; }
     .choice { position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-2); width:100%; min-height:36px; align-items:center; padding:6px var(--golens-space-3); border:0; border-bottom:1px solid var(--golens-border-subtle); background:transparent; color:var(--golens-text-primary); text-align:left; cursor:pointer; transition:background-color var(--golens-motion-fast); }
     .choice:last-child { border-bottom:0; }
     .choice:hover { background:var(--golens-info-soft); box-shadow:inset 2px 0 0 var(--golens-info); } .choice:active { background:var(--golens-surface-pressed); } .choice:disabled { cursor:not-allowed; opacity:.45; } .choice:focus-visible,.header-action:focus-visible,.signature-toggle:focus-visible,summary:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:-2px; }
@@ -665,6 +666,7 @@ export function mount(ctx = {}) {
     location.textContent = '';
     configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
     choices.replaceChildren();
+    choices.classList.remove('choices--flush');
     shortcut.hidden = true;
     usagesCount.hidden = true;
     usagesCount.classList.remove('is-loading');
@@ -742,9 +744,10 @@ export function mount(ctx = {}) {
     } else if (kind === 'references') {
       popover.classList.add('popover--list');
       popoverBody.classList.add('usages-body');
+      choices.classList.add('choices--flush');
       const count = `${result.locations.length}${result.hasMore ? '+' : ''}`;
       setHeader(result.definition.kind, `Usages of ${result.definition.name}`, `${result.definition.path}:${result.definition.line}`);
-      renderSignature(popover, result.definition);
+      scope.hidden = true;
       if (result.locations.length) {
         usagesCount.hidden = false;
         usagesCount.append(doc.createTextNode(`${count} usage${result.locations.length === 1 && !result.hasMore ? '' : 's'}`));
@@ -847,11 +850,13 @@ export function mount(ctx = {}) {
       const spinner = doc.createElement('span');
       spinner.className = 'usages-spinner';
       usagesCount.replaceChildren(spinner, doc.createTextNode('Finding usages…'));
+      choices.classList.add('choices--flush');
       choices.replaceChildren(usageRowSkeleton(), usageRowSkeleton());
     } else {
       usagesCount.hidden = true;
       usagesCount.classList.remove('is-loading');
       usagesCount.replaceChildren();
+      choices.classList.remove('choices--flush');
       choices.replaceChildren();
     }
     popover.setAttribute('aria-busy', 'true');

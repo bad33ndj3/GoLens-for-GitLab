@@ -104,7 +104,7 @@ test('showResult(): renders references with scope-aware absence copy and a "Sear
   assert.equal(handle.showResult(result, pointer), true);
   const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
   assert.equal(shadow.querySelector('.docs').textContent, 'Not found in 12 indexed packages. Search coverage is incomplete.');
-  assert.equal(shadow.querySelector('.scope').textContent, '12 indexed packages · search coverage is incomplete');
+  assert.equal(shadow.querySelector('.scope').hidden, true, 'the usages list never shows the scope line (matches the demo)');
   assert.equal([...shadow.querySelectorAll('.choices button')].at(-1).textContent, 'Search complete project');
 });
 
@@ -132,6 +132,11 @@ test('showResult(): groups multi-location references by file into compact usage 
   assert.equal(groups[0].querySelector('.usage-group-file').textContent.startsWith('router.go'), true);
   assert.equal(groups[0].querySelectorAll('.usage-row').length, 2);
   assert.equal(groups[1].querySelectorAll('.usage-row').length, 1);
+  assert.equal(shadow.querySelector('.popover').classList.contains('popover--list'), true, 'widens to the Find-Usages layout');
+  assert.equal(shadow.querySelector('.popover-body').classList.contains('usages-body'), true);
+  assert.equal(shadow.querySelector('.choices').classList.contains('choices--flush'), true, 'no bordered box around the grouped rows');
+  assert.equal(shadow.querySelector('.signature-block').hidden, true, 'no signature preamble alongside the usages list');
+  assert.equal(shadow.querySelector('.scope').hidden, true, 'no scope line crowding the usages list');
 });
 
 test('showResult({ compact: true }): a resolved definition drops its docs/signature when arriving via a usages-list click', () => {
