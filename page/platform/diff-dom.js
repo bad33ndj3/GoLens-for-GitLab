@@ -224,6 +224,22 @@ export function visibleDiffRootForDefinition(definition) {
   });
 }
 
+// diffFileIdentity(root) -> normalized path for any diff file root (unlike
+// computeFileContext, not Go-filtered), the writer counterpart to
+// visibleDiffRootForDefinition's reader: `visibleDiffRootForDefinition({
+// path: diffFileIdentity(root) })` re-finds the same file after GitLab
+// rebuilds every file root from scratch, which it does when switching
+// inline/parallel diff view — see controls.js's toggleDiffView(), which uses
+// this to restore scroll position across that rebuild.
+export function diffFileIdentity(root) {
+  if (!root) return null;
+  const data = rapidFileData(root);
+  const path = root.getAttribute('data-file-path')
+    || data.new_path || data.old_path
+    || root.querySelector('[data-testid="file-title"], .file-title-name, .rd-diff-file-link')?.textContent;
+  return path ? normalizePath(path) : null;
+}
+
 export function flashDestination(target) {
   if (!target) return;
   target.removeAttribute('data-golens-navigation-destination');
