@@ -228,6 +228,35 @@ test('expands the fold nearest the target line, not the first control in documen
   assert.equal(topButton.isConnected, true, 'the unrelated top-of-file control should not have been clicked');
 });
 
+test('expands a single-line fold even when the old/new side numbering diverges around it', async () => {
+  // Side-by-side row carries both an old- and new-side anchor. Old numbering
+  // runs ahead of new here (prior deletions), so naively reading "the first
+  // anchor in the row" for before/after would pick the old side and see
+  // before=15/after=16 straddling nothing around new-side target line 10 —
+  // exactly the single-line-fold regression this test guards against.
+  const window = mountFixture(`
+    <section class="diff-file"><table><tbody>
+      <tr class="match"><td><button type="button" data-click="expandLines" data-expand-direction="up">Expand top</button></td></tr>
+      <tr>
+        <td><a href="#old_15" data-position="old" aria-label="Line 15">15</a></td>
+        <td><a href="#new_9" data-position="new" aria-label="Added line 9">9</a></td>
+      </tr>
+      <tr class="match"><td><button type="button" data-click="expandLines" data-expand-direction="down">Expand fold</button></td></tr>
+      <tr>
+        <td><a href="#old_16" data-position="old" aria-label="Line 16">16</a></td>
+        <td><a href="#new_11" data-position="new" aria-label="Added line 11">11</a></td>
+      </tr>
+    </tbody></table></section>`);
+  const root = window.document.querySelector('.diff-file');
+  const [topButton, foldButton] = root.querySelectorAll('button');
+  foldButton.addEventListener('click', () => {
+    foldButton.closest('tr').insertAdjacentHTML('afterend', '<tr><td></td><td><a href="#new_10" data-position="new" aria-label="Added line 10">10</a></td></tr>');
+  });
+  const line = await revealLine(root, 10, 'new');
+  assert.equal(line?.getAttribute('aria-label'), 'Added line 10');
+  assert.equal(topButton.isConnected, true, 'the unrelated top-of-file control should not have been clicked');
+});
+
 test('picks the side GitLab marks via data-position, even without an old/deleted label or class', () => {
   const window = mountFixture(`
     <table><tbody><tr>
