@@ -218,6 +218,23 @@ function directionalExpandSelector(direction) {
   return '';
 }
 
+// A row can carry both an old- and a new-side line anchor, and once a file
+// has any prior insertions/deletions the two sides' numbering diverges.
+// Prefer the anchor matching `preferredSide` so the [before, after] span
+// computed below stays on one consistent numbering — for wide folds a
+// side mismatch is absorbed by the span, but for a single-line fold there
+// is no slack and picking the wrong side's number breaks the straddle
+// check entirely.
+function nearestLineInRow(row, preferredSide) {
+  const anchors = [...row.querySelectorAll('a[href*="#"], [data-line-number]')];
+  if (!anchors.length) return 0;
+  if (preferredSide) {
+    const preferred = anchors.find((anchor) => sideForAnchor(anchor) === preferredSide);
+    if (preferred) return lineFromAnchor(preferred);
+  }
+  return lineFromAnchor(anchors[0]);
+}
+
 // A file can have several collapsed hunks; when we don't know which
 // direction to expand (the target sits inside the already-visible line
 // range, i.e. a *middle* hunk — see revealLine below) there may be several
@@ -226,7 +243,7 @@ function directionalExpandSelector(direction) {
 // top-of-file control) while the actual gap around `line` stays collapsed.
 // Pick the control whose row sits closest, in row order, to a visible line
 // number nearest `line` instead.
-function nearestFoldControl(root, line) {
+function nearestFoldControl(root, line, preferredSide = '') {
   const buttons = [...root.querySelectorAll(FOLD_CONTROL_SELECTOR)].filter((candidate) => !candidate.disabled);
   if (buttons.length <= 1) return buttons[0] || null;
   const rows = [...root.querySelectorAll('tr, [role="row"]')];
@@ -237,14 +254,12 @@ function nearestFoldControl(root, line) {
     const rowIndex = rows.indexOf(row);
     let before = -Infinity;
     for (let i = rowIndex - 1; i >= 0; i--) {
-      const anchor = rows[i].querySelector('a[href*="#"], [data-line-number]');
-      const candidateLine = anchor && lineFromAnchor(anchor);
+      const candidateLine = nearestLineInRow(rows[i], preferredSide);
       if (candidateLine) { before = candidateLine; break; }
     }
     let after = Infinity;
     for (let i = rowIndex + 1; i < rows.length; i++) {
-      const anchor = rows[i].querySelector('a[href*="#"], [data-line-number]');
-      const candidateLine = anchor && lineFromAnchor(anchor);
+      const candidateLine = nearestLineInRow(rows[i], preferredSide);
       if (candidateLine) { after = candidateLine; break; }
     }
     // Only a control whose gap actually straddles the target line is a
@@ -272,7 +287,7 @@ export async function revealLine(root, line, preferredSide = '') {
       button = [...root.querySelectorAll(directionalSelector)].find((candidate) => !candidate.disabled);
     } else {
       // Inside the visible range but not rendered: a collapsed middle hunk.
-      button = nearestFoldControl(root, line);
+      button = nearestFoldControl(root, line, preferredSide);
     }
     if (!button) button = [...root.querySelectorAll(FULL_FILE_SELECTOR)].find((candidate) => !candidate.disabled);
     if (!button) return null;
