@@ -3,3 +3,9 @@ dist/
 *.tgz
 .DS_Store
 .claude/settings.local.json
+
+design-mock/.ds-sync/
+design-mock/ds-bundle/
+design-mock/.design-sync/.cache/
+design-mock/.design-sync/learnings/
+design-mock/.design-sync/node_modules

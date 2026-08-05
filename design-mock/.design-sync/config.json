@@ -1,0 +1,18 @@
+{
+  "pkg": "golens-design-mock",
+  "globalName": "GoLensDesignMock",
+  "projectId": "b4459d5f-0c20-41fe-83ff-27a614f9cee9",
+  "shape": "package",
+  "buildCmd": "npm run build",
+  "cssEntry": "./dist/styles.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "CacheCard": { "cardMode": "column" },
+    "ChoiceRow": { "cardMode": "column" },
+    "HostForm": { "cardMode": "column" },
+    "HostRow": { "cardMode": "column" },
+    "PopupHeader": { "cardMode": "column" },
+    "PreferenceRow": { "cardMode": "column" },
+    "ShortcutRow": { "cardMode": "column" }
+  }
+}
