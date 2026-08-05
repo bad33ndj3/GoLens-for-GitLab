@@ -462,14 +462,10 @@ export function mount(ctx) {
       .find((option) => option.textContent.trim().toLowerCase() === label);
   }
 
-  function selectDiffViewOption(runID, toggle, targetView, attemptsLeft, anchorIdentity) {
+  function selectDiffViewOption(runID, toggle, targetView, attemptsLeft) {
     if (runID !== diffViewRunID) return;
     const option = diffViewListboxOption(toggle, targetView);
-    if (option) {
-      option.click();
-      restoreDiffFileScroll(runID, anchorIdentity, DIFF_VIEW_MAX_RETRIES);
-      return;
-    }
+    if (option) { option.click(); return; }
     if (attemptsLeft <= 0) {
       // Leave GitLab's UI exactly as it was: close the dropdown we opened
       // rather than stranding it open when nothing matched.
@@ -477,27 +473,66 @@ export function mount(ctx) {
       legacy.toast?.('Could not switch diff view — GitLab’s preferences menu did not open as expected.');
       return;
     }
-    clock.setTimeout(() => selectDiffViewOption(runID, toggle, targetView, attemptsLeft - 1, anchorIdentity), DIFF_VIEW_RETRY_MS);
+    clock.setTimeout(() => selectDiffViewOption(runID, toggle, targetView, attemptsLeft - 1), DIFF_VIEW_RETRY_MS);
   }
 
   // Inline and parallel render each file at a different height, so switching
   // between them shifts every file below the switch point up or down without
-  // GitLab adjusting the (unrelated) scroll position to compensate — the
-  // browser keeps the same raw scrollY, which after the shift lines up with
-  // different content, in practice usually landing back near the first file.
-  // Re-finding the file that was on screen before the switch and re-anchoring
-  // to it (repeated across the same retry window as the option click above,
-  // since GitLab's re-render isn't necessarily done in one tick) keeps the
-  // view stable across GitLab's own re-render.
+  // GitLab adjusting the (unrelated) scroll position to compensate — in
+  // practice usually landing back near the first file. GitLab's own
+  // setDiffViewType action *always* pushes a `view=` URL param as part of the
+  // same click that changes the layout (see toggleDiffView's header comment),
+  // and bootstrap.js's location.href poll treats that as a navigation and
+  // fully unmounts/remounts this whole module graph within ~200ms — normally
+  // well before a restore attempt racing against a retry timer in *this*
+  // instance would land, especially on a large MR where GitLab's own re-render
+  // takes a while. So the anchor to restore is handed across that remount
+  // boundary via sessionStorage (the same pattern celebration.js uses for its
+  // Friday-MR-create Easter egg) instead of raced against it: written here,
+  // read back and consumed once by restoreDiffViewScrollAnchor() near the top
+  // of the *next* mount() call.
+  const DIFF_VIEW_SCROLL_ANCHOR_KEY = 'golens-diff-view-scroll-anchor';
+  const DIFF_VIEW_SCROLL_ANCHOR_MAX_AGE_MS = 5000;
+  const DIFF_VIEW_SCROLL_RESTORE_TIMEOUT_MS = 2500;
+
   function topmostDiffFileRoot() {
     return diffFileRoots().find((root) => root.getBoundingClientRect().bottom > 0) || null;
   }
 
-  function restoreDiffFileScroll(runID, identity, ticksLeft) {
-    if (runID !== diffViewRunID || !identity) return;
-    visibleDiffRootForDefinition({ path: identity })?.scrollIntoView({ block: 'start' });
-    if (ticksLeft <= 0) return;
-    clock.setTimeout(() => restoreDiffFileScroll(runID, identity, ticksLeft - 1), DIFF_VIEW_RETRY_MS);
+  function rememberDiffViewScrollAnchor(identity) {
+    if (!identity) return;
+    try {
+      win.sessionStorage.setItem(DIFF_VIEW_SCROLL_ANCHOR_KEY, JSON.stringify({ identity, at: Date.now() }));
+    } catch {
+      // A disabled/unavailable session store just skips this best-effort restore.
+    }
+  }
+
+  // Called once per mount(), before any toggle has necessarily happened —
+  // a no-op on every mount except the one immediately following a diff-view
+  // toggle. Re-applies the remembered scroll target on every subsequent DOM
+  // mutation (not just once) since GitLab may still be lazily rendering more
+  // of a large diff after the first mutation lands.
+  function restoreDiffViewScrollAnchor() {
+    let pending;
+    try {
+      const raw = win.sessionStorage.getItem(DIFF_VIEW_SCROLL_ANCHOR_KEY);
+      if (!raw) return;
+      win.sessionStorage.removeItem(DIFF_VIEW_SCROLL_ANCHOR_KEY);
+      pending = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!pending?.identity || !Number.isFinite(pending.at) || Date.now() - pending.at > DIFF_VIEW_SCROLL_ANCHOR_MAX_AGE_MS) return;
+    if (!isMergeRequestDiffPath(win.location.pathname, win.location.search)) return;
+    const attempt = () => visibleDiffRootForDefinition({ path: pending.identity })?.scrollIntoView({ block: 'start' });
+    attempt();
+    const observer = new MutationObserver(() => {
+      if (unmounted) { observer.disconnect(); return; }
+      attempt();
+    });
+    observer.observe(doc.body, { childList: true, subtree: true });
+    clock.setTimeout(() => observer.disconnect(), DIFF_VIEW_SCROLL_RESTORE_TIMEOUT_MS);
   }
 
   function toggleDiffView() {
@@ -510,9 +545,9 @@ export function mount(ctx) {
     const currentView = diffViewFromLocation({ search: win.location.search, cookie: doc.cookie });
     const targetView = currentView === 'parallel' ? 'inline' : 'parallel';
     const runID = ++diffViewRunID;
-    const anchorIdentity = diffFileIdentity(topmostDiffFileRoot());
+    rememberDiffViewScrollAnchor(diffFileIdentity(topmostDiffFileRoot()));
     toggle.click();
-    selectDiffViewOption(runID, toggle, targetView, DIFF_VIEW_MAX_RETRIES, anchorIdentity);
+    selectDiffViewOption(runID, toggle, targetView, DIFF_VIEW_MAX_RETRIES);
     return true;
   }
 
@@ -692,6 +727,7 @@ export function mount(ctx) {
   doc.addEventListener('fullscreenchange', onFullscreenChange);
   win.addEventListener('focus', onFocus);
   doc.addEventListener('visibilitychange', onVisibilityChange);
+  restoreDiffViewScrollAnchor();
 
   const handle = {
     async setEnabled(nextEnabled, { persist = false } = {}) {
