@@ -29,6 +29,7 @@
 // itself created, since page/lifecycle mounts and unmounts it on every SPA
 // navigation.
 import { createClock } from '../platform/clock.js';
+import { diffFileIdentity, diffFileRoots, visibleDiffRootForDefinition } from '../platform/diff-dom.js';
 import {
   bookmarkButtonView,
   bookmarkDrawerPosition,
@@ -461,10 +462,14 @@ export function mount(ctx) {
       .find((option) => option.textContent.trim().toLowerCase() === label);
   }
 
-  function selectDiffViewOption(runID, toggle, targetView, attemptsLeft) {
+  function selectDiffViewOption(runID, toggle, targetView, attemptsLeft, anchorIdentity) {
     if (runID !== diffViewRunID) return;
     const option = diffViewListboxOption(toggle, targetView);
-    if (option) { option.click(); return; }
+    if (option) {
+      option.click();
+      restoreDiffFileScroll(runID, anchorIdentity, DIFF_VIEW_MAX_RETRIES);
+      return;
+    }
     if (attemptsLeft <= 0) {
       // Leave GitLab's UI exactly as it was: close the dropdown we opened
       // rather than stranding it open when nothing matched.
@@ -472,7 +477,27 @@ export function mount(ctx) {
       legacy.toast?.('Could not switch diff view — GitLab’s preferences menu did not open as expected.');
       return;
     }
-    clock.setTimeout(() => selectDiffViewOption(runID, toggle, targetView, attemptsLeft - 1), DIFF_VIEW_RETRY_MS);
+    clock.setTimeout(() => selectDiffViewOption(runID, toggle, targetView, attemptsLeft - 1, anchorIdentity), DIFF_VIEW_RETRY_MS);
+  }
+
+  // Inline and parallel render each file at a different height, so switching
+  // between them shifts every file below the switch point up or down without
+  // GitLab adjusting the (unrelated) scroll position to compensate — the
+  // browser keeps the same raw scrollY, which after the shift lines up with
+  // different content, in practice usually landing back near the first file.
+  // Re-finding the file that was on screen before the switch and re-anchoring
+  // to it (repeated across the same retry window as the option click above,
+  // since GitLab's re-render isn't necessarily done in one tick) keeps the
+  // view stable across GitLab's own re-render.
+  function topmostDiffFileRoot() {
+    return diffFileRoots().find((root) => root.getBoundingClientRect().bottom > 0) || null;
+  }
+
+  function restoreDiffFileScroll(runID, identity, ticksLeft) {
+    if (runID !== diffViewRunID || !identity) return;
+    visibleDiffRootForDefinition({ path: identity })?.scrollIntoView({ block: 'start' });
+    if (ticksLeft <= 0) return;
+    clock.setTimeout(() => restoreDiffFileScroll(runID, identity, ticksLeft - 1), DIFF_VIEW_RETRY_MS);
   }
 
   function toggleDiffView() {
@@ -485,8 +510,9 @@ export function mount(ctx) {
     const currentView = diffViewFromLocation({ search: win.location.search, cookie: doc.cookie });
     const targetView = currentView === 'parallel' ? 'inline' : 'parallel';
     const runID = ++diffViewRunID;
+    const anchorIdentity = diffFileIdentity(topmostDiffFileRoot());
     toggle.click();
-    selectDiffViewOption(runID, toggle, targetView, DIFF_VIEW_MAX_RETRIES);
+    selectDiffViewOption(runID, toggle, targetView, DIFF_VIEW_MAX_RETRIES, anchorIdentity);
     return true;
   }
 
