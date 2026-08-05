@@ -210,6 +210,51 @@ test('Ctrl+click on a declaration with usages shows a loading usages-count badge
   handle.setEnabled(false);
 });
 
+test('package loading shows its progress in the header pill, not a full-width bar', async () => {
+  const window = buildFixture(`
+    <section class="diff-file" data-file-path="pkg/run.go">
+      <table><tbody>
+        <tr><td class="new_line"><a aria-label="Added line 1">1</a></td><td class="line_content" data-line="1"><span>Run</span>()</td></tr>
+      </tbody></table>
+    </section>`);
+  let resolveDefinition;
+  const definitionPromise = new Promise((resolve) => { resolveDefinition = resolve; });
+  const legacy = fakeLegacy({
+    diffFileRoots: () => [...window.document.querySelectorAll('.diff-file')],
+    codeCellFor: (node) => node?.closest?.('.line_content') || null,
+    fileContextFor: (cell) => (cell?.closest?.('.line_content')
+      ? { path: 'pkg/run.go', oldPath: 'pkg/run.go', newPath: 'pkg/run.go', packagePath: 'pkg' }
+      : null),
+    lineContextFor: (cell) => ({ line: Number(cell.closest('.line_content')?.dataset.line || 0), side: 'new' }),
+    loadPackage: async (packagePath, ref, onProgress) => {
+      onProgress?.('Loading pkg…', { phase: 'indexing', percentage: 40, completed: 2, total: 5 });
+    },
+    workerRPC: async (method) => (method === 'resolveDefinition' ? definitionPromise : { status: 'notFound' }),
+  });
+  const handle = mount({ legacy });
+  handle.setEnabled(true);
+
+  const span = window.document.querySelector('.line_content[data-line="1"] span');
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: span });
+  Object.defineProperty(click, 'button', { value: 0 });
+  Object.defineProperty(click, 'metaKey', { value: true });
+  window.document.dispatchEvent(click);
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  assert.equal(shadow.querySelector('.loading-progress'), null, 'the full-width progress bar markup is gone entirely');
+  const usagesCount = shadow.querySelector('.usages-count');
+  assert.equal(usagesCount.hidden, false, 'progress renders in the header pill instead');
+  assert.equal(usagesCount.classList.contains('is-loading'), true);
+  assert.match(usagesCount.textContent, /40%/);
+
+  resolveDefinition({ status: 'notFound' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  handle.setEnabled(false);
+});
+
 test('showResult(): groups implementations into production and collapsed test-double sections', () => {
   buildFixture();
   const legacy = fakeLegacy();

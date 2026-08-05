@@ -112,7 +112,6 @@ const MARKUP = `
     .choice:hover .destination-icon::after,.choice:focus-visible .destination-icon::after { position:absolute; z-index:2; right:-4px; bottom:calc(100% + 7px); width:max-content; max-width:180px; padding:var(--golens-space-1) var(--golens-space-2); border:1px solid var(--golens-border-strong); border-radius:3px; background:var(--golens-surface-raised); box-shadow:var(--golens-shadow-sm); color:var(--golens-text-primary); content:attr(data-tooltip); font:10px/1.3 var(--golens-font-sans); pointer-events:none; }
     details { border-top:1px solid var(--golens-border-subtle); } summary { padding:6px var(--golens-space-3); color:var(--golens-text-muted); font:10.5px/1.4 var(--golens-font-mono); cursor:pointer; } summary:hover { color:var(--golens-text-primary); } .test-double-choices { display:flex; flex-direction:column; }
     .shortcut-hint { display:flex; align-items:center; gap:5px; padding-top:var(--golens-space-1); color:var(--golens-text-muted); font-size:10px; } kbd { display:inline-flex; min-width:16px; min-height:16px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:3px; background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
-    .loading-progress { display:grid; gap:var(--golens-space-2); padding:var(--golens-space-2) var(--golens-space-3); border:1px solid color-mix(in srgb,var(--golens-primary) 35%,var(--golens-border-subtle)); border-radius:4px; background:var(--golens-primary-soft); } .loading-progress[hidden] { display:none; } .loading-progress-meta { display:flex; justify-content:space-between; gap:var(--golens-space-2); color:var(--golens-text-primary); font-size:9px; } .loading-progress-phase { overflow:hidden; font-weight:600; text-overflow:ellipsis; white-space:nowrap; } .loading-progress-count { flex:0 0 auto; color:var(--golens-primary-hover); font:600 9px/1.45 var(--golens-font-mono); font-variant-numeric:tabular-nums; } .loading-track { height:3px; overflow:hidden; border-radius:2px; background:var(--golens-surface-pressed); } .loading-track > i { display:block; width:0; height:100%; border-radius:inherit; background:var(--golens-primary); transition:width var(--golens-motion-base); }
     .popover-header:has(.usages-count:not([hidden])) { grid-template-columns:auto minmax(0,1fr) auto auto; }
     .usages-count { display:flex; flex:0 0 auto; align-items:center; gap:5px; margin-top:2px; padding:2px 7px; border-radius:99px; background:var(--golens-surface-hover); color:var(--golens-text-muted); font:600 10px/1.4 var(--golens-font-mono); font-variant-numeric:tabular-nums; white-space:nowrap; } .usages-count[hidden] { display:none; }
     .usages-count.is-loading { color:var(--golens-primary-hover); background:var(--golens-primary-soft); }
@@ -143,7 +142,7 @@ const MARKUP = `
   </style>
   <section class="popover" role="tooltip" aria-labelledby="golens-popover-title">
     <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><div class="usages-count" hidden></div><div class="header-actions"><button class="header-action copy-button" type="button" aria-label="Copy source location" title="Copy source location" hidden><svg class="copy-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg><svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.25 3.15 3.15L13 4.6"/></svg></button><button class="header-action close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></header>
-    <div class="popover-body"><div class="loading-progress" hidden role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase"></span><span class="loading-progress-count"></span></div><div class="loading-track" role="progressbar" aria-label="Go intelligence loading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="docs"></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="scope" hidden></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
+    <div class="popover-body"><div class="docs"></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="scope" hidden></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
   </section>
 `;
 
@@ -644,7 +643,6 @@ export function mount(ctx = {}) {
     const popover = shadow.querySelector('.popover');
     const popoverBody = popover.querySelector('.popover-body');
     const wasPinned = pinnedPopover;
-    const loadingProgress = popover.querySelector('.loading-progress');
     const badge = popover.querySelector('.popover-header .symbol-badge');
     const title = popover.querySelector('.popover-title');
     const docs = popover.querySelector('.docs');
@@ -655,7 +653,6 @@ export function mount(ctx = {}) {
     const shortcut = popover.querySelector('.shortcut-hint');
     const shortcutHint = shortcut.querySelector('span');
     const usagesCount = popover.querySelector('.usages-count');
-    loadingProgress.hidden = true;
     popover.removeAttribute('aria-busy');
     popover.classList.remove('popover--list');
     popoverBody.classList.remove('usages-body');
@@ -807,15 +804,21 @@ export function mount(ctx = {}) {
     return true;
   }
 
+  // loadingPillText(progress) -> the header pill's spinner label while a
+  // package is still loading (replaces the former full-width `.loading-progress`
+  // bar — all loading states now surface through the same small header pill
+  // the usages-count badge already uses, per the demo never showing that bar).
+  function loadingPillText(progress) {
+    return progress.phase === 'discovering'
+      ? loadingPhaseLabel(progress.phase)
+      : `${loadingPhaseLabel(progress.phase)} · ${progress.percentage}%`;
+  }
+
   function showLoading(message, pointer, progress, { usages = false } = {}) {
     const shadow = ensureUI();
     const popover = shadow.querySelector('.popover');
     const popoverBody = popover.querySelector('.popover-body');
     const wasPinned = pinnedPopover;
-    const loadingProgress = popover.querySelector('.loading-progress');
-    const loadingPhase = loadingProgress.querySelector('.loading-progress-phase');
-    const loadingCount = loadingProgress.querySelector('.loading-progress-count');
-    const loadingTrack = loadingProgress.querySelector('.loading-track');
     const badge = popover.querySelector('.popover-header .symbol-badge');
     const title = popover.querySelector('.popover-title');
     const docs = popover.querySelector('.docs');
@@ -826,17 +829,6 @@ export function mount(ctx = {}) {
     const usagesCount = popover.querySelector('.usages-count');
     popover.classList.toggle('popover--list', usages);
     popoverBody.classList.toggle('usages-body', usages);
-    if (progress) {
-      loadingProgress.hidden = false;
-      loadingPhase.textContent = loadingPhaseLabel(progress.phase);
-      loadingCount.textContent = progress.phase === 'discovering'
-        ? '0%'
-        : `${progress.percentage}% · ${progress.completed} / ${progress.total} files`;
-      loadingTrack.setAttribute('aria-valuenow', String(progress.percentage));
-      loadingTrack.querySelector('i').style.width = `${progress.percentage}%`;
-    } else {
-      loadingProgress.hidden = true;
-    }
     applySymbolBadge(badge, 'external');
     title.textContent = message;
     renderSignature(popover);
@@ -852,6 +844,14 @@ export function mount(ctx = {}) {
       usagesCount.replaceChildren(spinner, doc.createTextNode('Finding usages…'));
       choices.classList.add('choices--flush');
       choices.replaceChildren(usageRowSkeleton(), usageRowSkeleton());
+    } else if (progress) {
+      usagesCount.hidden = false;
+      usagesCount.classList.add('is-loading');
+      const spinner = doc.createElement('span');
+      spinner.className = 'usages-spinner';
+      usagesCount.replaceChildren(spinner, doc.createTextNode(loadingPillText(progress)));
+      choices.classList.remove('choices--flush');
+      choices.replaceChildren();
     } else {
       usagesCount.hidden = true;
       usagesCount.classList.remove('is-loading');
