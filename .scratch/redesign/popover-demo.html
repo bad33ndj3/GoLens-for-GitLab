@@ -21,6 +21,7 @@
   .header-actions { display:flex; align-items:center; gap:1px; }
   .header-action { display:inline-flex; width:24px; height:24px; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:4px; background:transparent; color:var(--golens-text-muted); cursor:pointer; transition:background-color var(--golens-motion-fast),color var(--golens-motion-fast); }
   .header-action:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .header-action[hidden] { display:none; } .header-action svg { width:13px; height:13px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
+  .header-action:focus-visible, .choice:focus-visible, .usage-row:focus-visible, .signature-toggle:focus-visible, summary:focus-visible { outline:2px solid var(--golens-accent-focus); outline-offset:-2px; }
   .signature-block { overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:4px; background:var(--golens-surface-inset); } .signature-block[hidden] { display:none; }
   .signature { margin:0; padding:var(--golens-space-2) var(--golens-space-3); overflow-wrap:anywhere; color:#a9b7c6; font:500 11px/1.5 var(--golens-font-mono); white-space:pre-wrap; }
   .tok-kw { color:#61afef; } .tok-type { color:#61afef; } .tok-builtin { color:#d19a66; } .tok-func { color:#ffc66d; } .tok-param { color:#a9b7c6; } .tok-str { color:#6a8759; } .tok-num { color:#6897bb; } .tok-comment { color:#808080; font-style:italic; } .tok-punct { color:#a9b7c6; }

@@ -47,6 +47,25 @@ one file used before (adds `--golens-text-inverse`, `--golens-accent-warning`, `
 said icons look fine for now, revisit later), and filling in missing interactive states (settings'
 cache-progress bar and GitLab-origin form have no error/loading state shown in the demo yet).
 
+**Second finetuning pass (designer review):**
+- `:focus-visible` was defined globally in settings-demo.html/controls-demo.html but missing
+  entirely in popover-demo.html, onboarding-demo.html, project-search-demo.html — keyboard
+  navigation had no visible focus indicator on those three. Added, matching the existing
+  `outline: 2px solid var(--golens-accent-focus)` convention.
+- `onboarding-demo.html`'s `.keymap-card.selected` still used primary-orange for "this option is
+  selected" — missed in the first pass's blue-for-selection rule. Now matches
+  `.tour-tab.active`/`.settings-tab[aria-selected]`/`.choice:hover` (info-blue inset accent).
+- `onboarding-demo.html`'s `.btn-primary` hardcoded `color:#000` instead of the
+  `--golens-text-inverse` token — same class of bug already fixed once in settings-demo.html,
+  missed here.
+- `project-search-demo.html`'s error state ("Indexing failed. Network timeout.") was rendered in
+  muted gray, same as normal status text — an error a user could miss. Now uses `--golens-error`.
+- `controls-demo.html`'s bookmark-drawer "Remove" button (deletes one bookmark) hovered with the
+  same orange treatment as "Jump"/"Recover" (primary actions), reading as a CTA instead of a
+  destructive one. Added an error-tinted hover state, distinct from but lighter-weight than the
+  drawer-footer's always-red bulk-clear buttons (per-row delete shouldn't be red at rest, only
+  on hover intent).
+
 ## Design states — popover-demo.html
 
 1. Hover → resolved definition (func)

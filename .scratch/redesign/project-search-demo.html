@@ -12,7 +12,7 @@
   * { box-sizing:border-box; }
 
   /* Modal backdrop & dialog */
-  .demo-backdrop { position:fixed; inset:0; display:grid; place-items:center; padding:20px; background:rgba(0,0,0,.58); }
+  .demo-backdrop { position:absolute; inset:0; display:grid; place-items:center; padding:20px; background:rgba(0,0,0,.58); border-radius:var(--golens-radius-lg); }
   .demo-backdrop.hidden { display:none; }
   .demo-modal { width:min(480px,100%); padding:var(--golens-space-4); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-lg); background:var(--golens-surface-panel); color:var(--golens-text-primary); box-shadow:var(--golens-shadow-lg); font:13px/1.5 var(--golens-font-sans); }
   .modal-header { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--golens-space-3); margin-bottom:var(--golens-space-3); }
@@ -22,6 +22,7 @@
   .modal-action-btn:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); }
   .modal-close-btn { display:inline-flex; width:28px; height:28px; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:var(--golens-radius-sm); background:transparent; color:var(--golens-text-secondary); cursor:pointer; transition:background-color var(--golens-motion-fast),color var(--golens-motion-fast); }
   .modal-close-btn:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+  .modal-action-btn:focus-visible, .modal-close-btn:focus-visible, .demo-chip:focus-visible { outline:2px solid var(--golens-accent-focus); outline-offset:2px; }
 
   /* Compact progress indicator (spinner+count pill) — replacing the old thick progress bar */
   .progress-compact { display:flex; flex:0 0 auto; align-items:center; gap:6px; padding:3px 9px; margin:2px 0; border-radius:99px; background:var(--golens-surface-hover); color:var(--golens-text-muted); font:600 10px/1.4 var(--golens-font-mono); font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -47,7 +48,7 @@
   .state-label { display:block; color:#8a9199; font:600 11px/1.4 var(--golens-font-sans); text-transform:uppercase; letter-spacing:.04em; margin:0 0 10px; }
 
   /* Demo spacing */
-  .demo-scene { margin-bottom:60px; position:relative; }
+  .demo-scene { margin-bottom:60px; position:relative; min-height:280px; }
 </style>
 </head>
 <body>
@@ -127,7 +128,7 @@
 
         <div class="modal-progress-section">
           <div class="progress-phase">
-            <span class="progress-phase-text" style="color:var(--golens-text-muted);">Indexing failed. Network timeout.</span>
+            <span class="progress-phase-text" style="color:var(--golens-error);">Indexing failed. Network timeout.</span>
           </div>
         </div>
 
@@ -142,34 +143,29 @@
 
 <div class="col">
   <p class="label">State 3: Minimized chip button (lower-right corner)</p>
-  <div class="demo-scene" style="height:120px;position:relative;">
-    <div class="demo-backdrop" style="position:fixed;inset:0;display:none;"></div>
-    <div style="position:fixed;right:20px;bottom:20px;">
-      <button class="demo-chip" type="button">
-        <span>Project search</span>
-        <span class="chip-progress is-loading">
-          <span class="progress-spinner"></span>
-          <span>28%</span>
-        </span>
-      </button>
-    </div>
-    <p style="color:var(--golens-text-muted);font-size:11px;position:absolute;bottom:0;left:0;right:0;">↑ Fixed to lower-right corner, shown when dialog is minimized</p>
+  <div class="demo-scene">
+    <button class="demo-chip" type="button">
+      <span>Project search</span>
+      <span class="chip-progress is-loading">
+        <span class="progress-spinner"></span>
+        <span>28%</span>
+      </span>
+    </button>
+    <p style="color:var(--golens-text-muted);font-size:11px;margin:8px 0 0;">Shown fixed to lower-right corner when dialog is minimized</p>
   </div>
 </div>
 
 <div class="col">
   <p class="label">State 3b: Chip with completed search</p>
-  <div class="demo-scene" style="height:120px;position:relative;">
-    <div style="position:fixed;right:20px;bottom:20px;">
-      <button class="demo-chip" type="button">
-        <span>Project search</span>
-        <span class="chip-progress">
-          <span style="color:var(--golens-success);">✓</span>
-          <span>Done</span>
-        </span>
-      </button>
-    </div>
-    <p style="color:var(--golens-text-muted);font-size:11px;position:absolute;bottom:0;left:0;right:0;">↑ Chip in completion state (no spinner, success indicator)</p>
+  <div class="demo-scene">
+    <button class="demo-chip" type="button">
+      <span>Project search</span>
+      <span class="chip-progress">
+        <span style="color:var(--golens-success);">✓</span>
+        <span>Done</span>
+      </span>
+    </button>
+    <p style="color:var(--golens-text-muted);font-size:11px;margin:8px 0 0;">Chip in completion state (no spinner, success indicator)</p>
   </div>
 </div>
 

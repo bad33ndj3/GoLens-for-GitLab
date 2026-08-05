@@ -25,7 +25,8 @@
   .keymap-grid { display:grid; grid-template-columns:1fr 1fr; gap:var(--golens-space-3); }
   .keymap-card { position:relative; display:grid; grid-template-rows:auto minmax(0,1fr); gap:var(--golens-space-2); padding:var(--golens-space-3) var(--golens-space-4); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-sm); background:var(--golens-surface-inset); cursor:pointer; transition:border-color 140ms, background 140ms, box-shadow 140ms; }
   .keymap-card:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-raised); }
-  .keymap-card.selected { border-color:var(--golens-primary); background:var(--golens-surface-raised); box-shadow:inset 0 0 0 1px var(--golens-primary), inset 2px 0 0 var(--golens-primary); }
+  .keymap-card.selected { border-color:var(--golens-accent-info); background:var(--golens-surface-raised); box-shadow:inset 0 0 0 1px var(--golens-accent-info), inset 2px 0 0 var(--golens-accent-info); }
+  .keymap-card:focus-visible, .btn:focus-visible, .tour-tab:focus-visible { outline:2px solid var(--golens-accent-focus); outline-offset:2px; }
   .keymap-label { font:600 11.5px/1.3 var(--golens-font-mono); color:var(--golens-text-primary); }
   .keymap-desc { font:10.5px/1.4 var(--golens-font-mono); color:var(--golens-text-muted); }
 
@@ -75,7 +76,7 @@
   .btn:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); color:var(--golens-text-primary); }
   .btn:active { transform:translateY(1px); }
   .keymap-card:active { transform:translateY(1px); }
-  .btn-primary { border-color:var(--golens-primary); background:var(--golens-primary); color:#000; font-weight:800; }
+  .btn-primary { border-color:var(--golens-primary); background:var(--golens-primary); color:var(--golens-text-inverse); font-weight:800; }
   .btn-primary:hover { border-color:var(--golens-primary-hover); background:var(--golens-primary-hover); }
 
   /* kbd — matches popover-demo.html's .shortcut-hint kbd */
