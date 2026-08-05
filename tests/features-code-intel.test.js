@@ -108,6 +108,103 @@ test('showResult(): renders references with scope-aware absence copy and a "Sear
   assert.equal([...shadow.querySelectorAll('.choices button')].at(-1).textContent, 'Search complete project');
 });
 
+test('showResult(): groups multi-location references by file into compact usage rows, with a usages-count badge', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  const result = {
+    status: 'references',
+    definition: { name: 'JetStream', kind: 'interface', path: 'jetstream/jetstream.go', line: 15 },
+    locations: [
+      { path: 'packages/ezjetstream/router.go', line: 15 },
+      { path: 'packages/ezjetstream/router.go', line: 76 },
+      { path: 'packages/ezjetstream/stream.go', line: 273 },
+    ],
+    hasMore: false,
+    scope: { kind: 'currentPackage' },
+  };
+  assert.equal(handle.showResult(result, pointer), true);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  assert.equal(shadow.querySelector('.usages-count').hidden, false);
+  assert.equal(shadow.querySelector('.usages-count').textContent, '3 usages');
+  const groups = shadow.querySelectorAll('.usage-group');
+  assert.equal(groups.length, 2, 'locations are grouped by file');
+  assert.equal(groups[0].querySelector('.usage-group-file').textContent.startsWith('router.go'), true);
+  assert.equal(groups[0].querySelectorAll('.usage-row').length, 2);
+  assert.equal(groups[1].querySelectorAll('.usage-row').length, 1);
+});
+
+test('showResult({ compact: true }): a resolved definition drops its docs/signature when arriving via a usages-list click', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  const definition = { name: 'Store', kind: 'interface', signature: 'type Store interface { Get(string) ([]byte, error) }', documentation: 'Store persists blobs.', path: 'internal/cache/store.go', line: 8 };
+
+  handle.showResult({ status: 'resolved', isDefinition: true, definition }, pointer, { compact: true });
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  assert.equal(shadow.querySelector('.docs').textContent, '', 'docs are dropped in compact mode');
+  assert.equal(shadow.querySelector('.signature-block').hidden, true, 'signature is dropped in compact mode');
+  assert.equal(shadow.querySelector('.popover-title').textContent, 'Store', 'the header itself still renders');
+
+  handle.showResult({ status: 'resolved', isDefinition: true, definition }, pointer);
+  assert.equal(shadow.querySelector('.docs').textContent, 'Store persists blobs.', 'a normal (non-compact) render still shows docs');
+});
+
+test('Ctrl+click on a declaration with usages shows a loading usages-count badge and skeleton rows while findReferences() is in flight', async () => {
+  const window = buildFixture(`
+    <section class="diff-file" data-file-path="pkg/run.go">
+      <table><tbody>
+        <tr><td class="new_line"><a aria-label="Added line 1">1</a></td><td class="line_content" data-line="1"><span>Run</span>()</td></tr>
+      </tbody></table>
+    </section>`);
+  const definition = { name: 'Run', kind: 'function', path: 'pkg/run.go', line: 1 };
+  let resolveReferences;
+  const referencesPromise = new Promise((resolve) => { resolveReferences = resolve; });
+  const legacy = fakeLegacy({
+    diffFileRoots: () => [...window.document.querySelectorAll('.diff-file')],
+    codeCellFor: (node) => node?.closest?.('.line_content') || null,
+    fileContextFor: (cell) => (cell?.closest?.('.line_content')
+      ? { path: 'pkg/run.go', oldPath: 'pkg/run.go', newPath: 'pkg/run.go', packagePath: 'pkg' }
+      : null),
+    lineContextFor: (cell) => ({ line: Number(cell.closest('.line_content')?.dataset.line || 0), side: 'new' }),
+    workerRPC: async (method) => {
+      if (method === 'resolveDefinition') return { status: 'resolved', isDefinition: true, definition };
+      if (method === 'findReferences') return referencesPromise;
+      return { status: 'notFound' };
+    },
+  });
+  const handle = mount({ legacy });
+  handle.setEnabled(true);
+
+  const span = window.document.querySelector('.line_content[data-line="1"] span');
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: span });
+  Object.defineProperty(click, 'button', { value: 0 });
+  Object.defineProperty(click, 'metaKey', { value: true });
+  window.document.dispatchEvent(click);
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const usagesCount = shadow.querySelector('.usages-count');
+  assert.equal(usagesCount.hidden, false, 'the usages-count badge is shown while finding usages');
+  assert.equal(usagesCount.classList.contains('is-loading'), true);
+  assert.equal(shadow.querySelectorAll('.usage-row-skeleton').length > 0, true, 'skeleton rows stand in for not-yet-loaded usage rows');
+
+  resolveReferences({
+    status: 'references',
+    definition,
+    locations: [{ path: 'pkg/other.go', line: 9 }, { path: 'pkg/other.go', line: 21 }],
+    hasMore: false,
+    scope: { kind: 'currentPackage' },
+  });
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(shadow.querySelectorAll('.usage-row-skeleton').length, 0, 'skeleton rows are gone once real results render');
+  assert.equal(shadow.querySelectorAll('.usage-row').length, 2);
+
+  handle.setEnabled(false);
+});
+
 test('showResult(): groups implementations into production and collapsed test-double sections', () => {
   buildFixture();
   const legacy = fakeLegacy();

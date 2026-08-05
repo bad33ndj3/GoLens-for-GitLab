@@ -43,6 +43,8 @@
   --golens-success-soft: rgba(127, 197, 140, .12);
   --golens-error: var(--golens-accent-error);
   --golens-error-soft: rgba(228, 135, 135, .12);
+  --golens-warning: var(--golens-accent-warning);
+  --golens-warning-soft: rgba(223, 170, 102, .12);
 
   --golens-space-1: 4px;
   --golens-space-2: 8px;

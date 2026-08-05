@@ -241,3 +241,199 @@ export function loadingPhaseLabel(phase) {
   if (phase === 'indexing') return 'Indexing symbols';
   return 'Loading source files';
 }
+
+// groupLocationsByFile(locations) -> locations grouped by `path`, preserving
+// first-appearance order (the worker's own sort order, already by path). No
+// backend change needed: `path` is already on every findReferences() location.
+export function groupLocationsByFile(locations) {
+  const groups = [];
+  const byPath = new Map();
+  for (const location of locations || []) {
+    let group = byPath.get(location.path);
+    if (!group) {
+      const parts = (location.path || '').split('/');
+      const fileName = parts.pop() || location.path;
+      group = { path: location.path, fileName, dirPath: parts.join('/'), locations: [] };
+      byPath.set(location.path, group);
+      groups.push(group);
+    }
+    group.locations.push(location);
+  }
+  return groups;
+}
+
+// --- signature syntax tokenizer -------------------------------------------
+//
+// tokenizeSignature(text) -> [{ text, cls }], cls one of tok-kw/tok-type/
+// tok-builtin/tok-func/tok-param/tok-str/tok-num/tok-comment/tok-punct, or
+// null for whitespace (rendered as a plain text node, no span). Scoped to
+// exactly the grammar subset that appears in a Go function signature or
+// struct body — not a general Go lexer/parser. Declared names (parameters,
+// struct fields, the type's own name in `type X struct`) render in the base
+// `tok-param` color regardless of case; only *referenced* types render
+// `tok-type`, matching NOTES.md's documented popover convention.
+//
+// Heuristic: within a comma-separated parameter/return segment or a
+// newline-separated struct-field line, the LAST whitespace-separated word is
+// the type expression; any word(s) before it are declared names. A lone word
+// (no leading name) is a bare type, e.g. a nameless return value.
+const BUILTIN_TYPES = new Set([
+  'bool', 'byte', 'complex64', 'complex128', 'error', 'float32', 'float64',
+  'int', 'int8', 'int16', 'int32', 'int64', 'rune', 'string',
+  'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'uintptr', 'any',
+]);
+
+const LEX_PATTERN = /\/\/[^\n]*|"(?:[^"\\]|\\.)*"|`[^`]*`|'(?:[^'\\]|\\.)*'|[\p{L}_][\p{L}\p{N}_]*|\d+(?:\.\d+)?|\s+|./gsu;
+
+function lexSignature(text) {
+  const tokens = [];
+  for (const match of text.matchAll(LEX_PATTERN)) {
+    const value = match[0];
+    if (/^\s+$/.test(value)) tokens.push({ text: value, kind: 'ws' });
+    else if (value.startsWith('//')) tokens.push({ text: value, kind: 'comment' });
+    else if (/^["'`]/.test(value)) tokens.push({ text: value, kind: 'str' });
+    else if (/^\d/.test(value)) tokens.push({ text: value, kind: 'num' });
+    else if (/^[\p{L}_]/u.test(value)) tokens.push({ text: value, kind: 'ident' });
+    else tokens.push({ text: value, kind: 'punct' });
+  }
+  return tokens;
+}
+
+function classifyTypeWord(word) {
+  return word.map(({ text, kind }) => {
+    if (kind !== 'ident') return { text, cls: 'tok-punct' };
+    return { text, cls: BUILTIN_TYPES.has(text) ? 'tok-builtin' : 'tok-type' };
+  });
+}
+
+function classifyNameWord(word) {
+  return word.map(({ text, kind }) => ({ text, cls: kind === 'ident' ? 'tok-param' : 'tok-punct' }));
+}
+
+// classifySegment(tokens) -> classified tokens for one comma/newline-
+// delimited segment (a single parameter, return value, or struct field).
+// Splits the segment into whitespace-separated words: the last word is a
+// type expression (tok-type/tok-builtin/tok-punct), any word(s) before it
+// are declared names (tok-param). A segment with only one word is a bare
+// type expression (e.g. an unnamed return value).
+function classifySegment(tokens) {
+  const words = [];
+  let word = [];
+  for (const token of tokens) {
+    if (token.kind === 'ws') {
+      if (word.length) words.push(word);
+      word = [];
+    } else {
+      word.push(token);
+    }
+  }
+  if (word.length) words.push(word);
+  if (!words.length) return tokens.map(({ text }) => ({ text, cls: null }));
+  const classifiedWords = words.map((w, index) => (index === words.length - 1 ? classifyTypeWord(w) : classifyNameWord(w)));
+  const flatWords = classifiedWords.flat();
+  let flatIndex = 0;
+  const result = [];
+  for (const token of tokens) {
+    if (token.kind === 'ws') { result.push({ text: token.text, cls: null }); continue; }
+    result.push(flatWords[flatIndex]);
+    flatIndex++;
+  }
+  return result;
+}
+
+export function tokenizeSignature(text) {
+  const raw = lexSignature(text || '');
+  const out = [];
+  let parenDepth = 0;
+  let braceDepth = 0;
+  const structBodyDepths = [];
+  let expectFuncName = false;
+  let expectDeclaredName = false;
+  let pendingStructBrace = false;
+  let segment = [];
+
+  const flush = () => {
+    if (!segment.length) return;
+    out.push(...classifySegment(segment));
+    segment = [];
+  };
+
+  for (const token of raw) {
+    if (token.kind !== 'ws' && !(token.kind === 'punct' && token.text === '{')) pendingStructBrace = false;
+    if (token.kind === 'comment') {
+      flush();
+      out.push({ text: token.text, cls: 'tok-comment' });
+      continue;
+    }
+    if (token.kind === 'str') {
+      flush();
+      out.push({ text: token.text, cls: 'tok-str' });
+      continue;
+    }
+    if (token.kind === 'num') {
+      flush();
+      out.push({ text: token.text, cls: 'tok-num' });
+      continue;
+    }
+    if (token.kind === 'ident' && GO_KEYWORDS.has(token.text)) {
+      flush();
+      out.push({ text: token.text, cls: 'tok-kw' });
+      if (token.text === 'func') expectFuncName = true;
+      else if (token.text === 'type') expectDeclaredName = true;
+      else if (token.text === 'struct') pendingStructBrace = true;
+      continue;
+    }
+    if (token.kind === 'ident' && expectFuncName) {
+      flush();
+      out.push({ text: token.text, cls: 'tok-func' });
+      expectFuncName = false;
+      continue;
+    }
+    if (token.kind === 'ident' && expectDeclaredName) {
+      flush();
+      out.push({ text: token.text, cls: 'tok-param' });
+      expectDeclaredName = false;
+      continue;
+    }
+    if (token.kind === 'punct' && token.text === '(') {
+      flush();
+      parenDepth++;
+      out.push({ text: '(', cls: 'tok-punct' });
+      continue;
+    }
+    if (token.kind === 'punct' && token.text === ')') {
+      flush();
+      parenDepth = Math.max(0, parenDepth - 1);
+      out.push({ text: ')', cls: 'tok-punct' });
+      continue;
+    }
+    if (token.kind === 'punct' && token.text === ',' && parenDepth > 0) {
+      flush();
+      out.push({ text: ',', cls: 'tok-punct' });
+      continue;
+    }
+    if (token.kind === 'punct' && token.text === '{') {
+      flush();
+      braceDepth++;
+      if (pendingStructBrace) structBodyDepths.push(braceDepth);
+      pendingStructBrace = false;
+      out.push({ text: '{', cls: 'tok-punct' });
+      continue;
+    }
+    if (token.kind === 'punct' && token.text === '}') {
+      flush();
+      if (structBodyDepths.at(-1) === braceDepth) structBodyDepths.pop();
+      braceDepth = Math.max(0, braceDepth - 1);
+      out.push({ text: '}', cls: 'tok-punct' });
+      continue;
+    }
+    if (token.kind === 'ws' && token.text.includes('\n') && structBodyDepths.includes(braceDepth)) {
+      flush();
+      out.push({ text: token.text, cls: null });
+      continue;
+    }
+    segment.push(token);
+  }
+  flush();
+  return out;
+}

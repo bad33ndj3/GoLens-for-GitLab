@@ -19,6 +19,8 @@ import {
   locationKey,
   sourceLocationText,
   loadingPhaseLabel,
+  groupLocationsByFile,
+  tokenizeSignature,
 } from '../page/features/code-intel.internal.js';
 
 test('does not resolve identifiers when the pointer is on call punctuation', () => {
@@ -195,4 +197,71 @@ test('loadingPhaseLabel captions every package-loading phase', () => {
   assert.equal(loadingPhaseLabel('discovering'), 'Preparing package');
   assert.equal(loadingPhaseLabel('indexing'), 'Indexing symbols');
   assert.equal(loadingPhaseLabel('fetching'), 'Loading source files');
+});
+
+test('groupLocationsByFile() groups references by path, preserving first-appearance order', () => {
+  const locations = [
+    { path: 'router.go', line: 15 },
+    { path: 'stream.go', line: 273 },
+    { path: 'router.go', line: 76 },
+  ];
+  const groups = groupLocationsByFile(locations);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].path, 'router.go');
+  assert.equal(groups[0].fileName, 'router.go');
+  assert.equal(groups[0].dirPath, '');
+  assert.deepEqual(groups[0].locations.map((l) => l.line), [15, 76]);
+  assert.equal(groups[1].fileName, 'stream.go');
+
+  const nested = groupLocationsByFile([{ path: 'packages/ezjetstream/router.go', line: 15 }]);
+  assert.equal(nested[0].fileName, 'router.go');
+  assert.equal(nested[0].dirPath, 'packages/ezjetstream');
+
+  assert.deepEqual(groupLocationsByFile([]), []);
+  assert.deepEqual(groupLocationsByFile(undefined), []);
+});
+
+test('tokenizeSignature() colors a function signature: keyword, func name, param names vs. referenced types, builtins, punctuation', () => {
+  const tokens = tokenizeSignature('func resolveMergeRequestRefs(ctx context.Context, mr *MergeRequest) (*RefSet, error)');
+  const significant = tokens.filter((t) => t.cls);
+  const byText = Object.fromEntries(significant.map((t) => [t.text, t.cls]));
+  assert.equal(byText.func, 'tok-kw');
+  assert.equal(byText.resolveMergeRequestRefs, 'tok-func');
+  assert.equal(byText.ctx, 'tok-param');
+  assert.equal(byText.context, 'tok-type');
+  assert.equal(byText.Context, 'tok-type');
+  assert.equal(byText.mr, 'tok-param');
+  assert.equal(byText.MergeRequest, 'tok-type');
+  assert.equal(byText.RefSet, 'tok-type');
+  assert.equal(byText.error, 'tok-builtin');
+  assert.equal(tokens.find((t) => t.text === '*' && t.cls).cls, 'tok-punct');
+  assert.equal(tokens.map((t) => t.text).join(''), 'func resolveMergeRequestRefs(ctx context.Context, mr *MergeRequest) (*RefSet, error)');
+});
+
+test('tokenizeSignature() colors a struct body: declared type name and fields stay tok-param regardless of case, referenced types are tok-type, comments are tok-comment', () => {
+  const source = 'type Msg struct {\n    Subject string\n    Header  Header\n    Sub     *Subscription\n\n    // Internal\n\n    barrier *barrierInfo\n}';
+  const tokens = tokenizeSignature(source);
+  const significant = tokens.filter((t) => t.cls);
+  const firstByText = {};
+  for (const t of significant) if (!(t.text in firstByText)) firstByText[t.text] = t.cls;
+  const headerOccurrences = significant.filter((t) => t.text === 'Header').map((t) => t.cls);
+  assert.equal(firstByText.type, 'tok-kw');
+  assert.equal(firstByText.Msg, 'tok-param', 'declared type name uses the base param color, not tok-type');
+  assert.equal(firstByText.struct, 'tok-kw');
+  assert.equal(firstByText.Subject, 'tok-param');
+  assert.equal(firstByText.string, 'tok-builtin');
+  assert.deepEqual(headerOccurrences, ['tok-param', 'tok-type'], 'declared field name (tok-param) then its referenced type (tok-type)');
+  assert.equal(firstByText.Sub, 'tok-param');
+  assert.equal(firstByText.Subscription, 'tok-type');
+  assert.equal(firstByText.barrier, 'tok-param');
+  assert.equal(firstByText.barrierInfo, 'tok-type', 'referenced type stays tok-type even when the name is unexported/lowercase');
+  assert.equal(firstByText['// Internal'], 'tok-comment');
+  assert.equal(tokens.map((t) => t.text).join(''), source);
+});
+
+test('tokenizeSignature() is total: empty input and plain text round-trip without throwing', () => {
+  assert.deepEqual(tokenizeSignature(''), []);
+  assert.deepEqual(tokenizeSignature(undefined), []);
+  const tokens = tokenizeSignature('package jetstream');
+  assert.equal(tokens.map((t) => t.text).join(''), 'package jetstream');
 });
