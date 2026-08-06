@@ -105,7 +105,9 @@ test('showResult(): renders references with scope-aware absence copy and a "Sear
   const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
   assert.equal(shadow.querySelector('.docs').textContent, 'Not found in 12 indexed packages. Search coverage is incomplete.');
   assert.equal(shadow.querySelector('.scope').hidden, true, 'the usages list never shows the scope line (matches the demo)');
-  assert.equal([...shadow.querySelectorAll('.choices button')].at(-1).textContent, 'Search complete project');
+  const action = [...shadow.querySelectorAll('.choices button')].at(-1);
+  assert.equal(action.textContent, 'Search complete project');
+  assert.equal(action.classList.contains('usage-list-action'), true, 'flush full-width row, not the bordered .choice used elsewhere');
 });
 
 test('showResult(): groups multi-location references by file into compact usage rows, with a usages-count badge', () => {

@@ -131,6 +131,9 @@ const MARKUP = `
     .usage-row-skeleton i:first-child { width:16px; }
     .usage-row-skeleton:nth-child(1) i:last-child { width:78%; }
     .usage-row-skeleton:nth-child(2) i:last-child { width:52%; }
+    .usage-list-action { width:100%; padding:7px var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:transparent; color:var(--golens-info-hover); font:600 10.5px/1.4 var(--golens-font-mono); text-align:center; cursor:pointer; }
+    .usage-list-action:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+    .usage-list-action:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:-2px; }
     .popover-body.usages-body { gap:0; padding:var(--golens-space-1) 0; scrollbar-color:var(--golens-border-strong) transparent; scrollbar-width:thin; }
     .popover-body.usages-body::-webkit-scrollbar { width:9px; }
     .popover-body.usages-body::-webkit-scrollbar-thumb { border:2px solid var(--golens-surface-panel); border-radius:99px; background:var(--golens-border-strong); }
@@ -575,10 +578,15 @@ export function mount(ctx = {}) {
     });
   }
 
-  function resultAction(label, listener) {
+  // resultAction(label, listener, { flush }) -> a trailing action appended
+  // after a result's choices ("Show more", "Search complete project").
+  // `flush: true` renders it as a full-width borderless row (`.usage-list-
+  // action`) matching the flush usages list; otherwise it's a bordered
+  // `.choice` row matching the default choices box.
+  function resultAction(label, listener, { flush = false } = {}) {
     const button = doc.createElement('button');
     button.type = 'button';
-    button.className = 'choice';
+    button.className = flush ? 'usage-list-action' : 'choice';
     button.textContent = label;
     button.addEventListener('click', listener);
     return button;
@@ -775,7 +783,7 @@ export function mount(ctx = {}) {
         docs.textContent = absenceText(result.scope);
       }
       groupLocationsByFile(result.locations).forEach((group) => choices.append(usageGroupElement(group)));
-      if (result.hasMore) choices.append(resultAction('Show more', (event) => loadMoreResults(result, pointer, event.currentTarget)));
+      if (result.hasMore) choices.append(resultAction('Show more', (event) => loadMoreResults(result, pointer, event.currentTarget), { flush: true }));
       shouldPin = result.locations.length > 1;
     } else if (kind === 'implementations') {
       const groups = implementationGroups(result);
@@ -817,7 +825,7 @@ export function mount(ctx = {}) {
     const hasCompleteSearchTerms = result.request?.kind === 'references' || result.searchTerms?.length;
     if (result.request && hasCompleteSearchTerms && result.scope?.kind !== 'fullProject' && !result.scope?.complete
       && !['buildConstraint', 'typeSetConstraint'].includes(result.reason)) {
-      choices.append(resultAction('Search complete project', () => legacy.openFullSearch(result, pointer)));
+      choices.append(resultAction('Search complete project', () => legacy.openFullSearch(result, pointer), { flush: kind === 'references' }));
       shouldPin = true;
     }
     popover.classList.add('show');

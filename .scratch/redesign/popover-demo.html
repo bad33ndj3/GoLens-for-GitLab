@@ -69,6 +69,9 @@
   .usage-row-skeleton:nth-child(1) i:last-child { width:78%; }
   .usage-row-skeleton:nth-child(2) i:last-child { width:52%; }
   .usages-scroll-hint { padding:6px var(--golens-space-3); color:var(--golens-text-muted); font:10px/1.4 var(--golens-font-mono); text-align:center; }
+  .usage-list-action { width:100%; padding:7px var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:transparent; color:var(--golens-info-hover); font:600 10.5px/1.4 var(--golens-font-mono); text-align:center; cursor:pointer; }
+  .usage-list-action:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); }
+  .usage-list-action:focus-visible { outline:2px solid var(--golens-accent-focus); outline-offset:-2px; }
 
   /* --- Compact single-line choice row (IntelliJ "Implemented in N Types" style) --- */
   .choice--compact { display:flex; min-height:0; align-items:center; gap:6px; padding:4px var(--golens-space-3); overflow:hidden; }
@@ -308,6 +311,42 @@
       <div class="usage-row-skeleton"><i></i><i></i></div>
       <div class="usage-row-skeleton"><i></i><i></i></div>
       <div class="usages-scroll-hint">scroll for more · still indexing…</div>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">3b. Usages list — search coverage incomplete, offer full-project search</p>
+  <!-- FLOW: same usages list, but the scope only covered a handful of indexed packages.
+       The action to widen the search is a full-width flush row anchored to the bottom of
+       the list (`.usage-list-action`) — NOT the bordered `.choice` row the hover popover's
+       plain choice lists use elsewhere. A 36px bordered row would visually clash with the
+       11px single-line usage rows immediately above it; this stays in the same register. -->
+  <section class="popover popover--list">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-struct">S</span>
+      <div class="popover-heading">
+        <div class="popover-title">Usages of ProductOfferingID</div>
+        <div class="location">svc/contracting/internal/core/entity/product_offering.go:11</div>
+      </div>
+      <div class="usages-count">8 usages</div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Close"><svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button>
+      </div>
+    </header>
+    <div class="popover-body usages-body">
+      <div class="usage-group">
+        <div class="usage-group-file">product_offering.go <span class="usage-group-path">svc/contracting/internal/core/entity</span><span class="usage-dest destination-in-diff"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">12</span><span class="usage-snippet"><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span></span></button>
+        <button class="usage-row"><span class="usage-line">16</span><span class="usage-snippet"><span class="tok-func">NewProductOffering</span><span class="tok-punct">(</span><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span><span class="tok-punct">, </span><span class="tok-param">na</span>…</span></button>
+        <button class="usage-row"><span class="usage-line">17</span><span class="usage-snippet"><span class="tok-kw">return</span> <span class="tok-punct">&amp;</span><span class="tok-type">ProductOffering</span><span class="tok-punct">{</span><span class="tok-param">id</span><span class="tok-punct">: </span><span class="tok-param">id</span><span class="tok-punct">}</span></span></button>
+        <button class="usage-row"><span class="usage-line">21</span><span class="usage-snippet"><span class="tok-kw">func</span> <span class="tok-punct">(</span><span class="tok-param">p</span> <span class="tok-punct">*</span><span class="tok-type">ProductOffering</span><span class="tok-punct">) </span><span class="tok-func">ID</span><span class="tok-punct">() </span><span class="tok-type hl">ProductOfferingID</span></span></button>
+        <button class="usage-row"><span class="usage-line">22</span><span class="usage-snippet"><span class="tok-kw">return</span> <span class="tok-param">p</span><span class="tok-punct">.</span><span class="tok-param">id</span></span></button>
+        <button class="usage-row"><span class="usage-line">26</span><span class="usage-snippet"><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span><span class="tok-punct">) </span><span class="tok-builtin">bool</span></span></button>
+        <button class="usage-row"><span class="usage-line">27</span><span class="usage-snippet"><span class="tok-kw">return</span> <span class="tok-param">p</span><span class="tok-punct">.</span><span class="tok-param">id</span> <span class="tok-punct">==</span> <span class="tok-param">id</span></span></button>
+        <button class="usage-row"><span class="usage-line">89</span><span class="usage-snippet"><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span><span class="tok-punct">) </span><span class="tok-type">ProductOffering</span></span></button>
+      </div>
+      <button class="usage-list-action" type="button">Search complete project</button>
     </div>
   </section>
 </div>
