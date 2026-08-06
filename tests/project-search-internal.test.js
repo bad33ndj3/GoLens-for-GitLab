@@ -6,16 +6,10 @@ import {
   INCOMPLETE_MESSAGE,
   canOpen,
   searchTerms,
-  blobSearchPercentage,
-  packageIndexPercentage,
-  termSearchMessage,
-  packageIndexMessage,
   blobPathsComplete,
   candidatePackagePaths,
   completeProjectScope,
   rerunQueryKind,
-  focusTargetForStatus,
-  chipLabel,
 } from '../page/features/project-search.internal.js';
 
 test('dirname: directory portion of a slash-separated path, "" for root-level', () => {
@@ -59,25 +53,6 @@ test('searchTerms: empty term list is the noTerms domain outcome, not a throw', 
   assert.deepEqual(searchTerms(null), { kind: 'noTerms' });
 });
 
-test('blobSearchPercentage: 5-35% band across the term list', () => {
-  assert.equal(blobSearchPercentage(0, 2), 5);
-  assert.equal(blobSearchPercentage(1, 2), 20);
-  assert.equal(blobSearchPercentage(0, 1), 5);
-});
-
-test('packageIndexPercentage: 35-95% band across the package list, guards zero packages', () => {
-  assert.equal(packageIndexPercentage(0, 1), 95);
-  assert.equal(packageIndexPercentage(0, 2), 65);
-  assert.equal(packageIndexPercentage(1, 2), 95);
-  assert.equal(packageIndexPercentage(0, 0), 95);
-});
-
-test('termSearchMessage/packageIndexMessage: verbatim phase copy', () => {
-  assert.equal(termSearchMessage('Run'), 'Searching project code for Run');
-  assert.equal(packageIndexMessage(0, 3), 'Indexing matching package 1 of 3');
-  assert.equal(packageIndexMessage(2, 3), 'Indexing matching package 3 of 3');
-});
-
 test('blobPathsComplete: only "complete" status counts', () => {
   assert.equal(blobPathsComplete('complete'), true);
   assert.equal(blobPathsComplete('limited'), false);
@@ -105,17 +80,6 @@ test('rerunQueryKind: references vs implementations dispatch', () => {
   assert.equal(rerunQueryKind({ kind: 'references' }), 'references');
   assert.equal(rerunQueryKind({ kind: 'implementations' }), 'implementations');
   assert.equal(rerunQueryKind({}), 'implementations');
-});
-
-test('focusTargetForStatus: retry on error, minimize otherwise', () => {
-  assert.equal(focusTargetForStatus('error'), 'retry');
-  assert.equal(focusTargetForStatus('idle'), 'minimize');
-  assert.equal(focusTargetForStatus('busy'), 'minimize');
-});
-
-test('chipLabel: verbatim chip text', () => {
-  assert.equal(chipLabel(0), 'Project search · 0%');
-  assert.equal(chipLabel(42), 'Project search · 42%');
 });
 
 test('message constants: verbatim legacy error copy', () => {

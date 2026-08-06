@@ -492,16 +492,6 @@ const html = `<!doctype html>
         document.body.dataset.goTargetColor = targetStyle.color;
         document.body.dataset.goTargetDecoration = targetStyle.textDecorationLine;
         document.body.dataset.goTargetOutline = targetStyle.outlineStyle;
-        const fullSearchAction = [...goUI.querySelectorAll('.choices button')].find((button) => button.textContent === 'Search complete project');
-        fullSearchAction?.click();
-        // page/features/project-search.js (ticket 20) owns the modal DOM in
-        // its own shadow host now, separate from goUI's popover host.
-        const psUI = document.getElementById('golens-project-search-root')?.shadowRoot;
-        document.body.dataset.goFullSearchModal = String(psUI?.querySelector('.full-search-dialog')?.getAttribute('aria-modal') === 'true');
-        document.body.dataset.goFullSearchOpened = String(!psUI?.querySelector('.full-search-backdrop')?.hidden);
-        document.body.dataset.goFullSearchCancelVisible = String(Boolean(psUI?.querySelector('.full-search-cancel')));
-        psUI?.querySelector('.full-search-cancel')?.click();
-        document.body.dataset.goFullSearchCancelled = String(Boolean(psUI?.querySelector('.full-search-backdrop')?.hidden) && goUI.querySelector('.scope')?.textContent.includes('incomplete'));
         goUI.querySelector('.choices .choice')?.click();
         document.body.dataset.goChoiceClosedPopover = String(!popover.classList.contains('show'));
         const shortcutTarget = document.getElementById('go-target');
@@ -513,6 +503,18 @@ const html = `<!doctype html>
           if (!popover.classList.contains('show') || goUI.querySelector('.popover-title')?.textContent !== 'Implementations of Runner') return;
           document.body.dataset.goSemanticShortcut = 'true';
           clearInterval(shortcutWatch);
+          // page/features/project-search.js (ticket 29) no longer owns a
+          // fullscreen modal — "Search complete project" shows an inline
+          // loading state in this same popover, dismissible only via the
+          // close button while the search is in progress.
+          const fullSearchAction = [...goUI.querySelectorAll('.choices button')].find((button) => button.textContent === 'Search complete project');
+          fullSearchAction?.click();
+          setTimeout(() => {
+            document.body.dataset.goFullSearchLoading = String(popover.dataset.mode === 'searching' && Boolean(goUI.querySelector('.usages-spinner')));
+            document.body.dataset.goFullSearchCloseVisible = String(!goUI.querySelector('.close-button')?.hidden);
+            goUI.querySelector('.close-button')?.click();
+            document.body.dataset.goFullSearchCancelled = String(!popover.classList.contains('show'));
+          }, 700);
         }, 50);
         clearInterval(popoverWatch);
       }, 700);

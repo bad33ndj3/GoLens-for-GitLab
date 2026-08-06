@@ -18,11 +18,15 @@
 // shared "reveal a location in the diff" primitives also used by bookmarks.js
 // (visibleDiffRootForDefinition/navigateToLocation), the shared toast
 // surface (toast), the shortcut-coach bridge (offerShortcutCoach), the
-// frame-throttle clock (requestFrame), and project-search's modal opener
-// (openFullSearch). `page/main.js` builds this bag directly from
-// `page/platform/diff-dom.js`/`gitlab-api.js`, `page/lifecycle/mr-session.js`'s
-// shared instances, and late-bound accessors onto the mr-preload/
-// project-search handles — this is the only mounted instance.
+// frame-throttle clock (requestFrame), and project-search's orchestration
+// entry points (searchCompleteProject/cancelSearch). `page/main.js` builds
+// this bag directly from `page/platform/diff-dom.js`/`gitlab-api.js`,
+// `page/lifecycle/mr-session.js`'s shared instances, and late-bound accessors
+// onto the mr-preload/project-search handles — this is the only mounted
+// instance. This module in turn now EXPOSES `showSearchProgress(message,
+// pointer)` on its own handle, so project-search.js can drive the popover's
+// dismiss-proof inline loading state ('searching' mode) while a
+// complete-project search is in flight.
 //
 // Toast-surface decision: the shared instance page/lifecycle/mr-session.js
 // now owns, reached through `legacy.toast`. The toast host is a shared
@@ -194,12 +198,15 @@ export function mount(ctx = {}) {
     doc.body.append(host);
     ui = host;
     const popover = shadow.querySelector('.popover');
-    popover.addEventListener('pointerenter', () => pinPopover());
-    popover.addEventListener('pointerdown', () => pinPopover());
-    popover.addEventListener('focusin', () => pinPopover());
+    popover.addEventListener('pointerenter', () => { if (popoverMode !== 'searching') pinPopover(); });
+    popover.addEventListener('pointerdown', () => { if (popoverMode !== 'searching') pinPopover(); });
+    popover.addEventListener('focusin', () => { if (popoverMode !== 'searching') pinPopover(); });
     popover.addEventListener('keydown', onPopoverKeyDown);
     popover.querySelector('.copy-button').addEventListener('click', (event) => copySourceLocation(event.currentTarget));
-    popover.querySelector('.close-button').addEventListener('click', hidePopover);
+    popover.querySelector('.close-button').addEventListener('click', () => {
+      if (popoverMode === 'searching') legacy.cancelSearch?.();
+      hidePopover();
+    });
     return shadow;
   }
 
@@ -301,7 +308,7 @@ export function mount(ctx = {}) {
     const key = targetKey(target);
     if (key) popoverTargetKey = key;
     popoverMode = mode;
-    pinnedPopover = mode === 'pinned';
+    pinnedPopover = mode === 'pinned' || mode === 'searching';
     if (pinnedPopover) pinnedTargetKey = key || popoverTargetKey;
     else pinnedTargetKey = '';
     if (!popover) return;
@@ -355,6 +362,7 @@ export function mount(ctx = {}) {
   }
 
   function dismissPinnedPopoverFromOutside(event) {
+    if (popoverMode === 'searching') return false;
     if (!pinnedPopover || eventIsInsideUI(event)) return false;
     hidePopover();
     return true;
@@ -827,7 +835,7 @@ export function mount(ctx = {}) {
     const hasCompleteSearchTerms = result.request?.kind === 'references' || result.searchTerms?.length;
     if (result.request && hasCompleteSearchTerms && result.scope?.kind !== 'fullProject' && !result.scope?.complete
       && !['buildConstraint', 'typeSetConstraint'].includes(result.reason)) {
-      choices.append(resultAction('Search complete project', () => legacy.openFullSearch(result, pointer), { flush: kind === 'references' }));
+      choices.append(resultAction('Search complete project', () => legacy.searchCompleteProject(result, pointer), { flush: kind === 'references' }));
       shouldPin = true;
     }
     popover.classList.add('show');
@@ -897,6 +905,17 @@ export function mount(ctx = {}) {
     positionPopover(popover, pointer.x, pointer.y);
     if (wasPinned) pinPopover(pointer);
     else setPopoverMode('passive', pointer);
+  }
+
+  // showSearchProgress(message, pointer) -> shows the same inline
+  // spinner-pill + skeleton-row loading UI as showLoading's usages branch,
+  // then pins the popover into the dismiss-proof 'searching' mode (must run
+  // after showLoading, since showLoading itself ends by calling
+  // pinPopover/setPopoverMode). Exposed for project-search.js to drive while
+  // a complete-project search is in flight.
+  function showSearchProgress(message, pointer) {
+    showLoading(message, pointer, null, { usages: true });
+    setPopoverMode('searching', pointer);
   }
 
   // --- resolution orchestration (fetch, debounce, sequencing) --------------
@@ -1165,7 +1184,7 @@ export function mount(ctx = {}) {
   function onMouseMove(event) {
     if (!enabled) return;
     if (ui && event.composedPath().includes(ui)) {
-      pinPopover();
+      if (popoverMode !== 'searching') pinPopover();
       return;
     }
     if (pinnedPopover) return;
@@ -1222,6 +1241,7 @@ export function mount(ctx = {}) {
     }
     event.preventDefault();
     event.stopPropagation();
+    if (popoverMode === 'searching') return;
     hidePopover();
   }
 
@@ -1454,6 +1474,10 @@ export function mount(ctx = {}) {
     showResult: legacy ? showResult : () => false,
     pinPopover: legacy ? pinPopover : () => {},
     hidePopover: legacy ? hidePopover : () => {},
+    // showSearchProgress(message, pointer) -> see its own doc comment above.
+    // Called by project-search.js's open() to drive the inline loading state
+    // for a complete-project search, in the same popover.
+    showSearchProgress: legacy ? showSearchProgress : () => {},
     // selectedSymbolLocation() -> the currently *hovered* target's source
     // location, or null. Used by bookmarks.js's `legacy.selectedSymbolLocation`
     // capability (ticket 18).

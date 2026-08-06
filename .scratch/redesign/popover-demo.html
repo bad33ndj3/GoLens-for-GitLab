@@ -85,7 +85,6 @@
 <a href="settings-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Settings</a>
 <a href="onboarding-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Onboarding</a>
 <a href="controls-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Controls</a>
-<a href="project-search-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Project search</a>
 </div>
 
 
@@ -346,6 +345,34 @@
         <button class="usage-row"><span class="usage-line">89</span><span class="usage-snippet"><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span><span class="tok-punct">) </span><span class="tok-type">ProductOffering</span></span></button>
       </div>
       <button class="signature-toggle" type="button">Search complete project</button>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">3c. Usages list — full-project search in progress (triggered by "Search complete project")</p>
+  <!-- FLOW: entered by clicking "Search complete project" in 3b. Only the count + body change;
+       the header (badge, title, location, close button) stays put so the popover doesn't jump.
+       BEHAVIOR NOTE (not shown by this static demo): while this full-project search is running,
+       the popover must only be dismissible via the close (X) button in the header — outside
+       clicks and Escape are suppressed. This is a long-running search; letting a stray click or
+       Escape cancel it silently would be surprising, so the user has to explicitly hit close. -->
+  <section class="popover popover--list">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-struct">S</span>
+      <div class="popover-heading">
+        <div class="popover-title">Usages of ProductOfferingID</div>
+        <div class="location">svc/contracting/internal/core/entity/product_offering.go:11</div>
+      </div>
+      <div class="usages-count is-loading"><span class="usages-spinner"></span>Searching…</div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Close"><svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button>
+      </div>
+    </header>
+    <div class="popover-body usages-body">
+      <div class="usage-row-skeleton"><i></i><i></i></div>
+      <div class="usage-row-skeleton"><i></i><i></i></div>
+      <div class="usage-row-skeleton"><i></i><i></i></div>
     </div>
   </section>
 </div>

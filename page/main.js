@@ -123,12 +123,9 @@ export function mount(ctx = {}) {
             shortcutHint: (hint) => session.toast.showShortcutCoachHint(hint),
             isShowing: () => session.toast.isToastShowing(),
           },
-          // Document-level Escape routing, in the original priority order
-          // (project-search-minimize first, then the popover) — see this
-          // file's own onEscapeKeyDown wiring below in keyboard-nav.js for
-          // why it lives there rather than a new lifecycle-level keydown
-          // listener.
-          minimizeProjectSearch: () => projectSearchHandle?.minimize?.(),
+          // Document-level Escape routing to the popover — see this file's
+          // own onEscapeKeyDown wiring below in keyboard-nav.js for why it
+          // lives there rather than a new lifecycle-level keydown listener.
           handleCodeIntelEscape: (event) => codeIntelHandle?.handleEscape?.(event),
           // GitHub issue #5's diff-view toggle: controls.js owns the DOM
           // interaction with GitLab's own preferences dropdown; this
@@ -180,7 +177,7 @@ export function mount(ctx = {}) {
               codeIntelHandle ? codeIntelHandle.findImplementations(target, definition, progress, cursor, scopeOverride) : Promise.resolve({ status: 'notFound' }),
             showResult: (result, pointer) => (codeIntelHandle ? codeIntelHandle.showResult(result, pointer) : false),
             pinPopover: (target = null) => codeIntelHandle?.pinPopover(target),
-            hidePopover: () => codeIntelHandle?.hidePopover(),
+            showSearchProgress: (message, pointer) => codeIntelHandle?.showSearchProgress?.(message, pointer),
             toast: (message) => session.toast.toast(message),
             isEnabled: () => session.isActive(),
           },
@@ -240,7 +237,8 @@ export function mount(ctx = {}) {
             toast: (message) => session.toast.toast(message),
             offerShortcutCoach: (actionID) => offerShortcutCoach(actionID),
             requestFrame: (fn) => session.requestFrame(fn),
-            openFullSearch: (result, pointer) => projectSearchHandle?.open?.(result, pointer),
+            searchCompleteProject: (result, pointer) => projectSearchHandle?.open?.(result, pointer),
+            cancelSearch: () => projectSearchHandle?.cancel?.(),
           },
         },
       },

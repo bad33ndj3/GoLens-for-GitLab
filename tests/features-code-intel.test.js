@@ -22,7 +22,7 @@ function buildFixture(bodyHTML = '') {
 }
 
 function fakeLegacy(overrides = {}) {
-  const calls = { toast: [], offerShortcutCoach: [], navigateToLocation: [] };
+  const calls = { toast: [], offerShortcutCoach: [], navigateToLocation: [], searchCompleteProject: [], cancelSearch: [] };
   return {
     fileContextFor: () => null,
     lineContextFor: () => null,
@@ -43,7 +43,8 @@ function fakeLegacy(overrides = {}) {
     toast: (message) => calls.toast.push(message),
     offerShortcutCoach: async (actionID) => { calls.offerShortcutCoach.push(actionID); return false; },
     requestFrame: (fn) => setTimeout(fn, 0),
-    openFullSearch: () => {},
+    searchCompleteProject: (result, pointer) => calls.searchCompleteProject.push([result, pointer]),
+    cancelSearch: () => calls.cancelSearch.push(true),
     calls,
     ...overrides,
   };
@@ -342,6 +343,109 @@ test('handleEscape(): hides a pinned popover and prevents/stops the event', () =
   assert.equal(popover.classList.contains('show'), false);
   assert.equal(prevented, true);
   assert.equal(stopped, true);
+});
+
+test('showResult(): clicking "Search complete project" calls legacy.searchCompleteProject(result, pointer)', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  const result = {
+    status: 'references',
+    definition: { name: 'Run', kind: 'function', path: 'service/run.go', line: 12 },
+    locations: [],
+    hasMore: false,
+    scope: { kind: 'indexedPackages', packageCount: 12, complete: false, searchStatus: 'limited' },
+    request: { kind: 'references', ref: 'b'.repeat(40), target: pointer, definition: { name: 'Run' } },
+  };
+  assert.equal(handle.showResult(result, pointer), true);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const action = [...shadow.querySelectorAll('.choices button')].at(-1);
+  assert.equal(action.textContent, 'Search complete project');
+  action.dispatchEvent(new window.Event('click', { bubbles: true }));
+  assert.equal(legacy.calls.searchCompleteProject.length, 1);
+  assert.equal(legacy.calls.searchCompleteProject[0][0], result);
+  assert.equal(legacy.calls.searchCompleteProject[0][1], pointer);
+});
+
+test('showSearchProgress(): shows the close button and switches the popover into \'searching\' mode', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showSearchProgress('Searching entire project…', pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+  assert.equal(popover.dataset.mode, 'searching');
+  assert.equal(shadow.querySelector('.close-button').hidden, false, 'close button stays reachable while searching');
+});
+
+test('\'searching\' mode: an outside click does not hide the popover', () => {
+  const window = buildFixture('<div id="outside"></div>');
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showSearchProgress('Searching entire project…', pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+  assert.equal(popover.classList.contains('show'), true);
+
+  const outside = window.document.getElementById('outside');
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: outside });
+  Object.defineProperty(click, 'button', { value: 0 });
+  window.document.dispatchEvent(click);
+
+  assert.equal(popover.classList.contains('show'), true, 'the popover stays visible during a search');
+  assert.equal(popover.dataset.mode, 'searching');
+});
+
+test('\'searching\' mode: Escape does not hide the popover', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showSearchProgress('Searching entire project…', pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+
+  let prevented = false;
+  let stopped = false;
+  handle.handleEscape({ preventDefault: () => { prevented = true; }, stopPropagation: () => { stopped = true; } });
+
+  assert.equal(popover.classList.contains('show'), true, 'the popover stays visible during a search');
+  assert.equal(popover.dataset.mode, 'searching');
+  assert.equal(prevented, true, 'Escape is still swallowed so it does not leak to other handlers');
+  assert.equal(stopped, true);
+});
+
+test('\'searching\' mode: clicking the close button cancels the search and hides the popover', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showSearchProgress('Searching entire project…', pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+  const closeButton = shadow.querySelector('.close-button');
+
+  closeButton.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+  assert.equal(legacy.calls.cancelSearch.length, 1, 'cancelSearch() is called while searching');
+  assert.equal(popover.classList.contains('show'), false);
+  assert.equal(popover.dataset.mode, 'hidden');
+});
+
+test('close button outside \'searching\' mode does not call cancelSearch (regression guard)', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showResult({ status: 'notFound', symbol: 'Missing' }, pointer);
+  handle.pinPopover(pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+  assert.equal(popover.dataset.mode, 'pinned');
+  const closeButton = shadow.querySelector('.close-button');
+
+  closeButton.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+  assert.equal(legacy.calls.cancelSearch.length, 0, 'cancelSearch() is not called outside searching mode');
+  assert.equal(popover.classList.contains('show'), false);
 });
 
 test('navigationAction("previousOccurrence"/"nextOccurrence"): toasts when nothing is selected, does not throw once enabled', () => {
