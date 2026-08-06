@@ -1,0 +1,419 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GoLens popover — redesign demo</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { margin:0; min-height:100vh; padding:48px; display:flex; flex-wrap:wrap; align-items:flex-start; gap:40px; background:#0e1013; font-family:var(--golens-font-sans); }
+  .label { color:#8a9199; font:600 11px/1.4 var(--golens-font-sans); text-transform:uppercase; letter-spacing:.04em; margin:0 0 10px; }
+  .col { display:flex; flex-direction:column; }
+
+  * { box-sizing:border-box; }
+  .popover { position:static; display:grid; grid-template-rows:auto minmax(0,1fr); width:min(440px,calc(100vw - 24px)); max-height:min(460px,calc(100vh - 24px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:8px; background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); color:var(--golens-text-primary); font:12.5px/1.5 var(--golens-font-sans); }
+  .popover-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-2); align-items:start; padding:10px var(--golens-space-3) 9px; border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+  .popover-heading { min-width:0; padding-top:1px; }
+  .popover-title { overflow:hidden; color:var(--golens-text-primary); font:600 12.5px/1.3 var(--golens-font-mono); letter-spacing:-.01em; text-overflow:ellipsis; white-space:nowrap; }
+  .location { overflow:hidden; margin-top:3px; color:var(--golens-text-muted); font:10.5px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+  .popover-body { display:flex; flex-direction:column; gap:var(--golens-space-3); min-height:0; overflow:auto; padding:var(--golens-space-3); }
+  .symbol-badge { display:inline-flex; min-width:19px; height:18px; align-items:center; justify-content:center; padding:0 4px; margin-top:1px; border-radius:3px; background:color-mix(in srgb,currentColor 18%,transparent); font:700 9px/1 var(--golens-font-mono); letter-spacing:-.01em; }
+  .symbol-interface,.symbol-interface-method { color:#c586c0; } .symbol-struct { color:#59a869; } .symbol-function { color:#dcdcaa; } .symbol-method,.symbol-type { color:#4ec9b0; } .symbol-variable,.symbol-parameter,.symbol-field { color:#9cdcfe; } .symbol-constant { color:#4fc1ff; } .symbol-package { color:#fc9b6b; } .symbol-external { color:#3794ff; }
+  .header-actions { display:flex; align-items:center; gap:1px; }
+  .header-action { display:inline-flex; width:24px; height:24px; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:4px; background:transparent; color:var(--golens-text-muted); cursor:pointer; transition:background-color var(--golens-motion-fast),color var(--golens-motion-fast); }
+  .header-action:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .header-action[hidden] { display:none; } .header-action svg { width:13px; height:13px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
+  .header-action:focus-visible, .choice:focus-visible, .usage-row:focus-visible, .signature-toggle:focus-visible, summary:focus-visible { outline:2px solid var(--golens-accent-focus); outline-offset:-2px; }
+  .signature-block { flex-shrink:0; overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:4px; background:var(--golens-surface-inset); } .signature-block[hidden] { display:none; }
+  .signature { margin:0; padding:var(--golens-space-2) var(--golens-space-3); overflow-wrap:anywhere; color:#a9b7c6; font:500 11px/1.5 var(--golens-font-mono); white-space:pre-wrap; }
+  .tok-kw { color:#61afef; } .tok-type { color:#61afef; } .tok-builtin { color:#d19a66; } .tok-func { color:#ffc66d; } .tok-param { color:#a9b7c6; } .tok-str { color:#6a8759; } .tok-num { color:#6897bb; } .tok-comment { color:#808080; font-style:italic; } .tok-punct { color:#a9b7c6; }
+  .signature-toggle { width:100%; padding:6px var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:transparent; color:var(--golens-info-hover); font:600 10px/1.4 var(--golens-font-mono); text-align:left; cursor:pointer; } .signature-toggle:hover { color:var(--golens-text-primary); } .signature-toggle[hidden] { display:none; }
+  .docs:empty,.scope[hidden],.shortcut-hint[hidden] { display:none; }
+  .docs { margin:0; color:var(--golens-text-secondary); line-height:1.55; white-space:pre-wrap; }
+  .scope { margin:0; color:var(--golens-text-muted); font:10.5px/1.4 var(--golens-font-mono); }
+  .choices { display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:4px; background:var(--golens-surface-inset); }
+  .choices:empty { display:none; }
+  .choice { position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-2); width:100%; min-height:36px; align-items:center; padding:6px var(--golens-space-3); border:0; border-bottom:1px solid var(--golens-border-subtle); background:transparent; color:var(--golens-text-primary); text-align:left; cursor:pointer; transition:background-color var(--golens-motion-fast); font:inherit; }
+  .choice:last-child { border-bottom:0; }
+  .choice:hover { background:var(--golens-info-soft); box-shadow:inset 2px 0 0 var(--golens-info); } .choice:active { background:var(--golens-surface-pressed); }
+  .choice-title { overflow:hidden; color:var(--golens-text-primary); font:600 11.5px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+  .destination-icon { position:relative; display:inline-flex; width:20px; height:20px; flex:0 0 auto; align-items:center; justify-content:center; border-radius:3px; }
+  .destination-icon svg { width:14px; height:14px; } .destination-in-diff { color:var(--golens-primary); } .destination-new-tab { color:var(--golens-info); }
+  details { border-top:1px solid var(--golens-border-subtle); } summary { padding:6px var(--golens-space-3); color:var(--golens-text-muted); font:10.5px/1.4 var(--golens-font-mono); cursor:pointer; } summary:hover { color:var(--golens-text-primary); } .test-double-choices { display:flex; flex-direction:column; }
+  .shortcut-hint { display:flex; align-items:center; gap:5px; padding-top:var(--golens-space-1); color:var(--golens-text-muted); font-size:10px; } kbd { display:inline-flex; min-width:16px; min-height:16px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:3px; background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
+  .loading-progress { display:grid; gap:var(--golens-space-2); padding:var(--golens-space-2) var(--golens-space-3); border:1px solid color-mix(in srgb,var(--golens-primary) 35%,var(--golens-border-subtle)); border-radius:4px; background:var(--golens-primary-soft); } .loading-progress[hidden] { display:none; } .loading-progress-meta { display:flex; justify-content:space-between; gap:var(--golens-space-2); color:var(--golens-text-primary); font-size:9px; } .loading-progress-phase { overflow:hidden; font-weight:600; text-overflow:ellipsis; white-space:nowrap; } .loading-progress-count { flex:0 0 auto; color:var(--golens-primary-hover); font:600 9px/1.45 var(--golens-font-mono); font-variant-numeric:tabular-nums; } .loading-track { height:3px; overflow:hidden; border-radius:2px; background:var(--golens-surface-pressed); } .loading-track > i { display:block; width:62%; height:100%; border-radius:inherit; background:var(--golens-primary); }
+
+  /* --- Usages list (cmd/ctrl+click) — IntelliJ "Find Usages"-style popup, distinct from the hover popover above --- */
+  .popover--list { width:min(560px,calc(100vw - 24px)); height:320px; max-height:min(320px,calc(100vh - 24px)); }
+  .popover-header:has(.usages-count) { grid-template-columns:auto minmax(0,1fr) auto auto; }
+  .usages-body { scrollbar-color:var(--golens-border-strong) transparent; scrollbar-width:thin; }
+  .usages-body::-webkit-scrollbar { width:9px; }
+  .usages-body::-webkit-scrollbar-thumb { border:2px solid var(--golens-surface-panel); border-radius:99px; background:var(--golens-border-strong); }
+  .usages-count { display:flex; flex:0 0 auto; align-items:center; gap:5px; margin-top:2px; padding:2px 7px; border-radius:99px; background:var(--golens-surface-hover); color:var(--golens-text-muted); font:600 10px/1.4 var(--golens-font-mono); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .usages-count.is-loading { color:var(--golens-primary-hover); background:var(--golens-primary-soft); }
+  .usages-spinner { width:9px; height:9px; border:1.5px solid color-mix(in srgb,currentColor 35%,transparent); border-top-color:currentColor; border-radius:50%; animation:golens-spin .7s linear infinite; }
+  @keyframes golens-spin { to { transform:rotate(360deg); } }
+  .usages-body { gap:0; padding:var(--golens-space-1) 0; }
+  .usage-group + .usage-group { margin-top:2px; border-top:1px solid var(--golens-border-subtle); }
+  .usage-group-file { position:sticky; top:0; z-index:1; display:flex; align-items:baseline; gap:6px; padding:5px var(--golens-space-3) 4px; background:var(--golens-surface-panel); color:var(--golens-text-primary); font:600 10.5px/1.3 var(--golens-font-mono); }
+  .usage-group-path { overflow:hidden; flex:1 1 auto; color:var(--golens-text-muted); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
+  .usage-row { display:grid; grid-template-columns:28px minmax(0,1fr); gap:8px; width:100%; padding:2px var(--golens-space-3) 2px calc(var(--golens-space-3) + 6px); border:0; background:transparent; color:var(--golens-text-secondary); text-align:left; cursor:pointer; font:11px/1.6 var(--golens-font-mono); }
+  .usage-row:hover { background:var(--golens-info-soft); box-shadow:inset 2px 0 0 var(--golens-info); }
+  .usage-line { color:var(--golens-text-muted); font-variant-numeric:tabular-nums; text-align:right; }
+  .usage-snippet { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .usage-snippet .hl { border-radius:2px; background:color-mix(in srgb,var(--golens-primary) 30%,transparent); color:var(--golens-text-primary); }
+  .usage-dest { flex:0 0 auto; }
+  .usage-dest svg { width:12px; height:12px; }
+  .usage-dest.destination-in-diff { color:var(--golens-primary); } .usage-dest.destination-new-tab { color:var(--golens-info); }
+  .usage-row-skeleton { display:grid; grid-template-columns:28px minmax(0,1fr); gap:8px; padding:4px var(--golens-space-3) 4px calc(var(--golens-space-3) + 6px); }
+  .usage-row-skeleton i { display:block; height:9px; border-radius:3px; background:var(--golens-surface-hover); }
+  .usage-row-skeleton i:first-child { width:16px; }
+  .usage-row-skeleton:nth-child(1) i:last-child { width:78%; }
+  .usage-row-skeleton:nth-child(2) i:last-child { width:52%; }
+  .usages-scroll-hint { padding:6px var(--golens-space-3); color:var(--golens-text-muted); font:10px/1.4 var(--golens-font-mono); text-align:center; }
+
+  /* --- Compact single-line choice row (IntelliJ "Implemented in N Types" style) --- */
+  .choice--compact { display:flex; min-height:0; align-items:center; gap:6px; padding:4px var(--golens-space-3); overflow:hidden; }
+  .choice--compact .symbol-badge { flex:0 0 auto; margin-top:0; }
+  .choice--compact .choice-title { flex:0 1 auto; font-size:11px; }
+  .choice--compact .choice-inline-path { overflow:hidden; flex:1 1 auto; margin-left:2px; color:var(--golens-text-muted); font:10px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+  .choice--compact .destination-icon { flex:0 0 auto; width:14px; height:14px; }
+  .choice--compact .destination-icon svg { width:12px; height:12px; }
+</style>
+</head>
+<body>
+<div style="position:fixed;top:12px;right:16px;z-index:99999;display:flex;gap:4px;padding:5px;border:1px solid var(--golens-border-default);border-radius:9px;background:var(--golens-surface-panel);box-shadow:0 8px 24px rgba(0,0,0,.45);font:600 11px/1.2 var(--golens-font-mono,monospace);">
+<a href="popover-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-primary);background:var(--golens-surface-hover);">Popover</a>
+<a href="settings-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Settings</a>
+<a href="onboarding-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Onboarding</a>
+<a href="controls-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Controls</a>
+</div>
+
+
+<!--
+  DESIGN NOTE — interaction flow (IntelliJ-style), read states 1→4 left to right:
+  1/1b. Hover  = always the compact popover: doc + signature (or a pick-list if the name itself is ambiguous).
+  2/3.  Cmd/Ctrl+click on a symbol with multiple usages = wide scrollable "usages list" (grouped by file),
+        NOT a jump to a single definition. Count top-right; while indexing, count shows a spinner +
+        provisional "20+" and trailing rows render as skeletons — never a static "20+" with no signal it's still working.
+  4.    Clicking a row in the list navigates to that definition. Since we're already there, the doc
+        comment is dropped (redundant — you're looking at the source); implementations load underneath,
+        same recursive pattern IntelliJ uses for interface → implementers.
+-->
+
+<div class="col">
+  <p class="label">1. Hover → resolved definition</p>
+  <!-- FLOW: plain hover over a symbol always shows this compact popover: doc comment,
+       signature, and a hint that Cmd/Ctrl+click does something different (find usages,
+       not "jump straight to the single definition"). -->
+  <section class="popover">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-function">F</span>
+      <div class="popover-heading">
+        <div class="popover-title">resolveMergeRequestRefs</div>
+        <div class="location">internal/gitlab/refs.go:142</div>
+      </div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Copy source location">
+          <svg viewBox="0 0 16 16"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="popover-body">
+      <div class="docs">resolveMergeRequestRefs fetches the source and target refs for a merge request, retrying once on a stale-ETag response from the GitLab API.</div>
+      <div class="signature-block">
+        <pre class="signature"><span class="tok-kw">func</span> <span class="tok-func">resolveMergeRequestRefs</span><span class="tok-punct">(</span><span class="tok-param">ctx</span> <span class="tok-type">context</span><span class="tok-punct">.</span><span class="tok-type">Context</span><span class="tok-punct">, </span><span class="tok-param">mr</span> <span class="tok-punct">*</span><span class="tok-type">MergeRequest</span><span class="tok-punct">) (</span><span class="tok-punct">*</span><span class="tok-type">RefSet</span><span class="tok-punct">, </span><span class="tok-builtin">error</span><span class="tok-punct">)</span></pre>
+      </div>
+      <div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to find usages</span></div>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">1a. Hover → resolved definition (struct)</p>
+  <!-- FLOW: same hover popover, struct instead of func — layout must hold up for both. -->
+  <section class="popover">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-struct">S</span>
+      <div class="popover-heading">
+        <div class="popover-title">Msg</div>
+        <div class="location">internal/gitlab/msg.go:34</div>
+      </div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Copy source location">
+          <svg viewBox="0 0 16 16"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="popover-body">
+      <div class="docs">Msg is a single pub-sub message with its routing headers and internal delivery bookkeeping.</div>
+      <div class="signature-block">
+        <pre class="signature"><span class="tok-kw">type</span> <span class="tok-param">Msg</span> <span class="tok-kw">struct</span> <span class="tok-punct">{</span>
+    <span class="tok-param">Subject</span> <span class="tok-builtin">string</span>
+    <span class="tok-param">Reply</span>   <span class="tok-builtin">string</span>
+    <span class="tok-param">Header</span>  <span class="tok-type">Header</span>
+    <span class="tok-param">Data</span>    <span class="tok-punct">[]</span><span class="tok-builtin">byte</span>
+    <span class="tok-param">Sub</span>     <span class="tok-punct">*</span><span class="tok-type">Subscription</span>
+
+    <span class="tok-comment">// Internal</span>
+
+    <span class="tok-param">next</span>    <span class="tok-punct">*</span><span class="tok-type">Msg</span>
+    <span class="tok-param">wsz</span>     <span class="tok-builtin">int</span>
+    <span class="tok-param">barrier</span> <span class="tok-punct">*</span><span class="tok-type">barrierInfo</span>
+    <span class="tok-param">ackd</span>    <span class="tok-builtin">uint32</span>
+<span class="tok-punct">}</span></pre>
+      </div>
+      <div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to find usages</span></div>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">1b. Hover, name resolves to several unrelated symbols</p>
+  <!-- FLOW: still a hover popover (not the list below) — used only when the *name* itself
+       is ambiguous (e.g. `Close` exists on three unrelated types). Small N, pick-one UI. -->
+  <section class="popover">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-external">Go</span>
+      <div class="popover-heading">
+        <div class="popover-title">Close</div>
+        <div class="location">3 definitions</div>
+      </div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Copy source location">
+          <svg viewBox="0 0 16 16"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg>
+        </button>
+        <button class="header-action" type="button" title="Close">
+          <svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="popover-body">
+      <div class="docs">Multiple definitions match. Choose the definition you want to open.</div>
+      <div class="choices">
+        <button class="choice choice--compact">
+          <span class="symbol-badge symbol-method">M</span>
+          <span class="choice-title"><span class="tok-punct">(*</span><span class="tok-type">Client</span><span class="tok-punct">)</span> <span class="tok-func">Close</span></span>
+          <span class="choice-inline-path">in internal/gitlab/client.go</span>
+          <span class="destination-icon destination-in-diff"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg></span>
+        </button>
+        <button class="choice choice--compact">
+          <span class="symbol-badge symbol-method">M</span>
+          <span class="choice-title"><span class="tok-punct">(*</span><span class="tok-type">Writer</span><span class="tok-punct">)</span> <span class="tok-func">Close</span></span>
+          <span class="choice-inline-path">in internal/cache/writer.go</span>
+          <span class="destination-icon destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span>
+        </button>
+        <button class="choice choice--compact">
+          <span class="symbol-badge symbol-method">M</span>
+          <span class="choice-title"><span class="tok-punct">(*</span><span class="tok-type">Listener</span><span class="tok-punct">)</span> <span class="tok-func">Close</span></span>
+          <span class="choice-inline-path">in internal/server/listener.go</span>
+          <span class="destination-icon destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span>
+        </button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">2. Cmd/Ctrl+click → usages list (loaded)</p>
+  <!-- FLOW: Cmd/Ctrl+click on a symbol opens THIS instead of jumping straight to a definition
+       (mirrors IntelliJ's "Find Usages" popup, see reference screenshot). Wider + taller than
+       the hover popover, grouped by file, scrollable. Count sits top-right next to the actions. -->
+  <section class="popover popover--list">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-interface">I</span>
+      <div class="popover-heading">
+        <div class="popover-title">Usages of JetStream</div>
+        <div class="location">jetstream/jetstream.go:15</div>
+      </div>
+      <div class="usages-count">42 usages</div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Close"><svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button>
+      </div>
+    </header>
+    <div class="popover-body usages-body">
+      <div class="usage-group">
+        <div class="usage-group-file">migrator_test.go <span class="usage-group-path">packages/ezjetstream</span><span class="usage-dest destination-in-diff"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">188</span><span class="usage-snippet">Up: <span class="tok-kw">func</span><span class="tok-punct">(</span><span class="tok-param">_</span> <span class="tok-type">context</span><span class="tok-punct">.</span><span class="tok-type">Context</span><span class="tok-punct">, </span><span class="tok-param">_</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">) </span><span class="tok-builtin">error</span> <span class="tok-punct">{</span></span></button>
+        <button class="usage-row"><span class="usage-line">195</span><span class="usage-snippet">Up: <span class="tok-kw">func</span><span class="tok-punct">(</span><span class="tok-param">_</span> <span class="tok-type">context</span><span class="tok-punct">.</span><span class="tok-type">Context</span><span class="tok-punct">, </span><span class="tok-param">_</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">) </span><span class="tok-builtin">error</span> <span class="tok-punct">{</span></span></button>
+        <button class="usage-row"><span class="usage-line">453</span><span class="usage-snippet">{Name: <span class="tok-str">"create_consumer"</span><span class="tok-punct">, </span>Up: <span class="tok-kw">func</span><span class="tok-punct">(</span><span class="tok-param">_</span> <span class="tok-type">context</span><span class="tok-punct">.</span><span class="tok-type">Context</span><span class="tok-punct">, </span><span class="tok-param">_</span> <span class="tok-type">jetstre</span>…</span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">router.go <span class="usage-group-path">packages/ezjetstream</span><span class="usage-dest destination-in-diff"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">15</span><span class="usage-snippet"><span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span></span></button>
+        <button class="usage-row"><span class="usage-line">76</span><span class="usage-snippet"><span class="tok-param">js</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">,</span></span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">stream.go <span class="usage-group-path">packages/ezjetstream</span><span class="usage-dest destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">273</span><span class="usage-snippet"><span class="tok-param">js</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">,</span></span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">test_suite.go <span class="usage-group-path">packages/ezjetstream</span><span class="usage-dest destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">38</span><span class="usage-snippet"><span class="tok-type">JetStream</span> <span class="tok-type hl">jetstream</span><span class="tok-punct">.</span><span class="tok-type">JetStream</span></span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">adapter-edsn-request-p4/job_test.go <span class="usage-group-path">svc/adapter-edsn/cmd/serve</span><span class="usage-dest destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">201</span><span class="usage-snippet"><span class="tok-param">js</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">,</span></span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">../../events/jetstream.go <span class="usage-group-path">.../internal/events/jetstream</span><span class="usage-dest destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">25</span><span class="usage-snippet"><span class="tok-type">JetStream</span> <span class="tok-type hl">jetstream</span><span class="tok-punct">.</span><span class="tok-type">JetStream</span></span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">.../events/jetstream/migrations.go <span class="usage-group-path">.../internal/events/jetstream</span><span class="usage-dest destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">33</span><span class="usage-snippet">Up: <span class="tok-kw">func</span><span class="tok-punct">(</span><span class="tok-param">ctx</span> <span class="tok-type">context</span><span class="tok-punct">.</span><span class="tok-type">Context</span><span class="tok-punct">, </span><span class="tok-param">js</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">) </span><span class="tok-builtin">error</span> <span class="tok-punct">{</span></span></button>
+        <button class="usage-row"><span class="usage-line">96</span><span class="usage-snippet">Up: <span class="tok-kw">func</span><span class="tok-punct">(</span><span class="tok-param">ctx</span> <span class="tok-type">context</span><span class="tok-punct">.</span><span class="tok-type">Context</span><span class="tok-punct">, </span><span class="tok-param">js</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">) </span><span class="tok-builtin">error</span> <span class="tok-punct">{</span></span></button>
+        <button class="usage-row"><span class="usage-line">175</span><span class="usage-snippet"><span class="tok-func">deleteOldMREConsumerWithOpsStartTimeIfNeeded</span><span class="tok-punct">(</span><span class="tok-param">ctx</span> <span class="tok-punct">co</span>…</span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">adapter-entrnce/.../serve/main.go <span class="usage-group-path">svc/adapter-entrnce/cmd/serve</span><span class="usage-dest destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">107</span><span class="usage-snippet"><span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span></span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">.../nats_subscriptions.go <span class="usage-group-path">.../billing/internal/adapter/inbound</span><span class="usage-dest destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">34</span><span class="usage-snippet"><span class="tok-func">observeSettlementStream</span><span class="tok-punct">(</span><span class="tok-param">ctx</span> <span class="tok-param">co</span>…</span></button>
+        <button class="usage-row"><span class="usage-line">64</span><span class="usage-snippet"><span class="tok-func">observeInvoiceStream</span><span class="tok-punct">(</span><span class="tok-param">ctx</span> <span class="tok-param">co</span>…</span></button>
+        <button class="usage-row"><span class="usage-line">113</span><span class="usage-snippet"><span class="tok-func">observePDFStream</span><span class="tok-punct">(</span><span class="tok-param">ctx</span> <span class="tok-param">co</span>…</span></button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">3. Still indexing — partial count, more on scroll</p>
+  <!-- FLOW: same list, opened before indexing finished. Header shows a provisional count with
+       a spinner instead of a hard "20+"; a few real rows are already usable, the rest render
+       as skeleton rows until they resolve — never a bare "20+" with no indication it's still working. -->
+  <section class="popover popover--list">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-interface">I</span>
+      <div class="popover-heading">
+        <div class="popover-title">Usages of JetStream</div>
+        <div class="location">jetstream/jetstream.go:15</div>
+      </div>
+      <div class="usages-count is-loading"><span class="usages-spinner"></span>20+ found</div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Close"><svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button>
+      </div>
+    </header>
+    <div class="popover-body usages-body">
+      <div class="usage-group">
+        <div class="usage-group-file">migrator_test.go <span class="usage-group-path">packages/ezjetstream</span><span class="usage-dest destination-in-diff"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">188</span><span class="usage-snippet">Up: <span class="tok-kw">func</span><span class="tok-punct">(</span><span class="tok-param">_</span> <span class="tok-type">context</span><span class="tok-punct">.</span><span class="tok-type">Context</span><span class="tok-punct">, </span><span class="tok-param">_</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">) </span><span class="tok-builtin">error</span> <span class="tok-punct">{</span></span></button>
+        <button class="usage-row"><span class="usage-line">195</span><span class="usage-snippet">Up: <span class="tok-kw">func</span><span class="tok-punct">(</span><span class="tok-param">_</span> <span class="tok-type">context</span><span class="tok-punct">.</span><span class="tok-type">Context</span><span class="tok-punct">, </span><span class="tok-param">_</span> <span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span><span class="tok-punct">) </span><span class="tok-builtin">error</span> <span class="tok-punct">{</span></span></button>
+      </div>
+      <div class="usage-group">
+        <div class="usage-group-file">router.go <span class="usage-group-path">packages/ezjetstream</span><span class="usage-dest destination-in-diff"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">15</span><span class="usage-snippet"><span class="tok-type">jetstream</span><span class="tok-punct">.</span><span class="tok-type hl">JetStream</span></span></button>
+      </div>
+      <div class="usage-row-skeleton"><i></i><i></i></div>
+      <div class="usage-row-skeleton"><i></i><i></i></div>
+      <div class="usages-scroll-hint">scroll for more · still indexing…</div>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">3b. Usages list — search coverage incomplete, offer full-project search</p>
+  <!-- FLOW: same usages list, but the scope only covered a handful of indexed packages.
+       The action to widen the search reuses `.signature-toggle` (the same full-width
+       flush row the "Show full signature" toggle uses) — NOT the bordered `.choice` row
+       the hover popover's plain choice lists use elsewhere. A 36px bordered row would
+       visually clash with the 11px single-line usage rows immediately above it; reusing
+       the toggle's row keeps this in the same register with one shared style, not two
+       near-identical ones. -->
+  <section class="popover popover--list">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-struct">S</span>
+      <div class="popover-heading">
+        <div class="popover-title">Usages of ProductOfferingID</div>
+        <div class="location">svc/contracting/internal/core/entity/product_offering.go:11</div>
+      </div>
+      <div class="usages-count">8 usages</div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Close"><svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button>
+      </div>
+    </header>
+    <div class="popover-body usages-body">
+      <div class="usage-group">
+        <div class="usage-group-file">product_offering.go <span class="usage-group-path">svc/contracting/internal/core/entity</span><span class="usage-dest destination-in-diff"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg></span></div>
+        <button class="usage-row"><span class="usage-line">12</span><span class="usage-snippet"><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span></span></button>
+        <button class="usage-row"><span class="usage-line">16</span><span class="usage-snippet"><span class="tok-func">NewProductOffering</span><span class="tok-punct">(</span><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span><span class="tok-punct">, </span><span class="tok-param">na</span>…</span></button>
+        <button class="usage-row"><span class="usage-line">17</span><span class="usage-snippet"><span class="tok-kw">return</span> <span class="tok-punct">&amp;</span><span class="tok-type">ProductOffering</span><span class="tok-punct">{</span><span class="tok-param">id</span><span class="tok-punct">: </span><span class="tok-param">id</span><span class="tok-punct">}</span></span></button>
+        <button class="usage-row"><span class="usage-line">21</span><span class="usage-snippet"><span class="tok-kw">func</span> <span class="tok-punct">(</span><span class="tok-param">p</span> <span class="tok-punct">*</span><span class="tok-type">ProductOffering</span><span class="tok-punct">) </span><span class="tok-func">ID</span><span class="tok-punct">() </span><span class="tok-type hl">ProductOfferingID</span></span></button>
+        <button class="usage-row"><span class="usage-line">22</span><span class="usage-snippet"><span class="tok-kw">return</span> <span class="tok-param">p</span><span class="tok-punct">.</span><span class="tok-param">id</span></span></button>
+        <button class="usage-row"><span class="usage-line">26</span><span class="usage-snippet"><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span><span class="tok-punct">) </span><span class="tok-builtin">bool</span></span></button>
+        <button class="usage-row"><span class="usage-line">27</span><span class="usage-snippet"><span class="tok-kw">return</span> <span class="tok-param">p</span><span class="tok-punct">.</span><span class="tok-param">id</span> <span class="tok-punct">==</span> <span class="tok-param">id</span></span></button>
+        <button class="usage-row"><span class="usage-line">89</span><span class="usage-snippet"><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span><span class="tok-punct">) </span><span class="tok-type">ProductOffering</span></span></button>
+      </div>
+      <button class="signature-toggle" type="button">Search complete project</button>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">3c. Usages list — full-project search in progress (triggered by "Search complete project")</p>
+  <!-- FLOW: entered by clicking "Search complete project" in 3b. Only the count + body change;
+       the header (badge, title, location, close button) stays put so the popover doesn't jump.
+       BEHAVIOR NOTE (not shown by this static demo): while this full-project search is running,
+       the popover must only be dismissible via the close (X) button in the header — outside
+       clicks and Escape are suppressed. This is a long-running search; letting a stray click or
+       Escape cancel it silently would be surprising, so the user has to explicitly hit close. -->
+  <section class="popover popover--list">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-struct">S</span>
+      <div class="popover-heading">
+        <div class="popover-title">Usages of ProductOfferingID</div>
+        <div class="location">svc/contracting/internal/core/entity/product_offering.go:11</div>
+      </div>
+      <div class="usages-count is-loading"><span class="usages-spinner"></span>Searching…</div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Close"><svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button>
+      </div>
+    </header>
+    <div class="popover-body usages-body">
+      <div class="usage-row-skeleton"><i></i><i></i></div>
+      <div class="usage-row-skeleton"><i></i><i></i></div>
+      <div class="usage-row-skeleton"><i></i><i></i></div>
+    </div>
+  </section>
+</div>
+
+<div class="col">
+  <p class="label">4. Click a usage → at definition, implementations load</p>
+  <!-- FLOW: reached by clicking a row in the usages list (state 2/3), or by hovering an
+       interface name directly. Since we're already AT the definition, both the doc comment
+       AND the signature are dropped — you clicked "Store", you're looking straight at its
+       body in the diff already. Popover goes straight to scope + implementations. -->
+  <section class="popover">
+    <header class="popover-header">
+      <span class="symbol-badge symbol-interface">I</span>
+      <div class="popover-heading">
+        <div class="popover-title">Implementations of Store</div>
+        <div class="location">3 required methods</div>
+      </div>
+      <div class="usages-count is-loading"><span class="usages-spinner"></span>indexing…</div>
+      <div class="header-actions">
+        <button class="header-action" type="button" title="Close"><svg viewBox="0 0 16 16"><path d="M3 3l10 10M13 3 3 13"/></svg></button>
+      </div>
+    </header>
+    <div class="popover-body">
+      <div class="scope">Current package · internal/cache</div>
+      <div class="choices">
+        <button class="choice choice--compact">
+          <span class="symbol-badge symbol-struct">S</span>
+          <span class="choice-title tok-type">MemStore</span>
+          <span class="choice-inline-path">in internal/cache/mem.go</span>
+          <span class="destination-icon destination-in-diff"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 2h2v6a3 3 0 0 0 3 3h4.2L9 8.8 10.4 7 15 11.5 10.4 16 9 14.2l2.2-2.2H7a4 4 0 0 1-4-4V2z"/></svg></span>
+        </button>
+        <button class="choice choice--compact">
+          <span class="symbol-badge symbol-struct">S</span>
+          <span class="choice-title tok-type">RedisStore</span>
+          <span class="choice-inline-path">in internal/cache/redis.go</span>
+          <span class="destination-icon destination-new-tab"><svg viewBox="0 0 16 16"><path fill="currentColor" d="M9 2h5v5h-2V5.4L7.7 9.7 6.3 8.3 10.6 4H9V2z"/><path fill="currentColor" d="M3 3h4v2H4v7h7V9h2v5H2V3h1z"/></svg></span>
+        </button>
+      </div>
+    </div>
+  </section>
+</div>
+
+</body>
+</html>

@@ -48,32 +48,6 @@ export function searchTerms(result) {
   return terms.length ? { kind: 'terms', terms } : { kind: 'noTerms' };
 }
 
-// blobSearchPercentage(index, total) -> the 5-35% progress band
-// searchCompleteProject() spends proving term coverage, mirroring the
-// former inline formula exactly. Total given total > 0 (caller only calls
-// this once per term in a non-empty term list).
-export function blobSearchPercentage(index, total) {
-  return Math.round(5 + (index / total) * 30);
-}
-
-// packageIndexPercentage(index, total) -> the 35-95% progress band spent
-// downloading matching packages, mirroring the former inline formula
-// exactly (`Math.max(1, ...)` guards the zero-package case). Total.
-export function packageIndexPercentage(index, total) {
-  return Math.round(35 + ((index + 1) / Math.max(1, total)) * 60);
-}
-
-// termSearchMessage(term) / packageIndexMessage(index, total) -> the phase
-// copy shown above the progress bar, byte-identical to the former inline
-// template strings. Total.
-export function termSearchMessage(term) {
-  return `Searching project code for ${term}`;
-}
-
-export function packageIndexMessage(index, total) {
-  return `Indexing matching package ${index + 1} of ${total}`;
-}
-
 // blobPathsComplete(status) -> whether a searchProjectBlobPaths() page
 // result proves complete coverage, mirroring the former
 // `result.status !== 'complete'` check. Total.
@@ -107,18 +81,4 @@ export function completeProjectScope(packageCount) {
 // rerunFullSearchQuery() dispatch (`request.kind === 'references'`). Total.
 export function rerunQueryKind(request) {
   return request?.kind === 'references' ? 'references' : 'implementations';
-}
-
-// focusTargetForStatus(status) -> which dialog control restore() should
-// focus, mirroring go-navigation.js's former restoreFullSearch() ternary
-// (`state.fullSearch.status === 'error' ? '.full-search-retry' :
-// '.full-search-minimize'`). Total.
-export function focusTargetForStatus(status) {
-  return status === 'error' ? 'retry' : 'minimize';
-}
-
-// chipLabel(percentage) -> the minimized-chip button text, byte-identical
-// to the former inline template string. Total.
-export function chipLabel(percentage) {
-  return `Project search · ${percentage}%`;
 }

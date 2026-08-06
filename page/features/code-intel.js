@@ -18,11 +18,15 @@
 // shared "reveal a location in the diff" primitives also used by bookmarks.js
 // (visibleDiffRootForDefinition/navigateToLocation), the shared toast
 // surface (toast), the shortcut-coach bridge (offerShortcutCoach), the
-// frame-throttle clock (requestFrame), and project-search's modal opener
-// (openFullSearch). `page/main.js` builds this bag directly from
-// `page/platform/diff-dom.js`/`gitlab-api.js`, `page/lifecycle/mr-session.js`'s
-// shared instances, and late-bound accessors onto the mr-preload/
-// project-search handles — this is the only mounted instance.
+// frame-throttle clock (requestFrame), and project-search's orchestration
+// entry points (searchCompleteProject/cancelSearch). `page/main.js` builds
+// this bag directly from `page/platform/diff-dom.js`/`gitlab-api.js`,
+// `page/lifecycle/mr-session.js`'s shared instances, and late-bound accessors
+// onto the mr-preload/project-search handles — this is the only mounted
+// instance. This module in turn now EXPOSES `showSearchProgress(message,
+// pointer)` on its own handle, so project-search.js can drive the popover's
+// dismiss-proof inline loading state ('searching' mode) while a
+// complete-project search is in flight.
 //
 // Toast-surface decision: the shared instance page/lifecycle/mr-session.js
 // now owns, reached through `legacy.toast`. The toast host is a shared
@@ -63,6 +67,8 @@ import {
   locationKey,
   sourceLocationText,
   loadingPhaseLabel,
+  groupLocationsByFile,
+  tokenizeSignature,
 } from './code-intel.internal.js';
 
 const POPOVER_DISMISS_DELAY = 450;
@@ -72,45 +78,80 @@ const CODE_CELL_SELECTOR = 'td.line_content, td[class*="line-content"], [data-te
 
 const MARKUP = `
   <style>
-    :host { all:initial; position:fixed; z-index:var(--golens-z-popover); inset:0; pointer-events:none; font:12px/1.45 var(--golens-font-sans); color-scheme:dark; }
+    :host { all:initial; position:fixed; z-index:var(--golens-z-popover); inset:0; pointer-events:none; font:12.5px/1.5 var(--golens-font-sans); color-scheme:dark; }
     * { box-sizing:border-box; }
-    .popover { position:fixed; display:none; width:min(460px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-lg); background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); color:var(--golens-text-primary); pointer-events:auto; }
+    .popover { position:fixed; display:none; width:min(440px,calc(100vw - 24px)); max-height:min(420px,calc(100vh - 24px)); overflow:hidden; border:1px solid var(--golens-border-default); border-radius:8px; background:var(--golens-surface-panel); box-shadow:var(--golens-shadow-lg); color:var(--golens-text-primary); pointer-events:auto; }
     .popover.show { display:grid; grid-template-rows:auto minmax(0,1fr); }
-    .popover-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-2); align-items:center; min-height:46px; padding:var(--golens-space-2) var(--golens-space-3); border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
-    .popover-heading { min-width:0; }
-    .popover-title { overflow:hidden; color:var(--golens-text-primary); font-size:12px; font-weight:700; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-    .location { overflow:hidden; margin-top:2px; color:var(--golens-text-muted); font:10px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
-    .popover-body { min-height:0; overflow:auto; padding:var(--golens-space-3); }
-    .symbol-badge { display:inline-flex; min-width:20px; height:20px; align-items:center; justify-content:center; padding:0 var(--golens-space-1); border:1px solid currentColor; border-radius:var(--golens-radius-xs); background:color-mix(in srgb,currentColor 7%,transparent); font:700 9px/1 var(--golens-font-mono); letter-spacing:-.02em; }
-    .symbol-interface,.symbol-interface-method { color:#c586c0; } .symbol-struct { color:#d7ba7d; } .symbol-function { color:#dcdcaa; } .symbol-method,.symbol-type { color:#4ec9b0; } .symbol-variable,.symbol-parameter,.symbol-field { color:#9cdcfe; } .symbol-constant { color:#4fc1ff; } .symbol-package { color:#fc9b6b; } .symbol-external { color:#3794ff; }
-    .header-actions { display:flex; align-items:center; gap:2px; }
-    .header-action { display:inline-flex; width:28px; height:28px; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:var(--golens-radius-sm); background:transparent; color:var(--golens-text-secondary); cursor:pointer; transition:background-color var(--golens-motion-fast),border-color var(--golens-motion-fast),color var(--golens-motion-fast),transform var(--golens-motion-fast); }
-    .header-action:hover { border-color:var(--golens-border-default); background:var(--golens-surface-hover); color:var(--golens-text-primary); } .header-action:active { background:var(--golens-surface-pressed); transform:translateY(1px); } .header-action:disabled { cursor:not-allowed; opacity:.45; } .header-action[hidden] { display:none; } .header-action svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
-    .copy-button .check-icon { display:none; } .copy-button[data-state="copied"] { border-color:var(--golens-success); background:var(--golens-success-soft); color:var(--golens-success); } .copy-button .copy-icon { display:block; } .copy-button[data-state="copied"] .copy-icon { display:none; } .copy-button[data-state="copied"] .check-icon { display:block; }
-    .signature-block { margin:0 0 var(--golens-space-3); overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-inset); } .signature-block[hidden] { display:none; }
-    .signature { margin:0; padding:var(--golens-space-2) var(--golens-space-3); overflow-wrap:anywhere; color:#dcdcaa; font:600 11px/1.5 var(--golens-font-mono); white-space:pre-wrap; }
-    .signature-toggle { width:100%; padding:var(--golens-space-2) var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); color:var(--golens-info-hover); font:650 10px/1.4 var(--golens-font-sans); text-align:left; cursor:pointer; } .signature-toggle:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .signature-toggle:active { background:var(--golens-surface-pressed); } .signature-toggle:disabled { cursor:not-allowed; opacity:.45; } .signature-toggle[hidden] { display:none; }
+    .popover.popover--list { width:min(560px,calc(100vw - 24px)); height:320px; max-height:min(320px,calc(100vh - 24px)); }
+    .popover-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:var(--golens-space-2); align-items:start; padding:10px var(--golens-space-3) 9px; border-bottom:1px solid var(--golens-border-subtle); background:var(--golens-surface-raised); }
+    .popover-heading { min-width:0; padding-top:1px; }
+    .popover-title { overflow:hidden; color:var(--golens-text-primary); font:600 12.5px/1.3 var(--golens-font-mono); letter-spacing:-.01em; text-overflow:ellipsis; white-space:nowrap; }
+    .location { overflow:hidden; margin-top:3px; color:var(--golens-text-muted); font:10.5px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+    .popover-body { display:flex; flex-direction:column; gap:var(--golens-space-3); min-height:0; overflow:auto; padding:var(--golens-space-3); }
+    /* Flex children with their own overflow!=visible (.signature-block, .choices below)
+       get an automatic min-size of 0 in a flex container, so without flex-shrink:0
+       they silently shrink/clip below their content on a long struct/choice list
+       instead of letting .popover-body's own overflow:auto scroll. */
+    .symbol-badge { display:inline-flex; min-width:19px; height:18px; align-items:center; justify-content:center; padding:0 4px; margin-top:1px; border-radius:3px; background:color-mix(in srgb,currentColor 18%,transparent); font:700 9px/1 var(--golens-font-mono); letter-spacing:-.01em; }
+    .symbol-interface,.symbol-interface-method { color:#c586c0; } .symbol-struct { color:#59a869; } .symbol-function { color:#dcdcaa; } .symbol-method,.symbol-type { color:#4ec9b0; } .symbol-variable,.symbol-parameter,.symbol-field { color:#9cdcfe; } .symbol-constant { color:#4fc1ff; } .symbol-package { color:#fc9b6b; } .symbol-external { color:#3794ff; }
+    .header-actions { display:flex; align-items:center; gap:1px; }
+    .header-action { display:inline-flex; width:24px; height:24px; align-items:center; justify-content:center; padding:0; border:1px solid transparent; border-radius:4px; background:transparent; color:var(--golens-text-muted); cursor:pointer; transition:background-color var(--golens-motion-fast),color var(--golens-motion-fast); }
+    .header-action:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .header-action:active { background:var(--golens-surface-pressed); } .header-action:disabled { cursor:not-allowed; opacity:.45; } .header-action[hidden] { display:none; } .header-action svg { width:13px; height:13px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.75; }
+    .copy-button .check-icon { display:none; } .copy-button[data-state="copied"] { background:var(--golens-success-soft); color:var(--golens-success); } .copy-button .copy-icon { display:block; } .copy-button[data-state="copied"] .copy-icon { display:none; } .copy-button[data-state="copied"] .check-icon { display:block; }
+    .signature-block { flex-shrink:0; overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:4px; background:var(--golens-surface-inset); } .signature-block[hidden] { display:none; }
+    .signature { margin:0; padding:var(--golens-space-2) var(--golens-space-3); overflow-wrap:anywhere; color:#a9b7c6; font:500 11px/1.5 var(--golens-font-mono); white-space:pre-wrap; }
+    .tok-kw,.tok-type { color:#61afef; } .tok-builtin { color:#d19a66; } .tok-func { color:#ffc66d; } .tok-param { color:#a9b7c6; } .tok-str { color:#6a8759; } .tok-num { color:#6897bb; } .tok-comment { color:#808080; font-style:italic; } .tok-punct { color:#a9b7c6; }
+    .signature-toggle { width:100%; padding:6px var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:transparent; color:var(--golens-info-hover); font:600 10px/1.4 var(--golens-font-mono); text-align:left; cursor:pointer; } .signature-toggle:hover { color:var(--golens-text-primary); } .signature-toggle:active { opacity:.8; } .signature-toggle:disabled { cursor:not-allowed; opacity:.45; } .signature-toggle[hidden] { display:none; }
     .docs:empty,.scope[hidden],.shortcut-hint[hidden] { display:none; }
-    .docs { margin:0 0 var(--golens-space-3); color:var(--golens-text-secondary); line-height:1.5; white-space:pre-wrap; }
-    .scope { margin:0 0 var(--golens-space-3); padding:6px 8px; border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-muted); font:10px/1.4 var(--golens-font-mono); }
-    .choices { display:grid; gap:5px; }
-    .choice { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-2); width:100%; min-height:40px; align-items:center; padding:var(--golens-space-2); border:1px solid var(--golens-border-subtle); border-radius:var(--golens-radius-sm); background:var(--golens-surface-raised); color:var(--golens-text-primary); text-align:left; cursor:pointer; transition:background-color var(--golens-motion-fast),border-color var(--golens-motion-fast),transform var(--golens-motion-fast); }
-    .choice:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); } .choice:active { background:var(--golens-surface-pressed); transform:translateY(1px); } .choice:disabled { cursor:not-allowed; opacity:.45; } .choice:focus-visible,.header-action:focus-visible,.signature-toggle:focus-visible,summary:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:1px; }
+    .docs { margin:0; color:var(--golens-text-secondary); line-height:1.55; white-space:pre-wrap; }
+    .scope { margin:0; color:var(--golens-text-muted); font:10.5px/1.4 var(--golens-font-mono); }
+    .choices { display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; border:1px solid var(--golens-border-subtle); border-radius:4px; background:var(--golens-surface-inset); }
+    .choices:empty { display:none; }
+    .choices.choices--flush { overflow:visible; border:0; border-radius:0; background:transparent; }
+    .choice { position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--golens-space-2); width:100%; min-height:36px; align-items:center; padding:6px var(--golens-space-3); border:0; border-bottom:1px solid var(--golens-border-subtle); background:transparent; color:var(--golens-text-primary); text-align:left; cursor:pointer; transition:background-color var(--golens-motion-fast); }
+    .choice:last-child { border-bottom:0; }
+    .choice:hover { background:var(--golens-info-soft); box-shadow:inset 2px 0 0 var(--golens-info); } .choice:active { background:var(--golens-surface-pressed); } .choice:disabled { cursor:not-allowed; opacity:.45; } .choice:focus-visible,.header-action:focus-visible,.signature-toggle:focus-visible,summary:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:-2px; }
     .choice-copy { min-width:0; } .choice-heading { display:flex; min-width:0; align-items:center; gap:7px; }
-    .choice-title { overflow:hidden; color:var(--golens-text-primary); font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+    .choice-title { overflow:hidden; color:var(--golens-text-primary); font:600 11.5px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
     .choice-context { display:block; margin-top:2px; overflow:hidden; color:var(--golens-text-muted); font:10px/1.35 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
     .choice-doc { display:block; margin-top:3px; overflow:hidden; color:var(--golens-text-secondary); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
-    .destination-icon { position:relative; display:inline-flex; width:22px; height:22px; flex:0 0 auto; align-items:center; justify-content:center; border-radius:4px; }
-    .destination-icon svg { width:15px; height:15px; } .destination-in-diff { color:var(--golens-primary); } .destination-new-tab { color:var(--golens-info); }
-    .choice:hover .destination-icon::after,.choice:focus-visible .destination-icon::after { position:absolute; z-index:2; right:-4px; bottom:calc(100% + 7px); width:max-content; max-width:180px; padding:var(--golens-space-1) var(--golens-space-2); border:1px solid var(--golens-border-strong); border-radius:var(--golens-radius-xs); background:var(--golens-surface-raised); box-shadow:var(--golens-shadow-sm); color:var(--golens-text-primary); content:attr(data-tooltip); font:10px/1.3 var(--golens-font-sans); pointer-events:none; }
-    details { margin-top:var(--golens-space-1); } summary { padding:var(--golens-space-2) var(--golens-space-1); border-radius:var(--golens-radius-xs); color:var(--golens-text-secondary); cursor:pointer; } summary:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); } .test-double-choices { display:grid; gap:5px; margin-top:var(--golens-space-1); }
-    .shortcut-hint { display:flex; align-items:center; gap:5px; margin:var(--golens-space-3) 0 0; color:var(--golens-text-muted); font-size:10px; } kbd { display:inline-flex; min-width:17px; min-height:17px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:var(--golens-radius-xs); background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
-    .loading-progress { display:grid; gap:var(--golens-space-2); margin:0 0 var(--golens-space-3); padding:var(--golens-space-2) var(--golens-space-3); border:1px solid color-mix(in srgb,var(--golens-primary) 35%,var(--golens-border-subtle)); border-radius:var(--golens-radius-sm); background:var(--golens-primary-soft); } .loading-progress[hidden] { display:none; } .loading-progress-meta { display:flex; justify-content:space-between; gap:var(--golens-space-2); color:var(--golens-text-primary); font-size:10px; } .loading-progress-phase { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; } .loading-progress-count { flex:0 0 auto; color:var(--golens-primary-hover); font:700 10px/1.45 var(--golens-font-mono); font-variant-numeric:tabular-nums; } .loading-track { height:4px; overflow:hidden; border-radius:999px; background:var(--golens-surface-pressed); } .loading-track > i { display:block; width:0; height:100%; border-radius:inherit; background:var(--golens-primary); transition:width var(--golens-motion-base); }
-    @media (prefers-reduced-motion:reduce) { .header-action,.choice,.loading-track > i { transition:none; } .header-action:active,.choice:active { transform:none; } }
+    .destination-icon { position:relative; display:inline-flex; width:20px; height:20px; flex:0 0 auto; align-items:center; justify-content:center; border-radius:3px; }
+    .destination-icon svg { width:14px; height:14px; } .destination-in-diff { color:var(--golens-primary); } .destination-new-tab { color:var(--golens-info); }
+    .choice:hover .destination-icon::after,.choice:focus-visible .destination-icon::after { position:absolute; z-index:2; right:-4px; bottom:calc(100% + 7px); width:max-content; max-width:180px; padding:var(--golens-space-1) var(--golens-space-2); border:1px solid var(--golens-border-strong); border-radius:3px; background:var(--golens-surface-raised); box-shadow:var(--golens-shadow-sm); color:var(--golens-text-primary); content:attr(data-tooltip); font:10px/1.3 var(--golens-font-sans); pointer-events:none; }
+    details { border-top:1px solid var(--golens-border-subtle); } summary { padding:6px var(--golens-space-3); color:var(--golens-text-muted); font:10.5px/1.4 var(--golens-font-mono); cursor:pointer; } summary:hover { color:var(--golens-text-primary); } .test-double-choices { display:flex; flex-direction:column; }
+    .shortcut-hint { display:flex; align-items:center; gap:5px; padding-top:var(--golens-space-1); color:var(--golens-text-muted); font-size:10px; } kbd { display:inline-flex; min-width:16px; min-height:16px; align-items:center; justify-content:center; padding:1px 3px; border:1px solid var(--golens-border-strong); border-bottom-width:2px; border-radius:3px; background:var(--golens-surface-inset); color:var(--golens-text-primary); font:700 9px/1 var(--golens-font-mono); }
+    .popover-header:has(.usages-count:not([hidden])) { grid-template-columns:auto minmax(0,1fr) auto auto; }
+    .usages-count { display:flex; flex:0 0 auto; align-items:center; gap:5px; margin-top:2px; padding:2px 7px; border-radius:99px; background:var(--golens-surface-hover); color:var(--golens-text-muted); font:600 10px/1.4 var(--golens-font-mono); font-variant-numeric:tabular-nums; white-space:nowrap; } .usages-count[hidden] { display:none; }
+    .usages-count.is-loading { color:var(--golens-primary-hover); background:var(--golens-primary-soft); }
+    .usages-spinner { width:9px; height:9px; border:1.5px solid color-mix(in srgb,currentColor 35%,transparent); border-top-color:currentColor; border-radius:50%; animation:golens-spin .7s linear infinite; }
+    @keyframes golens-spin { to { transform:rotate(360deg); } }
+    .usage-group + .usage-group { margin-top:2px; border-top:1px solid var(--golens-border-subtle); }
+    .usage-group-file { position:sticky; top:0; z-index:1; display:flex; align-items:baseline; gap:6px; padding:5px var(--golens-space-3) 4px; background:var(--golens-surface-panel); color:var(--golens-text-primary); font:600 10.5px/1.3 var(--golens-font-mono); }
+    .usage-group-path { overflow:hidden; flex:1 1 auto; color:var(--golens-text-muted); font-weight:500; text-overflow:ellipsis; white-space:nowrap; }
+    .usage-dest { flex:0 0 auto; display:inline-flex; } .usage-dest svg { width:12px; height:12px; } .usage-dest.destination-in-diff { color:var(--golens-primary); } .usage-dest.destination-new-tab { color:var(--golens-info); }
+    .usage-row { display:grid; grid-template-columns:28px minmax(0,1fr); gap:8px; width:100%; padding:2px var(--golens-space-3) 2px calc(var(--golens-space-3) + 6px); border:0; background:transparent; color:var(--golens-text-secondary); text-align:left; cursor:pointer; font:11px/1.6 var(--golens-font-mono); }
+    .usage-row:hover { background:var(--golens-info-soft); box-shadow:inset 2px 0 0 var(--golens-info); } .usage-row:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:-2px; }
+    .usage-line { color:var(--golens-text-muted); font-variant-numeric:tabular-nums; text-align:right; }
+    .usage-snippet { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .usage-snippet .hl { border-radius:2px; background:color-mix(in srgb,var(--golens-primary) 30%,transparent); color:var(--golens-text-primary); }
+    .usage-row-skeleton { display:grid; grid-template-columns:28px minmax(0,1fr); gap:8px; padding:4px var(--golens-space-3) 4px calc(var(--golens-space-3) + 6px); }
+    .usage-row-skeleton i { display:block; height:9px; border-radius:3px; background:var(--golens-surface-hover); }
+    .usage-row-skeleton i:first-child { width:16px; }
+    .usage-row-skeleton:nth-child(1) i:last-child { width:78%; }
+    .usage-row-skeleton:nth-child(2) i:last-child { width:52%; }
+    .popover-body.usages-body { gap:0; padding:var(--golens-space-1) 0; scrollbar-color:var(--golens-border-strong) transparent; scrollbar-width:thin; }
+    .popover-body.usages-body::-webkit-scrollbar { width:9px; }
+    .popover-body.usages-body::-webkit-scrollbar-thumb { border:2px solid var(--golens-surface-panel); border-radius:99px; background:var(--golens-border-strong); }
+    .choice--compact { display:flex; min-height:0; align-items:center; gap:6px; padding:4px var(--golens-space-3); overflow:hidden; }
+    .choice--compact .symbol-badge { flex:0 0 auto; margin-top:0; }
+    .choice--compact .choice-title { flex:0 1 auto; font-size:11px; }
+    .choice--compact .choice-inline-path { overflow:hidden; flex:1 1 auto; margin-left:2px; color:var(--golens-text-muted); font:10px/1.3 var(--golens-font-mono); text-overflow:ellipsis; white-space:nowrap; }
+    .choice--compact .destination-icon { flex:0 0 auto; width:14px; height:14px; } .choice--compact .destination-icon svg { width:12px; height:12px; }
+    @media (prefers-reduced-motion:reduce) { .header-action,.choice,.loading-track > i,.usages-spinner { transition:none; animation:none; } .header-action:active,.choice:active { transform:none; } }
   </style>
   <section class="popover" role="tooltip" aria-labelledby="golens-popover-title">
-    <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><div class="header-actions"><button class="header-action copy-button" type="button" aria-label="Copy source location" title="Copy source location" hidden><svg class="copy-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg><svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.25 3.15 3.15L13 4.6"/></svg></button><button class="header-action close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></header>
-    <div class="popover-body"><div class="loading-progress" hidden role="status" aria-live="polite"><div class="loading-progress-meta"><span class="loading-progress-phase"></span><span class="loading-progress-count"></span></div><div class="loading-track" role="progressbar" aria-label="Go intelligence loading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="docs"></div><div class="scope" hidden></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
+    <header class="popover-header"><span class="symbol-badge symbol-external" role="img" aria-label="Go symbol" title="Go symbol">Go</span><div class="popover-heading"><div id="golens-popover-title" class="popover-title"></div><div class="location"></div></div><div class="usages-count" hidden></div><div class="header-actions"><button class="header-action copy-button" type="button" aria-label="Copy source location" title="Copy source location" hidden><svg class="copy-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.25"/><path d="M10.75 5.25V3.5c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25h1.75"/></svg><svg class="check-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.25 3.15 3.15L13 4.6"/></svg></button><button class="header-action close-button" type="button" aria-label="Close Go insight" title="Close" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg></button></div></header>
+    <div class="popover-body"><div class="docs"></div><div class="signature-block" hidden><pre id="golens-go-signature" class="signature"></pre><button class="signature-toggle" type="button" aria-controls="golens-go-signature" aria-expanded="false" hidden>Show full signature</button></div><div class="scope" hidden></div><div class="choices"></div><div class="shortcut-hint"><kbd>⌘</kbd><span>or Ctrl + click to go to definition</span></div></div>
   </section>
 `;
 
@@ -157,12 +198,15 @@ export function mount(ctx = {}) {
     doc.body.append(host);
     ui = host;
     const popover = shadow.querySelector('.popover');
-    popover.addEventListener('pointerenter', () => pinPopover());
-    popover.addEventListener('pointerdown', () => pinPopover());
-    popover.addEventListener('focusin', () => pinPopover());
+    popover.addEventListener('pointerenter', () => { if (popoverMode !== 'searching') pinPopover(); });
+    popover.addEventListener('pointerdown', () => { if (popoverMode !== 'searching') pinPopover(); });
+    popover.addEventListener('focusin', () => { if (popoverMode !== 'searching') pinPopover(); });
     popover.addEventListener('keydown', onPopoverKeyDown);
     popover.querySelector('.copy-button').addEventListener('click', (event) => copySourceLocation(event.currentTarget));
-    popover.querySelector('.close-button').addEventListener('click', hidePopover);
+    popover.querySelector('.close-button').addEventListener('click', () => {
+      if (popoverMode === 'searching') legacy.cancelSearch?.();
+      hidePopover();
+    });
     return shadow;
   }
 
@@ -264,7 +308,7 @@ export function mount(ctx = {}) {
     const key = targetKey(target);
     if (key) popoverTargetKey = key;
     popoverMode = mode;
-    pinnedPopover = mode === 'pinned';
+    pinnedPopover = mode === 'pinned' || mode === 'searching';
     if (pinnedPopover) pinnedTargetKey = key || popoverTargetKey;
     else pinnedTargetKey = '';
     if (!popover) return;
@@ -318,6 +362,7 @@ export function mount(ctx = {}) {
   }
 
   function dismissPinnedPopoverFromOutside(event) {
+    if (popoverMode === 'searching') return false;
     if (!pinnedPopover || eventIsInsideUI(event)) return false;
     hidePopover();
     return true;
@@ -340,6 +385,41 @@ export function mount(ctx = {}) {
     return applySymbolBadge(badge, kind);
   }
 
+  // paintSignatureText(element, text) -> replaces `element`'s children with
+  // syntax-colored spans from tokenizeSignature(text) (code-intel.internal.js),
+  // instead of the former plain textContent assignment.
+  function paintSignatureText(element, text) {
+    element.replaceChildren();
+    for (const { text: chunk, cls } of tokenizeSignature(text)) {
+      if (!cls) { element.append(doc.createTextNode(chunk)); continue; }
+      const span = doc.createElement('span');
+      span.className = cls;
+      span.textContent = chunk;
+      element.append(span);
+    }
+  }
+
+  // paintUsageSnippet(element, location) -> like paintSignatureText, but also
+  // marks whichever token overlaps [location.highlightStart,
+  // +highlightLength) with an extra `hl` class, the matched identifier
+  // occurrence on that usage row (demo's `.usage-snippet .hl` highlight).
+  function paintUsageSnippet(element, location) {
+    element.replaceChildren();
+    const { snippet = '', highlightStart = -1, highlightLength = 0 } = location;
+    let offset = 0;
+    for (const { text: chunk, cls } of tokenizeSignature(snippet)) {
+      const overlaps = highlightLength > 0
+        && offset < highlightStart + highlightLength
+        && offset + chunk.length > highlightStart;
+      offset += chunk.length;
+      if (!cls && !overlaps) { element.append(doc.createTextNode(chunk)); continue; }
+      const span = doc.createElement('span');
+      span.className = [cls, overlaps ? 'hl' : null].filter(Boolean).join(' ');
+      span.textContent = chunk;
+      element.append(span);
+    }
+  }
+
   function renderSignature(popover, definition = null, { showFullTypeBody = false } = {}) {
     const block = popover.querySelector('.signature-block');
     const signature = block.querySelector('.signature');
@@ -350,14 +430,14 @@ export function mount(ctx = {}) {
       const compact = lines.slice(0, FULL_TYPE_BODY_INITIAL_LINES).join('\n');
       const remaining = lines.length - FULL_TYPE_BODY_INITIAL_LINES;
       block.hidden = false;
-      signature.textContent = compact;
+      paintSignatureText(signature, compact);
       signature.title = '';
       toggle.hidden = remaining <= 0;
       toggle.textContent = `Show remaining ${remaining} line${remaining === 1 ? '' : 's'}`;
       toggle.setAttribute('aria-expanded', 'false');
       toggle.onclick = remaining > 0 ? () => {
         const expanded = toggle.getAttribute('aria-expanded') === 'true';
-        signature.textContent = expanded ? compact : typeBody;
+        paintSignatureText(signature, expanded ? compact : typeBody);
         toggle.textContent = expanded ? `Show remaining ${remaining} line${remaining === 1 ? '' : 's'}` : 'Collapse type body';
         toggle.setAttribute('aria-expanded', String(!expanded));
       } : null;
@@ -366,23 +446,23 @@ export function mount(ctx = {}) {
     const full = definition?.signature || '';
     const compact = definition?.compactSignature || '';
     block.hidden = !full;
-    signature.textContent = compact || full;
+    paintSignatureText(signature, compact || full);
     signature.title = compact ? full : '';
     toggle.hidden = !compact;
     toggle.textContent = 'Show full signature';
     toggle.setAttribute('aria-expanded', 'false');
     toggle.onclick = compact ? () => {
       const expanded = toggle.getAttribute('aria-expanded') === 'true';
-      signature.textContent = expanded ? compact : full;
+      paintSignatureText(signature, expanded ? compact : full);
       signature.title = expanded ? full : '';
       toggle.textContent = expanded ? 'Show full signature' : 'Collapse signature';
       toggle.setAttribute('aria-expanded', String(!expanded));
     } : null;
   }
 
-  function destinationIcon(destination) {
+  function destinationIcon(destination, baseClass = 'destination-icon') {
     const icon = doc.createElement('span');
-    icon.className = `destination-icon destination-${destination.kind === 'inDiff' ? 'in-diff' : 'new-tab'}`;
+    icon.className = `${baseClass} destination-${destination.kind === 'inDiff' ? 'in-diff' : 'new-tab'}`;
     icon.dataset.tooltip = destination.label;
     icon.setAttribute('role', 'img');
     icon.setAttribute('aria-label', destination.label);
@@ -507,13 +587,73 @@ export function mount(ctx = {}) {
     });
   }
 
-  function resultAction(label, listener) {
+  // resultAction(label, listener, { flush }) -> a trailing action appended
+  // after a result's choices ("Show more", "Search complete project").
+  // `flush: true` reuses `.signature-toggle`'s full-width borderless row
+  // styling (same as the "Show full signature" toggle) so the flush usages
+  // list only carries one visual language for this kind of action; otherwise
+  // it's a bordered `.choice` row matching the default choices box.
+  function resultAction(label, listener, { flush = false } = {}) {
     const button = doc.createElement('button');
     button.type = 'button';
-    button.className = 'choice';
+    button.className = flush ? 'signature-toggle' : 'choice';
     button.textContent = label;
     button.addEventListener('click', listener);
     return button;
+  }
+
+  // usageGroupElement(group) -> one file-header row plus its compact
+  // single-line usage rows, IntelliJ "Find Usages"-style grouping (ticket
+  // 29's groupLocationsByFile()). Destination (in-diff vs. new-tab) is
+  // computed once per file from its first location: every location in a
+  // group already shares the same file, so it shares the same destination.
+  function usageGroupElement(group) {
+    const destination = definitionDestination(group.locations[0]);
+    const wrap = doc.createElement('div');
+    wrap.className = 'usage-group';
+    const fileHeader = doc.createElement('div');
+    fileHeader.className = 'usage-group-file';
+    fileHeader.append(doc.createTextNode(group.fileName));
+    if (group.dirPath) {
+      const pathElement = doc.createElement('span');
+      pathElement.className = 'usage-group-path';
+      pathElement.textContent = group.dirPath;
+      fileHeader.append(pathElement);
+    }
+    fileHeader.append(destinationIcon(destination, 'usage-dest'));
+    wrap.append(fileHeader, ...group.locations.map((location) => usageRowElement(location)));
+    return wrap;
+  }
+
+  function usageRowElement(location) {
+    const destination = definitionDestination(location);
+    const button = doc.createElement('button');
+    button.type = 'button';
+    button.className = 'usage-row';
+    const lineElement = doc.createElement('span');
+    lineElement.className = 'usage-line';
+    lineElement.textContent = String(location.line);
+    const snippetElement = doc.createElement('span');
+    snippetElement.className = 'usage-snippet';
+    paintUsageSnippet(snippetElement, location);
+    button.append(lineElement, snippetElement);
+    button.title = `${location.path}:${location.line}`;
+    button.setAttribute('aria-label', `${location.path}:${location.line}. ${destination.label}`);
+    button.addEventListener('click', () => {
+      hidePopover();
+      openDefinition(location, sourceLocationForTarget(activeTarget));
+    });
+    return button;
+  }
+
+  // usageRowSkeleton() -> one placeholder row shown in place of a usage row
+  // while findReferences() is still in flight (never a static count with no
+  // sign the search is still working).
+  function usageRowSkeleton() {
+    const row = doc.createElement('div');
+    row.className = 'usage-row-skeleton';
+    row.append(doc.createElement('i'), doc.createElement('i'));
+    return row;
   }
 
   async function loadMoreResults(result, pointer, button) {
@@ -539,11 +679,11 @@ export function mount(ctx = {}) {
   // `if/else if` chain on the worker's own wire-level `result.status`
   // (ticket 04 §5/§2: those wire statuses are unchanged and un-renamed;
   // `kind` is the new UI-outcome discriminator this dispatch switches on).
-  function showResult(result, pointer) {
+  function showResult(result, pointer, { compact = false } = {}) {
     const shadow = ensureUI();
     const popover = shadow.querySelector('.popover');
+    const popoverBody = popover.querySelector('.popover-body');
     const wasPinned = pinnedPopover;
-    const loadingProgress = popover.querySelector('.loading-progress');
     const badge = popover.querySelector('.popover-header .symbol-badge');
     const title = popover.querySelector('.popover-title');
     const docs = popover.querySelector('.docs');
@@ -553,8 +693,10 @@ export function mount(ctx = {}) {
     const copyButton = popover.querySelector('.copy-button');
     const shortcut = popover.querySelector('.shortcut-hint');
     const shortcutHint = shortcut.querySelector('span');
-    loadingProgress.hidden = true;
+    const usagesCount = popover.querySelector('.usages-count');
     popover.removeAttribute('aria-busy');
+    popover.classList.remove('popover--list');
+    popoverBody.classList.remove('usages-body');
     renderSignature(popover);
     docs.textContent = '';
     scope.textContent = resultScopeText(result.scope);
@@ -562,7 +704,11 @@ export function mount(ctx = {}) {
     location.textContent = '';
     configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
     choices.replaceChildren();
+    choices.classList.remove('choices--flush');
     shortcut.hidden = true;
+    usagesCount.hidden = true;
+    usagesCount.classList.remove('is-loading');
+    usagesCount.replaceChildren();
     let shouldPin = false;
     const setHeader = (kind, heading, sourceLocation = '') => {
       applySymbolBadge(badge, kind);
@@ -577,8 +723,10 @@ export function mount(ctx = {}) {
     const { kind } = classify(result);
     if (kind === 'resolved') {
       setHeader(result.definition.kind, result.definition.name, `${result.definition.path}:${result.definition.line}`);
-      renderSignature(popover, result.definition, { showFullTypeBody: !result.isDefinition });
-      docs.textContent = result.definition.documentation || '';
+      if (!compact) {
+        renderSignature(popover, result.definition, { showFullTypeBody: !result.isDefinition });
+        docs.textContent = result.definition.documentation || '';
+      }
       if (!result.isDefinition) {
         choices.append(choiceButton({
           title: 'Go to definition',
@@ -632,20 +780,20 @@ export function mount(ctx = {}) {
       });
       shouldPin = result.definitions.length > 0;
     } else if (kind === 'references') {
+      popover.classList.add('popover--list');
+      popoverBody.classList.add('usages-body');
+      choices.classList.add('choices--flush');
       const count = `${result.locations.length}${result.hasMore ? '+' : ''}`;
       setHeader(result.definition.kind, `Usages of ${result.definition.name}`, `${result.definition.path}:${result.definition.line}`);
-      renderSignature(popover, result.definition);
-      docs.textContent = result.locations.length
-        ? `${count} usage${result.locations.length === 1 && !result.hasMore ? '' : 's'} in the current search scope.`
-        : absenceText(result.scope);
-      result.locations.forEach((reference) => {
-        choices.append(choiceButton({
-          title: reference.path.split('/').pop(),
-          context: `${reference.path}:${reference.line}`,
-          definition: reference,
-        }));
-      });
-      if (result.hasMore) choices.append(resultAction('Show more', (event) => loadMoreResults(result, pointer, event.currentTarget)));
+      scope.hidden = true;
+      if (result.locations.length) {
+        usagesCount.hidden = false;
+        usagesCount.append(doc.createTextNode(`${count} usage${result.locations.length === 1 && !result.hasMore ? '' : 's'}`));
+      } else {
+        docs.textContent = absenceText(result.scope);
+      }
+      groupLocationsByFile(result.locations).forEach((group) => choices.append(usageGroupElement(group)));
+      if (result.hasMore) choices.append(resultAction('Show more', (event) => loadMoreResults(result, pointer, event.currentTarget), { flush: true }));
       shouldPin = result.locations.length > 1;
     } else if (kind === 'implementations') {
       const groups = implementationGroups(result);
@@ -687,7 +835,7 @@ export function mount(ctx = {}) {
     const hasCompleteSearchTerms = result.request?.kind === 'references' || result.searchTerms?.length;
     if (result.request && hasCompleteSearchTerms && result.scope?.kind !== 'fullProject' && !result.scope?.complete
       && !['buildConstraint', 'typeSetConstraint'].includes(result.reason)) {
-      choices.append(resultAction('Search complete project', () => legacy.openFullSearch(result, pointer)));
+      choices.append(resultAction('Search complete project', () => legacy.searchCompleteProject(result, pointer), { flush: kind === 'references' }));
       shouldPin = true;
     }
     popover.classList.add('show');
@@ -697,14 +845,21 @@ export function mount(ctx = {}) {
     return true;
   }
 
-  function showLoading(message, pointer, progress) {
+  // loadingPillText(progress) -> the header pill's spinner label while a
+  // package is still loading (replaces the former full-width `.loading-progress`
+  // bar — all loading states now surface through the same small header pill
+  // the usages-count badge already uses, per the demo never showing that bar).
+  function loadingPillText(progress) {
+    return progress.phase === 'discovering'
+      ? loadingPhaseLabel(progress.phase)
+      : `${loadingPhaseLabel(progress.phase)} · ${progress.percentage}%`;
+  }
+
+  function showLoading(message, pointer, progress, { usages = false } = {}) {
     const shadow = ensureUI();
     const popover = shadow.querySelector('.popover');
+    const popoverBody = popover.querySelector('.popover-body');
     const wasPinned = pinnedPopover;
-    const loadingProgress = popover.querySelector('.loading-progress');
-    const loadingPhase = loadingProgress.querySelector('.loading-progress-phase');
-    const loadingCount = loadingProgress.querySelector('.loading-progress-count');
-    const loadingTrack = loadingProgress.querySelector('.loading-track');
     const badge = popover.querySelector('.popover-header .symbol-badge');
     const title = popover.querySelector('.popover-title');
     const docs = popover.querySelector('.docs');
@@ -712,30 +867,55 @@ export function mount(ctx = {}) {
     const location = popover.querySelector('.location');
     const copyButton = popover.querySelector('.copy-button');
     const shortcutHint = popover.querySelector('.shortcut-hint');
-    if (progress) {
-      loadingProgress.hidden = false;
-      loadingPhase.textContent = loadingPhaseLabel(progress.phase);
-      loadingCount.textContent = progress.phase === 'discovering'
-        ? '0%'
-        : `${progress.percentage}% · ${progress.completed} / ${progress.total} files`;
-      loadingTrack.setAttribute('aria-valuenow', String(progress.percentage));
-      loadingTrack.querySelector('i').style.width = `${progress.percentage}%`;
-    } else {
-      loadingProgress.hidden = true;
-    }
+    const usagesCount = popover.querySelector('.usages-count');
+    popover.classList.toggle('popover--list', usages);
+    popoverBody.classList.toggle('usages-body', usages);
     applySymbolBadge(badge, 'external');
     title.textContent = message;
     renderSignature(popover);
     docs.textContent = '';
-    choices.replaceChildren();
     location.textContent = '';
     configureSourceCopy(copyButton, sourceLocationForTarget(pointer));
     shortcutHint.hidden = true;
+    if (usages) {
+      usagesCount.hidden = false;
+      usagesCount.classList.add('is-loading');
+      const spinner = doc.createElement('span');
+      spinner.className = 'usages-spinner';
+      usagesCount.replaceChildren(spinner, doc.createTextNode('Finding usages…'));
+      choices.classList.add('choices--flush');
+      choices.replaceChildren(usageRowSkeleton(), usageRowSkeleton());
+    } else if (progress) {
+      usagesCount.hidden = false;
+      usagesCount.classList.add('is-loading');
+      const spinner = doc.createElement('span');
+      spinner.className = 'usages-spinner';
+      usagesCount.replaceChildren(spinner, doc.createTextNode(loadingPillText(progress)));
+      choices.classList.remove('choices--flush');
+      choices.replaceChildren();
+    } else {
+      usagesCount.hidden = true;
+      usagesCount.classList.remove('is-loading');
+      usagesCount.replaceChildren();
+      choices.classList.remove('choices--flush');
+      choices.replaceChildren();
+    }
     popover.setAttribute('aria-busy', 'true');
     popover.classList.add('show');
     positionPopover(popover, pointer.x, pointer.y);
     if (wasPinned) pinPopover(pointer);
     else setPopoverMode('passive', pointer);
+  }
+
+  // showSearchProgress(message, pointer) -> shows the same inline
+  // spinner-pill + skeleton-row loading UI as showLoading's usages branch,
+  // then pins the popover into the dismiss-proof 'searching' mode (must run
+  // after showLoading, since showLoading itself ends by calling
+  // pinPopover/setPopoverMode). Exposed for project-search.js to drive while
+  // a complete-project search is in flight.
+  function showSearchProgress(message, pointer) {
+    showLoading(message, pointer, null, { usages: true });
+    setPopoverMode('searching', pointer);
   }
 
   // --- resolution orchestration (fetch, debounce, sequencing) --------------
@@ -861,7 +1041,7 @@ export function mount(ctx = {}) {
         showResult(implementations, target);
       }
       else if (result.status === 'resolved' && result.isDefinition) {
-        showLoading(`Finding usages of ${target.identifier}…`, target);
+        showLoading(`Finding usages of ${target.identifier}…`, target, null, { usages: true });
         const references = await findReferences(target, result.definition);
         if (referenceNavigationAction(references) === 'open') openDefinition(references.locations[0], sourceLocationForTarget(target));
         else showResult(references, target);
@@ -986,7 +1166,7 @@ export function mount(ctx = {}) {
         });
         let displayResult = result;
         if (shouldShowReferencesOnHover(result)) {
-          showLoading(`Finding usages of ${target.identifier}…`, target);
+          showLoading(`Finding usages of ${target.identifier}…`, target, null, { usages: true });
           displayResult = await findReferences(target, result.definition);
         }
         if (activeTarget?.key === key) showResult(displayResult, target);
@@ -1004,7 +1184,7 @@ export function mount(ctx = {}) {
   function onMouseMove(event) {
     if (!enabled) return;
     if (ui && event.composedPath().includes(ui)) {
-      pinPopover();
+      if (popoverMode !== 'searching') pinPopover();
       return;
     }
     if (pinnedPopover) return;
@@ -1061,6 +1241,7 @@ export function mount(ctx = {}) {
     }
     event.preventDefault();
     event.stopPropagation();
+    if (popoverMode === 'searching') return;
     hidePopover();
   }
 
@@ -1293,6 +1474,10 @@ export function mount(ctx = {}) {
     showResult: legacy ? showResult : () => false,
     pinPopover: legacy ? pinPopover : () => {},
     hidePopover: legacy ? hidePopover : () => {},
+    // showSearchProgress(message, pointer) -> see its own doc comment above.
+    // Called by project-search.js's open() to drive the inline loading state
+    // for a complete-project search, in the same popover.
+    showSearchProgress: legacy ? showSearchProgress : () => {},
     // selectedSymbolLocation() -> the currently *hovered* target's source
     // location, or null. Used by bookmarks.js's `legacy.selectedSymbolLocation`
     // capability (ticket 18).

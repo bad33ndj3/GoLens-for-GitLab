@@ -26,11 +26,11 @@
 //     mean two toast surfaces that can show at once. This module still owns
 //     the *decision* of whether and what to show (isCoachBlocked,
 //     messageForAction).
-//   - minimizeProjectSearch()/handleCodeIntelEscape(event) — document-level
-//     Escape routing, formerly go-navigation.js's onKeyDown. Wired here (not
-//     a new page/lifecycle-level keydown listener) since this module already
-//     owns document-level keydown dispatch; see onEscapeKeyDown below for the
-//     exact behavior preserved.
+//   - handleCodeIntelEscape(event) — document-level Escape routing to
+//     code-intel.js's popover, formerly go-navigation.js's onKeyDown. Wired
+//     here (not a new page/lifecycle-level keydown listener) since this
+//     module already owns document-level keydown dispatch; see
+//     onEscapeKeyDown below for the exact behavior preserved.
 //   - shortcutCoach — optional test seam; defaults to shortcut-settings.js's
 //     real exported singleton (a normal ES-module import, not a globalThis
 //     contract). Binding data (actions/mergeBindings/matchesEvent) always
@@ -79,7 +79,6 @@ export function mount(ctx = {}) {
   const navigationAction = ctx.navigationAction;
   const toggleDiffView = ctx.toggleDiffView;
   const legacyToast = ctx.legacyToast || {};
-  const minimizeProjectSearch = ctx.minimizeProjectSearch;
   const handleCodeIntelEscape = ctx.handleCodeIntelEscape;
   const shortcutCoach = ctx.shortcutCoach || shortcutSettings.shortcutCoach;
 
@@ -250,8 +249,7 @@ export function mount(ctx = {}) {
   // Byte-identical to go-navigation.js's former document-level onKeyDown:
   // same guard (composedPath()/activeElement against the same selector,
   // independent of isBlockedShortcutEvent's different shortcut-typing
-  // semantics above), same two branches in the same priority order
-  // (project-search-minimize first, then code-intel's popover), same
+  // semantics above), routing straight to code-intel's popover, same
   // `document`-target/capture-phase registration. Kept as its own listener
   // rather than folded into onKeyDown above: onKeyDown's shortcut dispatch
   // is gated by isComposing/isBlockedShortcutEvent, neither of which
@@ -264,11 +262,6 @@ export function mount(ctx = {}) {
   function onEscapeKeyDown(event) {
     if (event.key !== 'Escape' || !enabled || !isMergeRequestPage()) return;
     if ([...event.composedPath(), doc.activeElement].some((target) => target?.closest?.(ESCAPE_GUARD_SELECTOR))) return;
-    if (minimizeProjectSearch?.()?.kind === 'minimized') {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
     handleCodeIntelEscape?.(event);
   }
 

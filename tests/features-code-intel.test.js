@@ -22,7 +22,7 @@ function buildFixture(bodyHTML = '') {
 }
 
 function fakeLegacy(overrides = {}) {
-  const calls = { toast: [], offerShortcutCoach: [], navigateToLocation: [] };
+  const calls = { toast: [], offerShortcutCoach: [], navigateToLocation: [], searchCompleteProject: [], cancelSearch: [] };
   return {
     fileContextFor: () => null,
     lineContextFor: () => null,
@@ -43,7 +43,8 @@ function fakeLegacy(overrides = {}) {
     toast: (message) => calls.toast.push(message),
     offerShortcutCoach: async (actionID) => { calls.offerShortcutCoach.push(actionID); return false; },
     requestFrame: (fn) => setTimeout(fn, 0),
-    openFullSearch: () => {},
+    searchCompleteProject: (result, pointer) => calls.searchCompleteProject.push([result, pointer]),
+    cancelSearch: () => calls.cancelSearch.push(true),
     calls,
     ...overrides,
   };
@@ -104,8 +105,178 @@ test('showResult(): renders references with scope-aware absence copy and a "Sear
   assert.equal(handle.showResult(result, pointer), true);
   const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
   assert.equal(shadow.querySelector('.docs').textContent, 'Not found in 12 indexed packages. Search coverage is incomplete.');
-  assert.equal(shadow.querySelector('.scope').textContent, '12 indexed packages · search coverage is incomplete');
-  assert.equal([...shadow.querySelectorAll('.choices button')].at(-1).textContent, 'Search complete project');
+  assert.equal(shadow.querySelector('.scope').hidden, true, 'the usages list never shows the scope line (matches the demo)');
+  const action = [...shadow.querySelectorAll('.choices button')].at(-1);
+  assert.equal(action.textContent, 'Search complete project');
+  assert.equal(action.classList.contains('signature-toggle'), true, 'reuses the signature-toggle flush row style, not the bordered .choice used elsewhere');
+});
+
+test('showResult(): groups multi-location references by file into compact usage rows, with a usages-count badge', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  const result = {
+    status: 'references',
+    definition: { name: 'JetStream', kind: 'interface', path: 'jetstream/jetstream.go', line: 15 },
+    locations: [
+      { path: 'packages/ezjetstream/router.go', line: 15 },
+      { path: 'packages/ezjetstream/router.go', line: 76 },
+      { path: 'packages/ezjetstream/stream.go', line: 273 },
+    ],
+    hasMore: false,
+    scope: { kind: 'currentPackage' },
+  };
+  assert.equal(handle.showResult(result, pointer), true);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  assert.equal(shadow.querySelector('.usages-count').hidden, false);
+  assert.equal(shadow.querySelector('.usages-count').textContent, '3 usages');
+  const groups = shadow.querySelectorAll('.usage-group');
+  assert.equal(groups.length, 2, 'locations are grouped by file');
+  assert.equal(groups[0].querySelector('.usage-group-file').textContent.startsWith('router.go'), true);
+  assert.equal(groups[0].querySelectorAll('.usage-row').length, 2);
+  assert.equal(groups[1].querySelectorAll('.usage-row').length, 1);
+  assert.equal(shadow.querySelector('.popover').classList.contains('popover--list'), true, 'widens to the Find-Usages layout');
+  assert.equal(shadow.querySelector('.popover-body').classList.contains('usages-body'), true);
+  assert.equal(shadow.querySelector('.choices').classList.contains('choices--flush'), true, 'no bordered box around the grouped rows');
+  assert.equal(shadow.querySelector('.signature-block').hidden, true, 'no signature preamble alongside the usages list');
+  assert.equal(shadow.querySelector('.scope').hidden, true, 'no scope line crowding the usages list');
+});
+
+test('showResult(): each usage row renders its source line inline, syntax-colored, with the matched identifier highlighted', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  const result = {
+    status: 'references',
+    definition: { name: 'JetStream', kind: 'interface', path: 'jetstream/jetstream.go', line: 15 },
+    locations: [
+      { path: 'packages/ezjetstream/router.go', line: 15, snippet: 'js jetstream.JetStream,', highlightStart: 13, highlightLength: 9 },
+    ],
+    hasMore: false,
+    scope: { kind: 'currentPackage' },
+  };
+  assert.equal(handle.showResult(result, pointer), true);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const snippet = shadow.querySelector('.usage-snippet');
+  assert.equal(snippet.textContent, 'js jetstream.JetStream,');
+  const highlighted = snippet.querySelector('.hl');
+  assert.equal(highlighted?.textContent, 'JetStream', 'the matched identifier occurrence is marked for highlighting');
+});
+
+test('showResult({ compact: true }): a resolved definition drops its docs/signature when arriving via a usages-list click', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  const definition = { name: 'Store', kind: 'interface', signature: 'type Store interface { Get(string) ([]byte, error) }', documentation: 'Store persists blobs.', path: 'internal/cache/store.go', line: 8 };
+
+  handle.showResult({ status: 'resolved', isDefinition: true, definition }, pointer, { compact: true });
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  assert.equal(shadow.querySelector('.docs').textContent, '', 'docs are dropped in compact mode');
+  assert.equal(shadow.querySelector('.signature-block').hidden, true, 'signature is dropped in compact mode');
+  assert.equal(shadow.querySelector('.popover-title').textContent, 'Store', 'the header itself still renders');
+
+  handle.showResult({ status: 'resolved', isDefinition: true, definition }, pointer);
+  assert.equal(shadow.querySelector('.docs').textContent, 'Store persists blobs.', 'a normal (non-compact) render still shows docs');
+});
+
+test('Ctrl+click on a declaration with usages shows a loading usages-count badge and skeleton rows while findReferences() is in flight', async () => {
+  const window = buildFixture(`
+    <section class="diff-file" data-file-path="pkg/run.go">
+      <table><tbody>
+        <tr><td class="new_line"><a aria-label="Added line 1">1</a></td><td class="line_content" data-line="1"><span>Run</span>()</td></tr>
+      </tbody></table>
+    </section>`);
+  const definition = { name: 'Run', kind: 'function', path: 'pkg/run.go', line: 1 };
+  let resolveReferences;
+  const referencesPromise = new Promise((resolve) => { resolveReferences = resolve; });
+  const legacy = fakeLegacy({
+    diffFileRoots: () => [...window.document.querySelectorAll('.diff-file')],
+    codeCellFor: (node) => node?.closest?.('.line_content') || null,
+    fileContextFor: (cell) => (cell?.closest?.('.line_content')
+      ? { path: 'pkg/run.go', oldPath: 'pkg/run.go', newPath: 'pkg/run.go', packagePath: 'pkg' }
+      : null),
+    lineContextFor: (cell) => ({ line: Number(cell.closest('.line_content')?.dataset.line || 0), side: 'new' }),
+    workerRPC: async (method) => {
+      if (method === 'resolveDefinition') return { status: 'resolved', isDefinition: true, definition };
+      if (method === 'findReferences') return referencesPromise;
+      return { status: 'notFound' };
+    },
+  });
+  const handle = mount({ legacy });
+  handle.setEnabled(true);
+
+  const span = window.document.querySelector('.line_content[data-line="1"] span');
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: span });
+  Object.defineProperty(click, 'button', { value: 0 });
+  Object.defineProperty(click, 'metaKey', { value: true });
+  window.document.dispatchEvent(click);
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const usagesCount = shadow.querySelector('.usages-count');
+  assert.equal(usagesCount.hidden, false, 'the usages-count badge is shown while finding usages');
+  assert.equal(usagesCount.classList.contains('is-loading'), true);
+  assert.equal(shadow.querySelectorAll('.usage-row-skeleton').length > 0, true, 'skeleton rows stand in for not-yet-loaded usage rows');
+
+  resolveReferences({
+    status: 'references',
+    definition,
+    locations: [{ path: 'pkg/other.go', line: 9 }, { path: 'pkg/other.go', line: 21 }],
+    hasMore: false,
+    scope: { kind: 'currentPackage' },
+  });
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(shadow.querySelectorAll('.usage-row-skeleton').length, 0, 'skeleton rows are gone once real results render');
+  assert.equal(shadow.querySelectorAll('.usage-row').length, 2);
+
+  handle.setEnabled(false);
+});
+
+test('package loading shows its progress in the header pill, not a full-width bar', async () => {
+  const window = buildFixture(`
+    <section class="diff-file" data-file-path="pkg/run.go">
+      <table><tbody>
+        <tr><td class="new_line"><a aria-label="Added line 1">1</a></td><td class="line_content" data-line="1"><span>Run</span>()</td></tr>
+      </tbody></table>
+    </section>`);
+  let resolveDefinition;
+  const definitionPromise = new Promise((resolve) => { resolveDefinition = resolve; });
+  const legacy = fakeLegacy({
+    diffFileRoots: () => [...window.document.querySelectorAll('.diff-file')],
+    codeCellFor: (node) => node?.closest?.('.line_content') || null,
+    fileContextFor: (cell) => (cell?.closest?.('.line_content')
+      ? { path: 'pkg/run.go', oldPath: 'pkg/run.go', newPath: 'pkg/run.go', packagePath: 'pkg' }
+      : null),
+    lineContextFor: (cell) => ({ line: Number(cell.closest('.line_content')?.dataset.line || 0), side: 'new' }),
+    loadPackage: async (packagePath, ref, onProgress) => {
+      onProgress?.('Loading pkg…', { phase: 'indexing', percentage: 40, completed: 2, total: 5 });
+    },
+    workerRPC: async (method) => (method === 'resolveDefinition' ? definitionPromise : { status: 'notFound' }),
+  });
+  const handle = mount({ legacy });
+  handle.setEnabled(true);
+
+  const span = window.document.querySelector('.line_content[data-line="1"] span');
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: span });
+  Object.defineProperty(click, 'button', { value: 0 });
+  Object.defineProperty(click, 'metaKey', { value: true });
+  window.document.dispatchEvent(click);
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  assert.equal(shadow.querySelector('.loading-progress'), null, 'the full-width progress bar markup is gone entirely');
+  const usagesCount = shadow.querySelector('.usages-count');
+  assert.equal(usagesCount.hidden, false, 'progress renders in the header pill instead');
+  assert.equal(usagesCount.classList.contains('is-loading'), true);
+  assert.match(usagesCount.textContent, /40%/);
+
+  resolveDefinition({ status: 'notFound' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  handle.setEnabled(false);
 });
 
 test('showResult(): groups implementations into production and collapsed test-double sections', () => {
@@ -172,6 +343,109 @@ test('handleEscape(): hides a pinned popover and prevents/stops the event', () =
   assert.equal(popover.classList.contains('show'), false);
   assert.equal(prevented, true);
   assert.equal(stopped, true);
+});
+
+test('showResult(): clicking "Search complete project" calls legacy.searchCompleteProject(result, pointer)', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  const result = {
+    status: 'references',
+    definition: { name: 'Run', kind: 'function', path: 'service/run.go', line: 12 },
+    locations: [],
+    hasMore: false,
+    scope: { kind: 'indexedPackages', packageCount: 12, complete: false, searchStatus: 'limited' },
+    request: { kind: 'references', ref: 'b'.repeat(40), target: pointer, definition: { name: 'Run' } },
+  };
+  assert.equal(handle.showResult(result, pointer), true);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const action = [...shadow.querySelectorAll('.choices button')].at(-1);
+  assert.equal(action.textContent, 'Search complete project');
+  action.dispatchEvent(new window.Event('click', { bubbles: true }));
+  assert.equal(legacy.calls.searchCompleteProject.length, 1);
+  assert.equal(legacy.calls.searchCompleteProject[0][0], result);
+  assert.equal(legacy.calls.searchCompleteProject[0][1], pointer);
+});
+
+test('showSearchProgress(): shows the close button and switches the popover into \'searching\' mode', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showSearchProgress('Searching entire project…', pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+  assert.equal(popover.dataset.mode, 'searching');
+  assert.equal(shadow.querySelector('.close-button').hidden, false, 'close button stays reachable while searching');
+});
+
+test('\'searching\' mode: an outside click does not hide the popover', () => {
+  const window = buildFixture('<div id="outside"></div>');
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showSearchProgress('Searching entire project…', pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+  assert.equal(popover.classList.contains('show'), true);
+
+  const outside = window.document.getElementById('outside');
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: outside });
+  Object.defineProperty(click, 'button', { value: 0 });
+  window.document.dispatchEvent(click);
+
+  assert.equal(popover.classList.contains('show'), true, 'the popover stays visible during a search');
+  assert.equal(popover.dataset.mode, 'searching');
+});
+
+test('\'searching\' mode: Escape does not hide the popover', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showSearchProgress('Searching entire project…', pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+
+  let prevented = false;
+  let stopped = false;
+  handle.handleEscape({ preventDefault: () => { prevented = true; }, stopPropagation: () => { stopped = true; } });
+
+  assert.equal(popover.classList.contains('show'), true, 'the popover stays visible during a search');
+  assert.equal(popover.dataset.mode, 'searching');
+  assert.equal(prevented, true, 'Escape is still swallowed so it does not leak to other handlers');
+  assert.equal(stopped, true);
+});
+
+test('\'searching\' mode: clicking the close button cancels the search and hides the popover', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showSearchProgress('Searching entire project…', pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+  const closeButton = shadow.querySelector('.close-button');
+
+  closeButton.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+  assert.equal(legacy.calls.cancelSearch.length, 1, 'cancelSearch() is called while searching');
+  assert.equal(popover.classList.contains('show'), false);
+  assert.equal(popover.dataset.mode, 'hidden');
+});
+
+test('close button outside \'searching\' mode does not call cancelSearch (regression guard)', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  handle.showResult({ status: 'notFound', symbol: 'Missing' }, pointer);
+  handle.pinPopover(pointer);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const popover = shadow.querySelector('.popover');
+  assert.equal(popover.dataset.mode, 'pinned');
+  const closeButton = shadow.querySelector('.close-button');
+
+  closeButton.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+  assert.equal(legacy.calls.cancelSearch.length, 0, 'cancelSearch() is not called outside searching mode');
+  assert.equal(popover.classList.contains('show'), false);
 });
 
 test('navigationAction("previousOccurrence"/"nextOccurrence"): toasts when nothing is selected, does not throw once enabled', () => {

@@ -1,0 +1,546 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GoLens controls strip & bookmarks drawer — redesign demo</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { margin:0; min-height:100vh; padding:48px; background:#0e1013; font-family:var(--golens-font-ui); color:var(--golens-text-primary); }
+  * { box-sizing:border-box; }
+  .label { color:#8a9199; font:600 11px/1.4 var(--golens-font-ui); text-transform:uppercase; letter-spacing:.04em; margin:0 0 16px; }
+  .demo-row { margin-bottom:48px; }
+  .demo-item { margin-bottom:24px; }
+
+  /* --- Controls strip (5 buttons) --- */
+  .controls-wrapper { position:relative; display:inline-block; }
+  .controls {
+    display:grid;
+    grid-auto-flow:row;
+    gap:var(--golens-space-1);
+    padding:var(--golens-space-1);
+    border:1px solid var(--golens-border-subtle);
+    border-radius:var(--golens-radius-sm);
+    background:var(--golens-surface-panel);
+    box-shadow:var(--golens-shadow-sm);
+    width:fit-content;
+  }
+  button {
+    position:relative;
+    display:grid;
+    place-items:center;
+    width:32px;
+    height:32px;
+    overflow:hidden;
+    padding:0;
+    border:1px solid transparent;
+    border-radius:var(--golens-radius-xs);
+    background:transparent;
+    color:var(--golens-text-secondary);
+    cursor:pointer;
+    transition:background-color 140ms, border-color 140ms, color 140ms, transform 140ms;
+    font:inherit;
+  }
+  button:hover:not(:disabled) {
+    border-color:var(--golens-border-strong);
+    background:var(--golens-surface-hover);
+    color:var(--golens-text-primary);
+  }
+  button:active:not(:disabled) {
+    background:var(--golens-surface-pressed);
+    transform:translateY(1px);
+  }
+  button:focus-visible {
+    outline:2px solid var(--golens-focus-ring);
+    outline-offset:2px;
+  }
+  button:disabled {
+    cursor:not-allowed;
+    opacity:.42;
+  }
+  button > svg {
+    width:18px;
+    height:18px;
+    fill:none;
+    stroke:currentColor;
+    stroke-linecap:round;
+    stroke-linejoin:round;
+    stroke-width:1.75;
+  }
+
+  .golens-toggle[aria-pressed="true"] {
+    border-color:var(--golens-primary);
+    background:var(--golens-primary-soft);
+    color:var(--golens-primary-hover);
+  }
+  .golens-toggle:not([aria-pressed="true"]) img {
+    filter:grayscale(1);
+    opacity:.58;
+  }
+  .golens-toggle img {
+    grid-area:1 / 1;
+    width:20px;
+    height:20px;
+    border-radius:var(--golens-radius-xs);
+    object-fit:contain;
+  }
+
+  .focus-toggle {
+    color:var(--golens-info);
+  }
+  .focus-toggle[aria-pressed="true"] {
+    border-color:var(--golens-info);
+    background:var(--golens-info-soft);
+    color:var(--golens-info-hover);
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--golens-info) 18%, transparent);
+  }
+
+  .preload-toggle {
+    color:var(--golens-primary-hover);
+  }
+  .preload-toggle svg {
+    display:none;
+  }
+  .preload-toggle[data-state="idle"] .preload-idle,
+  .preload-toggle[data-state="error"] .preload-idle,
+  .preload-toggle[data-state="complete"] .preload-check {
+    display:block;
+  }
+  .preload-toggle[data-state="checking"] .preload-progress,
+  .preload-toggle[data-state="busy"] .preload-progress {
+    display:block;
+  }
+  .preload-toggle[data-state="complete"] {
+    border-color:var(--golens-success);
+    background:var(--golens-success-soft);
+    color:var(--golens-success);
+  }
+  .preload-toggle[data-state="error"] {
+    border-color:var(--golens-error);
+    background:var(--golens-error-soft);
+    color:var(--golens-error);
+  }
+  .preload-toggle[data-state="checking"],
+  .preload-toggle[data-state="busy"] {
+    cursor:progress;
+    opacity:1;
+  }
+  .preload-progress {
+    position:absolute;
+    inset:0;
+    display:none;
+    overflow:hidden;
+    background:var(--golens-surface-raised);
+  }
+  .preload-fill {
+    position:absolute;
+    z-index:2;
+    inset:0 auto 0 0;
+    width:35%;
+    overflow:hidden;
+    background:var(--golens-primary);
+    transition:width 180ms;
+  }
+  .preload-count,
+  .preload-fill-count {
+    position:absolute;
+    inset:0;
+    display:flex;
+    width:30px;
+    align-items:center;
+    justify-content:center;
+    font:800 9px/1 var(--golens-font-mono);
+    font-variant-numeric:tabular-nums;
+    letter-spacing:-.06em;
+    pointer-events:none;
+  }
+  .preload-count {
+    z-index:1;
+    color:var(--golens-text-secondary);
+  }
+  .preload-fill-count {
+    color:var(--golens-text-inverse);
+  }
+
+  .bookmark-toggle {
+    color:var(--golens-info);
+    overflow:visible;
+  }
+  .bookmark-toggle[aria-expanded="true"] {
+    border-color:var(--golens-info);
+    background:var(--golens-info-soft);
+    color:var(--golens-info-hover);
+  }
+  .bookmark-count {
+    position:absolute;
+    right:-4px;
+    bottom:-4px;
+    min-width:15px;
+    height:15px;
+    padding:0 3px;
+    border:2px solid var(--golens-surface-panel);
+    border-radius:999px;
+    background:var(--golens-primary);
+    color:var(--golens-text-inverse);
+    font:800 8px/11px var(--golens-font-mono);
+    font-variant-numeric:tabular-nums;
+  }
+  .bookmark-stale {
+    position:absolute;
+    top:2px;
+    right:2px;
+    width:7px;
+    height:7px;
+    border:1px solid var(--golens-surface-panel);
+    border-radius:50%;
+    background:var(--golens-warning);
+  }
+
+  .diff-view-toggle {
+    color:var(--golens-info);
+  }
+  .diff-view-toggle[aria-pressed="true"] {
+    border-color:var(--golens-info);
+    background:var(--golens-info-soft);
+    color:var(--golens-info-hover);
+  }
+
+  /* --- Bookmark drawer --- */
+  .drawer-wrapper {
+    position:fixed;
+    left:50%;
+    top:50%;
+    transform:translate(-50%, -50%);
+    width:min(400px, calc(100vw - 24px));
+    max-height:min(500px, calc(100vh - 24px));
+    color-scheme:dark;
+    color:var(--golens-text-primary);
+    font:13px/1.4 var(--golens-font-ui);
+    border:1px solid var(--golens-border-default);
+    border-radius:8px;
+    background:var(--golens-surface-panel);
+    box-shadow:var(--golens-shadow-lg);
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  .drawer-header {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:12px 14px;
+    border-bottom:1px solid var(--golens-border-subtle);
+  }
+  .drawer-header h2 {
+    margin:0;
+    font-size:14px;
+  }
+  .drawer-header button {
+    width:auto;
+    height:auto;
+    padding:6px 12px;
+    border:1px solid var(--golens-border-default);
+    border-radius:var(--golens-radius-xs);
+    background:transparent;
+    color:var(--golens-text-secondary);
+    font:650 11px/1.2 var(--golens-font-ui);
+    cursor:pointer;
+  }
+  .drawer-header button:hover {
+    color:var(--golens-text-primary);
+    border-color:var(--golens-border-strong);
+  }
+
+  .drawer-scroll {
+    overflow:auto;
+    padding-bottom:8px;
+    flex:1;
+  }
+  .bookmark-section {
+    padding:0;
+  }
+  .bookmark-section h3 {
+    margin:0;
+    padding:10px 14px 6px;
+    color:var(--golens-text-secondary);
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+  }
+
+  .bookmark-list {
+    display:grid;
+    gap:6px;
+    margin:0;
+    padding:0 8px;
+    list-style:none;
+  }
+  .bookmark-item {
+    display:grid;
+    grid-template-columns:minmax(0, 1fr) auto;
+    gap:10px;
+    align-items:center;
+    padding:9px;
+    border:1px solid var(--golens-border-subtle);
+    border-radius:var(--golens-radius-xs);
+    background:var(--golens-surface-raised);
+    transition:background-color var(--golens-motion-fast);
+  }
+  .bookmark-item:hover {
+    background:var(--golens-surface-hover);
+  }
+  .bookmark-item[data-stale="true"] {
+    border-style:dashed;
+    opacity:.86;
+  }
+  .bookmark-main {
+    display:grid;
+    min-width:0;
+    gap:2px;
+  }
+  .bookmark-path {
+    overflow:hidden;
+    color:var(--golens-text-primary);
+    font:650 12px/1.3 var(--golens-font-mono);
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .bookmark-meta {
+    overflow:hidden;
+    color:var(--golens-info);
+    font:600 11px/1.3 var(--golens-font-mono);
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .bookmark-context {
+    overflow:hidden;
+    color:var(--golens-text-secondary);
+    font-size:11px;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .bookmark-actions {
+    display:flex;
+    gap:4px;
+  }
+  .bookmark-actions button {
+    width:auto;
+    height:auto;
+    padding:5px 7px;
+    border:1px solid var(--golens-border-default);
+    border-radius:var(--golens-radius-xs);
+    background:var(--golens-primary-soft);
+    color:var(--golens-primary-hover);
+    font:650 11px/1.2 var(--golens-font-ui);
+    cursor:pointer;
+  }
+  .bookmark-actions button:hover {
+    border-color:var(--golens-primary);
+    color:var(--golens-text-primary);
+  }
+  .bookmark-actions button.quiet {
+    background:transparent;
+    color:var(--golens-text-secondary);
+  }
+  .bookmark-actions button.quiet:hover {
+    border-color:color-mix(in srgb, var(--golens-error) 40%, var(--golens-border-default));
+    background:var(--golens-error-soft);
+    color:var(--golens-error);
+  }
+
+  .bookmark-empty {
+    padding:12px;
+    color:var(--golens-text-muted);
+    text-align:center;
+  }
+
+  .drawer-footer {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    padding:10px;
+    border-top:1px solid var(--golens-border-subtle);
+  }
+  /* All footer actions here are deletions (clear current/stale/all) — styled
+     with the same destructive-outline treatment as settings-demo.html's
+     .destructive-action, so irreversible actions read consistently everywhere. */
+  .drawer-footer button {
+    width:auto;
+    height:auto;
+    padding:6px 12px;
+    border:1px solid color-mix(in srgb, var(--golens-error) 40%, var(--golens-border-default));
+    border-radius:var(--golens-radius-xs);
+    background:transparent;
+    color:var(--golens-error);
+    font:650 11px/1.2 var(--golens-font-ui);
+    cursor:pointer;
+    transition:background-color var(--golens-motion-fast);
+  }
+  .drawer-footer button:hover {
+    background:var(--golens-error-soft);
+  }
+  .drawer-footer button:disabled {
+    opacity:.4;
+    cursor:default;
+  }
+
+  .inline-drawer-demo {
+    position:relative;
+    width:100%;
+    max-width:450px;
+    border:1px solid var(--golens-border-default);
+    border-radius:8px;
+    background:var(--golens-surface-panel);
+    overflow:hidden;
+  }
+</style>
+</head>
+<body>
+<div style="position:fixed;top:12px;right:16px;z-index:99999;display:flex;gap:4px;padding:5px;border:1px solid var(--golens-border-default);border-radius:9px;background:var(--golens-surface-panel);box-shadow:0 8px 24px rgba(0,0,0,.45);font:600 11px/1.2 var(--golens-font-mono,monospace);">
+<a href="popover-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Popover</a>
+<a href="settings-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Settings</a>
+<a href="onboarding-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Onboarding</a>
+<a href="controls-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-primary);background:var(--golens-surface-hover);">Controls</a>
+</div>
+
+<!--
+  DEMO PROTOTYPE — Static HTML showing the redesigned GoLens controls strip (5 buttons)
+  and bookmark drawer panel, extracted from page/features/controls.js and redrawn in the
+  compact IntelliJ/Darcula visual language (thin borders, flat backgrounds, no card shadows).
+  NOT yet integrated into production code — visual foundation only.
+-->
+
+<div class="demo-row">
+  <p class="label">1. Controls strip — resting state (all 5 buttons)</p>
+  <div class="demo-item">
+    <div class="controls-wrapper">
+      <div class="controls">
+        <button class="golens-toggle" aria-pressed="false" title="Toggle GoLens" aria-label="Toggle GoLens">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 4v-2m0 20v-2M4 12H2m20 0h-2M6.22 6.22l-1.41-1.41M19.19 19.19l-1.41-1.41M6.22 17.78l-1.41 1.41M19.19 4.81l-1.41-1.41"></path></svg>
+        </button>
+        <button class="focus-toggle" aria-pressed="false" title="Full screen mode" aria-label="Full screen mode">
+          <svg viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"></path><path d="M8.5 12h7"></path></svg>
+        </button>
+        <button class="preload-toggle" data-state="idle" title="Cache related MR packages" aria-label="Cache related MR packages">
+          <svg class="preload-idle" viewBox="0 0 24 24"><path d="M12 3v11m0 0 4-4m-4 4-4-4"></path><path d="M5 17v3h14v-3"></path></svg>
+          <svg class="preload-check" viewBox="0 0 24 24" style="display:none;"><path d="m5 12 4 4L19 6"></path></svg>
+          <span class="preload-progress" role="progressbar" style="display:none;"></span>
+        </button>
+        <button class="bookmark-toggle" aria-expanded="false" title="Open MR bookmarks" aria-label="Open MR bookmarks">
+          <svg viewBox="0 0 24 24"><path d="M6 3.5h12v17l-6-4-6 4z"></path></svg>
+        </button>
+        <button class="diff-view-toggle" aria-pressed="false" title="Switch to side-by-side diff view" aria-label="Switch to side-by-side diff view">
+          <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="7" height="15" rx="1"></rect><rect x="13.5" y="4.5" width="7" height="15" rx="1"></rect></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="demo-row">
+  <p class="label">2. Controls strip — preload busy + bookmark with badge & stale indicator</p>
+  <div class="demo-item">
+    <div class="controls-wrapper">
+      <div class="controls">
+        <button class="golens-toggle" aria-pressed="false" title="Toggle GoLens" aria-label="Toggle GoLens">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 4v-2m0 20v-2M4 12H2m20 0h-2M6.22 6.22l-1.41-1.41M19.19 19.19l-1.41-1.41M6.22 17.78l-1.41 1.41M19.19 4.81l-1.41-1.41"></path></svg>
+        </button>
+        <button class="focus-toggle" aria-pressed="false" title="Full screen mode" aria-label="Full screen mode">
+          <svg viewBox="0 0 24 24"><path d="M8 4H5a1 1 0 0 0-1 1v3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"></path><path d="M8.5 12h7"></path></svg>
+        </button>
+        <button class="preload-toggle" data-state="busy" title="Caching… 24 files" aria-label="Caching… 24 files" style="cursor:progress;">
+          <svg class="preload-idle" viewBox="0 0 24 24" style="display:none;"><path d="M12 3v11m0 0 4-4m-4 4-4-4"></path><path d="M5 17v3h14v-3"></path></svg>
+          <svg class="preload-check" viewBox="0 0 24 24" style="display:none;"><path d="m5 12 4 4L19 6"></path></svg>
+          <span class="preload-progress" role="progressbar" style="display:block;">
+            <span class="preload-fill" style="width:35%;"><span class="preload-fill-count">24</span></span>
+            <span class="preload-count">24</span>
+          </span>
+        </button>
+        <button class="bookmark-toggle" aria-expanded="false" title="Open MR bookmarks (3 current, 1 stale)" aria-label="Open MR bookmarks (3 current, 1 stale)">
+          <svg viewBox="0 0 24 24"><path d="M6 3.5h12v17l-6-4-6 4z"></path></svg>
+          <span class="bookmark-count">3</span>
+          <span class="bookmark-stale" style="display:block;"></span>
+        </button>
+        <button class="diff-view-toggle" aria-pressed="false" title="Switch to side-by-side diff view" aria-label="Switch to side-by-side diff view">
+          <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="7" height="15" rx="1"></rect><rect x="13.5" y="4.5" width="7" height="15" rx="1"></rect></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="demo-row">
+  <p class="label">3. Bookmark drawer — panel open with current + stale bookmarks</p>
+  <div class="demo-item">
+    <div class="inline-drawer-demo">
+      <div class="drawer-header">
+        <h2>MR bookmarks</h2>
+        <button type="button">Close</button>
+      </div>
+      <div class="drawer-scroll">
+        <section class="bookmark-section">
+          <h3>Current head</h3>
+          <ul class="bookmark-list">
+            <li class="bookmark-item" data-stale="false">
+              <div class="bookmark-main">
+                <strong class="bookmark-path">service/auth/login.go</strong>
+                <span class="bookmark-meta">line 142</span>
+                <span class="bookmark-context">func Login(w http.ResponseWriter, r *http.Request)</span>
+              </div>
+              <div class="bookmark-actions">
+                <button type="button">Jump</button>
+                <button type="button" class="quiet" aria-label="Remove bookmark">Remove</button>
+              </div>
+            </li>
+            <li class="bookmark-item" data-stale="false">
+              <div class="bookmark-main">
+                <strong class="bookmark-path">service/auth/token.go</strong>
+                <span class="bookmark-meta">lines 67–74</span>
+                <span class="bookmark-context">type TokenValidator struct</span>
+              </div>
+              <div class="bookmark-actions">
+                <button type="button">Jump</button>
+                <button type="button" class="quiet" aria-label="Remove bookmark">Remove</button>
+              </div>
+            </li>
+            <li class="bookmark-item" data-stale="false">
+              <div class="bookmark-main">
+                <strong class="bookmark-path">api/handlers/user.go</strong>
+                <span class="bookmark-meta">line 28</span>
+                <span class="bookmark-context">func (h *Handler) GetUser(ctx context.Context)</span>
+              </div>
+              <div class="bookmark-actions">
+                <button type="button">Jump</button>
+                <button type="button" class="quiet" aria-label="Remove bookmark">Remove</button>
+              </div>
+            </li>
+          </ul>
+        </section>
+        <section class="bookmark-section">
+          <h3>Stale after head change</h3>
+          <ul class="bookmark-list">
+            <li class="bookmark-item" data-stale="true">
+              <div class="bookmark-main">
+                <strong class="bookmark-path">internal/cache/memstore.go</strong>
+                <span class="bookmark-meta">line 91 · stale</span>
+                <span class="bookmark-context">func (m *MemStore) Set(key string, value interface{})</span>
+              </div>
+              <div class="bookmark-actions">
+                <button type="button">Recover</button>
+                <button type="button" class="quiet" aria-label="Remove bookmark">Remove</button>
+              </div>
+            </li>
+          </ul>
+        </section>
+      </div>
+      <div class="drawer-footer">
+        <button type="button">Clear current</button>
+        <button type="button">Clear stale</button>
+        <button type="button">Clear all for MR</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

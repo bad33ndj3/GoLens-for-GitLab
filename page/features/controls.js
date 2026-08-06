@@ -367,7 +367,13 @@ export function mount(ctx) {
         .bookmark-meta { color:var(--golens-info); font:600 11px/1.3 var(--golens-font-mono); } .bookmark-context { color:var(--golens-text-secondary); font-size:11px; }
         .bookmark-actions { display:flex; gap:4px; }
         button { border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-xs); padding:5px 7px; background:var(--golens-primary-soft); color:var(--golens-primary-hover); font:650 11px/1.2 var(--golens-font-ui); cursor:pointer; }
-        button.quiet,header button,.footer button { background:transparent; color:var(--golens-text-secondary); } button:hover:not(:disabled) { border-color:var(--golens-primary); color:var(--golens-text-primary); } button:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:2px; } button:disabled { opacity:.4; cursor:default; }
+        button:hover:not(:disabled) { border-color:var(--golens-primary); color:var(--golens-text-primary); }
+        button.quiet,header button { background:transparent; color:var(--golens-text-secondary); }
+        header button:hover:not(:disabled) { border-color:var(--golens-border-strong); color:var(--golens-text-primary); }
+        button.quiet:hover:not(:disabled) { border-color:color-mix(in srgb,var(--golens-error) 40%,var(--golens-border-default)); background:var(--golens-error-soft); color:var(--golens-error); }
+        .footer button { background:transparent; border-color:color-mix(in srgb,var(--golens-error) 40%,var(--golens-border-default)); color:var(--golens-error); }
+        .footer button:hover:not(:disabled) { background:var(--golens-error-soft); border-color:color-mix(in srgb,var(--golens-error) 40%,var(--golens-border-default)); }
+        button:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:2px; } button:disabled { opacity:.4; cursor:default; }
         .bookmark-empty { padding:12px; color:var(--golens-text-muted); text-align:center; }
         .footer { display:flex; flex-wrap:wrap; gap:6px; padding:10px; border-top:1px solid var(--golens-border-subtle); }
         .status { min-height:18px; padding:0 12px 8px; color:var(--golens-text-secondary); font-size:11px; }

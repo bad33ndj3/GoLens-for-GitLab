@@ -503,16 +503,6 @@ const html = `<!doctype html>
         document.body.dataset.goTargetColor = targetStyle.color;
         document.body.dataset.goTargetDecoration = targetStyle.textDecorationLine;
         document.body.dataset.goTargetOutline = targetStyle.outlineStyle;
-        const fullSearchAction = [...goUI.querySelectorAll('.choices button')].find((button) => button.textContent === 'Search complete project');
-        fullSearchAction?.click();
-        // page/features/project-search.js (ticket 20) owns the modal DOM in
-        // its own shadow host now, separate from goUI's popover host.
-        const psUI = document.getElementById('golens-project-search-root')?.shadowRoot;
-        document.body.dataset.goFullSearchModal = String(psUI?.querySelector('.full-search-dialog')?.getAttribute('aria-modal') === 'true');
-        document.body.dataset.goFullSearchOpened = String(!psUI?.querySelector('.full-search-backdrop')?.hidden);
-        document.body.dataset.goFullSearchCancelVisible = String(Boolean(psUI?.querySelector('.full-search-cancel')));
-        psUI?.querySelector('.full-search-cancel')?.click();
-        document.body.dataset.goFullSearchCancelled = String(Boolean(psUI?.querySelector('.full-search-backdrop')?.hidden) && goUI.querySelector('.scope')?.textContent.includes('incomplete'));
         goUI.querySelector('.choices .choice')?.click();
         document.body.dataset.goChoiceClosedPopover = String(!popover.classList.contains('show'));
         const shortcutTarget = document.getElementById('go-target');
@@ -524,6 +514,22 @@ const html = `<!doctype html>
           if (!popover.classList.contains('show') || goUI.querySelector('.popover-title')?.textContent !== 'Implementations of Runner') return;
           document.body.dataset.goSemanticShortcut = 'true';
           clearInterval(shortcutWatch);
+          // page/features/project-search.js (ticket 29) no longer owns a
+          // fullscreen modal — "Search complete project" shows an inline
+          // loading state in this same popover, dismissible only via the
+          // close button while the search is in progress.
+          const fullSearchAction = [...goUI.querySelectorAll('.choices button')].find((button) => button.textContent === 'Search complete project');
+          fullSearchAction?.click();
+          // showSearchProgress() runs synchronously inside open(), before
+          // runSearch()'s first await — the 'searching' mode is already live
+          // the instant .click() returns, so check right here instead of
+          // after a delay: the fixture's search/package-load endpoints can
+          // resolve in well under a second, and waiting risks reading the
+          // popover after it's already flipped back out of 'searching'.
+          document.body.dataset.goFullSearchLoading = String(popover.dataset.mode === 'searching' && Boolean(goUI.querySelector('.usages-spinner')));
+          document.body.dataset.goFullSearchCloseVisible = String(!goUI.querySelector('.close-button')?.hidden);
+          goUI.querySelector('.close-button')?.click();
+          document.body.dataset.goFullSearchCancelled = String(!popover.classList.contains('show'));
         }, 50);
         clearInterval(popoverWatch);
       }, 700);
@@ -768,6 +774,7 @@ try {
       && document.body?.dataset.enabledToggle === 'true'
       && document.body?.dataset.goChoiceClosedPopover === 'true'
       && document.body?.dataset.goSemanticShortcut === 'true'
+      && document.body?.dataset.goFullSearchCancelled === 'true'
       && document.body?.dataset.fullFileInline === 'true'
       && document.body?.dataset.bookmarkDomReconciled === 'true'
   `, profile);
@@ -808,9 +815,8 @@ try {
   assert.match(stdout, /data-go-popover-close-visible="true"/, `the pinned Go popover did not expose a close button\n${stderr}`);
   assert.match(stdout, /data-go-scope="[^"]*(?:indexed package|Full project)[^"]*"/, `semantic results did not expose their search scope\n${stderr}`);
   assert.match(stdout, /data-go-full-search-action="true"/, `incomplete semantic results did not expose the full-project action\n${stderr}`);
-  assert.match(stdout, /data-go-full-search-modal="true"/, `the full-project search modal is not accessible\n${stderr}`);
-  assert.match(stdout, /data-go-full-search-opened="true"/, `the full-project search modal did not open\n${stderr}`);
-  assert.match(stdout, /data-go-full-search-cancel-visible="true"/, `the full-project search modal did not expose Cancel\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-loading="true"/, `the full-project search did not show its inline popover loading state\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-close-visible="true"/, `the full-project search did not keep the popover close button visible while searching\n${stderr}`);
   assert.match(stdout, /data-go-full-search-cancelled="true"/, `cancelling full-project search did not preserve incomplete coverage\n${stderr}`);
   assert.match(stdout, /data-go-in-diff-destination="true"/, `the same-diff destination icon was not rendered\n${stderr}`);
   assert.match(stdout, /data-go-new-tab-destination="true"/, `the new-tab destination icon was not rendered\n${stderr}`);

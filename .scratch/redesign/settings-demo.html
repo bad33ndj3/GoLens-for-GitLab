@@ -1,0 +1,978 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GoLens settings — redesign demo (IntelliJ-inspired)</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  /*
+    DESIGN NOTE — This is a STATIC DEMO PROTOTYPE, not production code.
+    Redesigns GoLens settings page to IntelliJ/Darcula visual language:
+    - Compact single-line rows instead of thick cards
+    - Dark theme with golens token colors
+    - Narrow left sidebar with thin accent border (not filled background)
+    - Based on settings.html + popover-demo.html design system
+
+    Integration: Later refinement + eventual handoff to production.
+  */
+
+
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+  body {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    background: var(--golens-surface-canvas);
+    color: var(--golens-text-primary);
+    font: 12px/1.5 var(--golens-font-sans);
+  }
+
+  button, input, select { font: inherit; }
+  button { color: inherit; border: 0; cursor: pointer; transition: background-color var(--golens-motion-fast), border-color var(--golens-motion-fast), color var(--golens-motion-fast); }
+  button:active:not(:disabled) { transform: translateY(1px) scale(.99); }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--golens-accent-focus); outline-offset: 2px; }
+  button:disabled { cursor: wait; opacity: .55; }
+  h1, h2, h3, p { margin: 0; }
+
+  /* Sidebar */
+  .sidebar {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-width: 0;
+    border-right: 1px solid var(--golens-border-subtle);
+    background: var(--golens-surface-panel);
+  }
+
+  .sidebar-header {
+    display: flex;
+    flex-direction: column;
+    min-height: 70px;
+    align-items: flex-start;
+    justify-content: center;
+    gap: var(--golens-space-2);
+    padding: var(--golens-space-4);
+    border-bottom: 1px solid var(--golens-border-subtle);
+  }
+
+  .sidebar-header strong {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--golens-text-primary);
+  }
+
+  .sidebar-header small {
+    display: block;
+    font-size: 9px;
+    color: var(--golens-text-muted);
+  }
+
+  nav {
+    display: grid;
+    align-content: start;
+    gap: 0;
+    padding: var(--golens-space-2);
+  }
+
+  .settings-tab {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    min-height: 36px;
+    align-items: center;
+    gap: var(--golens-space-3);
+    width: 100%;
+    padding: 0 var(--golens-space-3);
+    border: 1px solid transparent;
+    border-left: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--golens-text-secondary);
+    text-align: left;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .settings-tab:hover {
+    background: var(--golens-surface-hover);
+    color: var(--golens-text-primary);
+  }
+
+  .settings-tab[aria-selected="true"] {
+    border-left-color: var(--golens-accent-info);
+    background: transparent;
+    color: var(--golens-accent-info);
+  }
+
+  .settings-tab svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.5;
+  }
+
+  .sidebar-footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--golens-space-2);
+    padding: var(--golens-space-3);
+    border-top: 1px solid var(--golens-border-subtle);
+    cursor: pointer;
+  }
+
+  .sidebar-footer strong {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .sidebar-footer small {
+    display: block;
+    margin-top: 2px;
+    font-size: 9px;
+    color: var(--golens-text-muted);
+  }
+
+  /* Toggle switch */
+  input[type="checkbox"] {
+    appearance: none;
+    position: relative;
+    width: 32px;
+    height: 18px;
+    flex: 0 0 auto;
+    margin: 0;
+    border: 1px solid var(--golens-border-strong);
+    border-radius: 999px;
+    background: var(--golens-surface-pressed);
+    cursor: pointer;
+  }
+
+  input[type="checkbox"]::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--golens-text-secondary);
+    transition: transform var(--golens-motion-base), background-color var(--golens-motion-base);
+  }
+
+  input[type="checkbox"]:checked {
+    border-color: var(--golens-accent-info);
+    background: var(--golens-accent-info);
+  }
+
+  input[type="checkbox"]:checked::after {
+    background: #fff;
+    transform: translateX(14px);
+  }
+
+  /* Main content */
+  main {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-width: 0;
+  }
+
+  .page-header {
+    display: flex;
+    min-height: 70px;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--golens-space-4);
+    padding: var(--golens-space-4);
+    border-bottom: 1px solid var(--golens-border-subtle);
+    background: var(--golens-surface-panel);
+  }
+
+  .page-header h1 {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .page-header p {
+    margin-top: 3px;
+    color: var(--golens-text-muted);
+    font-size: 10px;
+  }
+
+  .close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--golens-border-default);
+    border-radius: var(--golens-radius-sm);
+    background: transparent;
+    color: var(--golens-text-secondary);
+    font-size: 16px;
+  }
+
+  .close-btn:hover {
+    background: var(--golens-surface-hover);
+    color: var(--golens-text-primary);
+  }
+
+  .page-content {
+    overflow: auto;
+    padding: var(--golens-space-4);
+  }
+
+  .settings-panel {
+    max-width: 900px;
+  }
+
+  .settings-panel[hidden] {
+    display: none;
+  }
+
+  .section-heading {
+    margin-bottom: 16px;
+  }
+
+  .section-heading h2 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .section-heading p {
+    margin-top: 3px;
+    color: var(--golens-text-muted);
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  /* Preference rows — compact single-line */
+  .preference-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--golens-space-4);
+    padding: var(--golens-space-3);
+    margin-bottom: 8px;
+    border: 1px solid var(--golens-border-subtle);
+    border-radius: var(--golens-radius-sm);
+    background: transparent;
+    cursor: pointer;
+    transition: background-color var(--golens-motion-fast);
+  }
+
+  .preference-row:hover {
+    background: var(--golens-surface-hover);
+  }
+
+  .preference-row strong {
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .preference-row small {
+    display: block;
+    margin-top: 2px;
+    color: var(--golens-text-muted);
+    font-size: 9.5px;
+    line-height: 1.3;
+  }
+
+  .preference-row code {
+    color: var(--golens-accent-info);
+    font: inherit;
+    letter-spacing: -0.01em;
+  }
+
+  /* Shortcuts section */
+  .shortcut-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--golens-space-4);
+    margin-bottom: 14px;
+  }
+
+  .shortcut-heading > div h2 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .shortcut-heading > div p {
+    margin-top: 3px;
+    color: var(--golens-text-muted);
+    font-size: 10px;
+  }
+
+  .shortcut-preset {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 140px auto;
+    gap: var(--golens-space-2);
+    align-items: center;
+    margin-bottom: 12px;
+    padding: var(--golens-space-3);
+    border: 1px solid var(--golens-border-subtle);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-surface-inset);
+  }
+
+  .shortcut-preset label {
+    display: grid;
+    gap: 2px;
+  }
+
+  .shortcut-preset strong {
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .shortcut-preset small {
+    color: var(--golens-text-muted);
+    font-size: 9px;
+  }
+
+  .shortcut-preset select,
+  .shortcut-preset button {
+    min-height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--golens-border-default);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-surface-raised);
+    color: var(--golens-text-primary);
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .shortcut-preset select {
+    padding-right: 24px;
+  }
+
+  .shortcut-preset button:hover {
+    border-color: var(--golens-accent-info);
+    background: var(--golens-surface-hover);
+  }
+
+  .shortcut-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    border: 1px solid var(--golens-border-subtle);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-surface-panel);
+    overflow: hidden;
+  }
+
+  .shortcut-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    min-height: 44px;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 9px;
+    border-bottom: 1px solid var(--golens-border-subtle);
+    border-right: 1px solid var(--golens-border-subtle);
+    transition: background-color var(--golens-motion-fast);
+  }
+
+  /* Right border only makes sense on the left column of the 2-col grid;
+     using :nth-child(even) instead of a bottom-border hack keeps this correct
+     regardless of how many shortcut rows exist (odd or even count). */
+  .shortcut-row:nth-child(even) {
+    border-right: 0;
+  }
+
+  .shortcut-row:hover {
+    background: var(--golens-surface-hover);
+  }
+
+  .shortcut-row > span {
+    overflow: hidden;
+    color: var(--golens-text-secondary);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shortcut-binding {
+    min-width: 70px;
+    min-height: 26px;
+    padding: 0 6px;
+    border: 1px solid var(--golens-border-default);
+    border-radius: var(--golens-radius-xs);
+    background: var(--golens-surface-inset);
+    color: var(--golens-text-primary);
+    font: 600 9px/1 var(--golens-font-mono);
+    text-align: center;
+  }
+
+  .shortcut-binding:hover {
+    border-color: var(--golens-accent-info);
+    background: var(--golens-surface-hover);
+  }
+
+  .shortcut-clear {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--golens-radius-xs);
+    background: transparent;
+    color: var(--golens-text-muted);
+    font-size: 12px;
+  }
+
+  .shortcut-clear:hover {
+    background: var(--golens-surface-hover);
+    color: var(--golens-text-primary);
+  }
+
+  /* Cache section */
+  .cache-summary {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--golens-space-4);
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--golens-border-subtle);
+  }
+
+  .cache-summary h2 {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .cache-summary p {
+    margin-top: 3px;
+    color: var(--golens-text-muted);
+    font-size: 10px;
+  }
+
+  .cache-size-output {
+    color: var(--golens-text-secondary);
+    font: 600 11px/1.4 var(--golens-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .full-cache,
+  .danger-zone {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--golens-space-2) var(--golens-space-4);
+    padding: 12px 0;
+    border-bottom: 1px solid var(--golens-border-subtle);
+  }
+
+  .full-cache strong,
+  .danger-zone strong {
+    font-size: 11px;
+  }
+
+  .full-cache p,
+  .danger-zone p {
+    margin-top: 2px;
+    color: var(--golens-text-muted);
+    font-size: 9.5px;
+  }
+
+  .primary-action {
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--golens-accent-primary);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-accent-primary);
+    color: var(--golens-text-inverse);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .primary-action:hover:not(:disabled) {
+    background: var(--golens-accent-primary-hover);
+    border-color: var(--golens-accent-primary-hover);
+  }
+
+  .destructive-action {
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid color-mix(in srgb, var(--golens-accent-error) 40%, var(--golens-border-default));
+    border-radius: var(--golens-radius-sm);
+    background: transparent;
+    color: var(--golens-accent-error);
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .destructive-action:hover {
+    background: var(--golens-error-soft);
+  }
+
+  progress {
+    grid-column: 1 / -1;
+    width: 100%;
+    height: 3px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 2px;
+    background: var(--golens-surface-pressed);
+    accent-color: var(--golens-accent-primary);
+    margin-top: 8px;
+  }
+
+  .full-cache .inline-status {
+    grid-column: 1 / -1;
+    margin-top: 8px;
+  }
+
+  .inline-status {
+    min-height: 14px;
+    color: var(--golens-text-muted);
+    font-size: 9.5px;
+  }
+
+  /* Help card */
+  .help-card {
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--golens-space-4);
+    padding: var(--golens-space-4);
+    border: 1px solid var(--golens-border-subtle);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-surface-panel);
+  }
+
+  .help-card strong {
+    display: block;
+    font-size: 12px;
+  }
+
+  .help-card p {
+    margin-top: 3px;
+    color: var(--golens-text-muted);
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  .help-card button {
+    margin-top: 8px;
+  }
+
+  /* Footer */
+  main > footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--golens-space-4);
+    min-height: 48px;
+    padding: var(--golens-space-3) var(--golens-space-4);
+    border-top: 1px solid var(--golens-border-subtle);
+    background: var(--golens-surface-panel);
+    color: var(--golens-text-muted);
+    font-size: 9px;
+  }
+
+  main > footer strong {
+    color: var(--golens-accent-info);
+    font-weight: 600;
+  }
+
+  /* Reset button styles */
+  .reset-btn {
+    min-height: 28px;
+    padding: 0 9px;
+    border: 1px solid var(--golens-border-default);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-surface-raised);
+    color: var(--golens-text-secondary);
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .reset-btn:hover {
+    border-color: var(--golens-accent-info);
+    background: var(--golens-surface-hover);
+    color: var(--golens-text-primary);
+  }
+
+  /* GitLab access section — simple placeholder */
+  .host-form {
+    display: grid;
+    gap: 8px;
+    max-width: 500px;
+    margin-bottom: 14px;
+  }
+
+  .host-form > label {
+    color: var(--golens-text-secondary);
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .host-form > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .host-form input {
+    min-width: 0;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--golens-border-default);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-surface-inset);
+    color: var(--golens-text-primary);
+    font-size: 10px;
+  }
+
+  .host-form input::placeholder {
+    color: var(--golens-text-muted);
+  }
+
+  .host-form button {
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--golens-border-default);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-surface-raised);
+    color: var(--golens-text-secondary);
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  .host-form button:hover {
+    border-color: var(--golens-accent-info);
+    background: var(--golens-surface-hover);
+    color: var(--golens-text-primary);
+  }
+
+  .host-list {
+    display: grid;
+    gap: 6px;
+    max-width: 500px;
+  }
+
+  .host-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--golens-space-3);
+    padding: 8px;
+    border: 1px solid var(--golens-border-subtle);
+    border-radius: var(--golens-radius-sm);
+    background: var(--golens-surface-panel);
+    transition: background-color var(--golens-motion-fast);
+  }
+
+  .host-item:hover {
+    background: var(--golens-surface-hover);
+  }
+
+  .host-item code {
+    overflow: hidden;
+    color: var(--golens-text-secondary);
+    font: 9px/1.35 var(--golens-font-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .host-item button {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--golens-radius-xs);
+    background: transparent;
+    color: var(--golens-text-muted);
+    font-size: 14px;
+  }
+
+  .host-item button:hover {
+    background: var(--golens-surface-hover);
+    color: var(--golens-text-primary);
+  }
+</style>
+</head>
+<body>
+<div style="position:fixed;top:12px;right:16px;z-index:99999;display:flex;gap:4px;padding:5px;border:1px solid var(--golens-border-default);border-radius:9px;background:var(--golens-surface-panel);box-shadow:0 8px 24px rgba(0,0,0,.45);font:600 11px/1.2 var(--golens-font-mono,monospace);">
+<a href="popover-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Popover</a>
+<a href="settings-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-primary);background:var(--golens-surface-hover);">Settings</a>
+<a href="onboarding-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Onboarding</a>
+<a href="controls-demo.html" style="padding:5px 9px;border-radius:6px;text-decoration:none;color:var(--golens-text-secondary);background:transparent;">Controls</a>
+</div>
+
+
+
+<aside class="sidebar">
+  <header class="sidebar-header">
+    <strong>GoLens</strong>
+    <small>Settings</small>
+  </header>
+
+  <nav role="tablist" aria-label="Settings pages">
+    <button class="settings-tab" id="tab-general" type="button" role="tab" aria-selected="true" aria-controls="panel-general">
+      <svg viewBox="0 0 24 24"><path d="M14 6h7M3 6h5M8 3v6M3 18h7M16 18h5M14 15v6M3 12h13M22 12h-2M18 9v6" stroke="currentColor" stroke-linecap="round"/></svg>
+      <span>General</span>
+    </button>
+    <button class="settings-tab" id="tab-shortcuts" type="button" role="tab" aria-selected="false" aria-controls="panel-shortcuts" tabindex="-1">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-linecap="round"/><path d="M7 9h.01M11 9h.01M15 9h.01M19 9h.01M7 13h.01M11 13h.01M15 13h4M7 17h10" stroke="currentColor" stroke-linecap="round"/></svg>
+      <span>Shortcuts</span>
+    </button>
+    <button class="settings-tab" id="tab-access" type="button" role="tab" aria-selected="false" aria-controls="panel-access" tabindex="-1">
+      <svg viewBox="0 0 24 24"><path d="m21 14-9 7-9-7 3-10 3 7h6l3-7z" stroke="currentColor" stroke-linecap="round"/></svg>
+      <span>GitLab access</span>
+    </button>
+    <button class="settings-tab" id="tab-cache" type="button" role="tab" aria-selected="false" aria-controls="panel-cache" tabindex="-1">
+      <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3" stroke="currentColor" stroke-linecap="round"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" stroke="currentColor" stroke-linecap="round"/></svg>
+      <span>Cache</span>
+    </button>
+    <button class="settings-tab" id="tab-help" type="button" role="tab" aria-selected="false" aria-controls="panel-help" tabindex="-1">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-linecap="round"/><path d="M9.5 9a2.5 2.5 0 1 1 3.6 2.25c-.7.36-1.1.75-1.1 1.75M12 17h.01" stroke="currentColor" stroke-linecap="round"/></svg>
+      <span>Help</span>
+    </button>
+  </nav>
+
+  <label class="sidebar-footer">
+    <div>
+      <strong>GoLens enabled</strong>
+      <small>Synced across tabs</small>
+    </div>
+    <input type="checkbox" checked>
+  </label>
+</aside>
+
+<main>
+  <header class="page-header">
+    <div>
+      <h1 id="page-title">General</h1>
+      <p id="page-desc">Choose how GoLens behaves across GitLab reviews.</p>
+    </div>
+    <button class="close-btn" type="button" title="Close settings">×</button>
+  </header>
+
+  <div class="page-content">
+
+    <!-- General panel -->
+    <section class="settings-panel" id="panel-general" role="tabpanel" aria-labelledby="tab-general">
+      <div class="section-heading">
+        <h2>Review preferences</h2>
+        <p>These choices apply immediately to every open GitLab tab. Your project source stays in your browser only.</p>
+      </div>
+
+      <label class="preference-row">
+        <div>
+          <strong>Hide generated files</strong>
+          <small>Uses GitLab's <code>.gitattributes</code> marker. Large collapsed files remain visible.</small>
+        </div>
+        <input type="checkbox" checked>
+      </label>
+
+      <label class="preference-row">
+        <div>
+          <strong>Show contextual shortcut tips</strong>
+          <small>Suggests a configured shortcut after you perform the same action manually. Learned shortcuts stop appearing.</small>
+        </div>
+        <input type="checkbox" checked>
+      </label>
+
+      <label class="preference-row">
+        <div>
+          <strong>Jump to definition in new tab</strong>
+          <small>Open definitions in a new browser tab instead of navigating the current review.</small>
+        </div>
+        <input type="checkbox">
+      </label>
+    </section>
+
+    <!-- Shortcuts panel -->
+    <section class="settings-panel" id="panel-shortcuts" role="tabpanel" aria-labelledby="tab-shortcuts" hidden>
+      <div class="shortcut-heading">
+        <div>
+          <h2>Keyboard shortcuts</h2>
+          <p>Click any binding, then press a new shortcut.</p>
+        </div>
+        <button class="reset-btn" type="button">Reset defaults</button>
+      </div>
+
+      <div class="shortcut-preset">
+        <label for="preset-select">
+          <strong>Keymap preset</strong>
+          <small>Applying a preset replaces all bindings below. You can edit afterward.</small>
+        </label>
+        <select id="preset-select">
+          <option>VS Code</option>
+          <option>IntelliJ IDEA</option>
+          <option>Vim</option>
+        </select>
+        <button type="button">Apply preset</button>
+      </div>
+
+      <div class="shortcut-list">
+        <div class="shortcut-row">
+          <span>Go to definition</span>
+          <button class="shortcut-binding">Cmd+Click</button>
+          <button class="shortcut-clear" type="button" title="Clear">×</button>
+        </div>
+        <div class="shortcut-row">
+          <span>Find usages</span>
+          <button class="shortcut-binding">Ctrl+Click</button>
+          <button class="shortcut-clear" type="button" title="Clear">×</button>
+        </div>
+        <div class="shortcut-row">
+          <span>Toggle diff view</span>
+          <button class="shortcut-binding">Cmd+D</button>
+          <button class="shortcut-clear" type="button" title="Clear">×</button>
+        </div>
+        <div class="shortcut-row">
+          <span>Expand section</span>
+          <button class="shortcut-binding">Shift+E</button>
+          <button class="shortcut-clear" type="button" title="Clear">×</button>
+        </div>
+        <div class="shortcut-row">
+          <span>Copy link</span>
+          <button class="shortcut-binding">Cmd+L</button>
+          <button class="shortcut-clear" type="button" title="Clear">×</button>
+        </div>
+        <div class="shortcut-row">
+          <span>Open settings</span>
+          <button class="shortcut-binding">Cmd+,</button>
+          <button class="shortcut-clear" type="button" title="Clear">×</button>
+        </div>
+      </div>
+
+      <p class="inline-status">Shortcuts saved to Chrome sync.</p>
+    </section>
+
+    <!-- GitLab access panel -->
+    <section class="settings-panel" id="panel-access" role="tabpanel" aria-labelledby="tab-access" hidden>
+      <div class="section-heading">
+        <h2>Self-hosted GitLab</h2>
+        <p>GitLab.com works automatically. Add only the origins you trust.</p>
+      </div>
+
+      <form class="host-form">
+        <label for="origin-input">GitLab origin</label>
+        <div>
+          <input id="origin-input" type="text" placeholder="https://gitlab.example.com" required>
+          <button type="submit">Allow origin</button>
+        </div>
+      </form>
+
+      <div class="host-list" aria-label="Allowed self-hosted GitLab origins">
+        <div class="host-item">
+          <code>https://gitlab.internal.example.com</code>
+          <button type="button" title="Remove">×</button>
+        </div>
+        <div class="host-item">
+          <code>https://git.company.local</code>
+          <button type="button" title="Remove">×</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cache panel -->
+    <section class="settings-panel" id="panel-cache" role="tabpanel" aria-labelledby="tab-cache" hidden>
+      <div class="cache-summary">
+        <div>
+          <h2>Source cache</h2>
+          <p>Stored locally in this browser only.</p>
+        </div>
+        <output class="cache-size-output">2.4 MB</output>
+      </div>
+
+      <div class="full-cache">
+        <div>
+          <strong>Complete project intelligence</strong>
+          <p>Cache every eligible Go file at the active merge request commit.</p>
+        </div>
+        <button class="primary-action" type="button">Cache full project</button>
+        <progress value="0" max="100" hidden></progress>
+        <p class="inline-status">Ready to index.</p>
+      </div>
+
+      <div class="danger-zone">
+        <div>
+          <strong>Clear source cache</strong>
+          <p>Remove all stored snapshots and semantic indexes.</p>
+        </div>
+        <button class="destructive-action" type="button">Clear cache</button>
+      </div>
+    </section>
+
+    <!-- Help panel -->
+    <section class="settings-panel" id="panel-help" role="tabpanel" aria-labelledby="tab-help" hidden>
+      <div class="section-heading">
+        <h2>Feature guide</h2>
+        <p>Open the complete GoLens reference inside the active merge request.</p>
+      </div>
+
+      <div class="help-card">
+        <div style="display:grid;place-items:center;width:100%;height:100%;color:var(--golens-accent-info);">
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </div>
+        <div>
+          <strong>Browse all GoLens features</strong>
+          <p>Explore the hover popover, find usages, diff helpers, shortcuts, cache management, and privacy controls.</p>
+          <button class="primary-action" type="button">Open feature guide</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <footer>
+    <span>Settings save automatically to Chrome sync.</span>
+    <strong>Escape closes settings</strong>
+  </footer>
+</main>
+
+<script>
+  // Simple tab switching demo
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      // Clear active state
+      document.querySelectorAll('.settings-tab').forEach(t => {
+        t.setAttribute('aria-selected', 'false');
+        t.setAttribute('tabindex', '-1');
+      });
+      document.querySelectorAll('.settings-panel').forEach(p => {
+        p.hidden = true;
+      });
+
+      // Set new active state
+      tab.setAttribute('aria-selected', 'true');
+      tab.setAttribute('tabindex', '0');
+      const panelId = tab.getAttribute('aria-controls');
+      document.getElementById(panelId).hidden = false;
+
+      // Update header
+      const titleMap = {
+        'panel-general': 'General',
+        'panel-shortcuts': 'Keyboard shortcuts',
+        'panel-access': 'GitLab access',
+        'panel-cache': 'Source cache',
+        'panel-help': 'Feature guide'
+      };
+
+      const descMap = {
+        'panel-general': 'Choose how GoLens behaves across GitLab reviews.',
+        'panel-shortcuts': 'Configure keyboard bindings for all GoLens actions.',
+        'panel-access': 'Allow GoLens to access your self-hosted GitLab instances.',
+        'panel-cache': 'Manage the local source code cache and indexing.',
+        'panel-help': 'Open the complete GoLens reference inside merge requests.'
+      };
+
+      document.getElementById('page-title').textContent = titleMap[panelId];
+      document.getElementById('page-desc').textContent = descMap[panelId];
+    });
+  });
+</script>
+
+</body>
+</html>
