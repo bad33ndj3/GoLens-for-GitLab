@@ -394,7 +394,7 @@ test('falls back to sequential x-next-page paging when GitLab omits the total', 
 test('rejects a package with more Go files than the indexer will accept', async () => {
   const api = createGitLabApi({
     fetch: async () => jsonResponse(
-      Array.from({ length: 201 }, (_value, index) => ({ type: 'blob', path: `pkg/f${index}.go`, id: SHA })),
+      Array.from({ length: 2001 }, (_value, index) => ({ type: 'blob', path: `pkg/f${index}.go`, id: SHA })),
     ),
   });
   await assert.rejects(api.listPackageFiles('pkg', SHA), /too many Go files/);

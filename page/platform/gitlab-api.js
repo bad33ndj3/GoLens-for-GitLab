@@ -327,7 +327,7 @@ export function createGitLabApi({ fetch: fetchImpl, getClock, getSignal } = {}) 
       signal,
     );
     const files = entries.filter((entry) => entry.type === 'blob' && GO_FILE.test(entry.path)).map((entry) => ({ path: entry.path, blobId: entry.id || '' }));
-    if (files.length > 200) throw new Error(`Package ${packagePath || '.'} contains too many Go files`);
+    if (files.length > 2000) throw new Error(`Package ${packagePath || '.'} contains too many Go files`);
     return files;
   }
 
