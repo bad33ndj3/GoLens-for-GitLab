@@ -799,9 +799,8 @@ try {
   assert.match(stdout, /data-go-popover-close-visible="true"/, `the pinned Go popover did not expose a close button\n${stderr}`);
   assert.match(stdout, /data-go-scope="[^"]*(?:indexed package|Full project)[^"]*"/, `semantic results did not expose their search scope\n${stderr}`);
   assert.match(stdout, /data-go-full-search-action="true"/, `incomplete semantic results did not expose the full-project action\n${stderr}`);
-  assert.match(stdout, /data-go-full-search-modal="true"/, `the full-project search modal is not accessible\n${stderr}`);
-  assert.match(stdout, /data-go-full-search-opened="true"/, `the full-project search modal did not open\n${stderr}`);
-  assert.match(stdout, /data-go-full-search-cancel-visible="true"/, `the full-project search modal did not expose Cancel\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-loading="true"/, `the full-project search did not show its inline popover loading state\n${stderr}`);
+  assert.match(stdout, /data-go-full-search-close-visible="true"/, `the full-project search did not keep the popover close button visible while searching\n${stderr}`);
   assert.match(stdout, /data-go-full-search-cancelled="true"/, `cancelling full-project search did not preserve incomplete coverage\n${stderr}`);
   assert.match(stdout, /data-go-in-diff-destination="true"/, `the same-diff destination icon was not rendered\n${stderr}`);
   assert.match(stdout, /data-go-new-tab-destination="true"/, `the new-tab destination icon was not rendered\n${stderr}`);
