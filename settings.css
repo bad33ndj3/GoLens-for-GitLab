@@ -16,9 +16,9 @@ button:disabled { cursor:wait; opacity:.55; }
 .identity strong { display:block; font-size:13px; font-weight:720; }
 .identity span { display:block; margin-top:2px; color:var(--golens-text-muted); font-size:10.5px; }
 nav { display:grid; align-content:start; gap:5px; padding:16px 12px; }
-.settings-tab { display:grid; grid-template-columns:28px minmax(0,1fr); min-height:42px; align-items:center; gap:9px; width:100%; padding:0 10px; border:1px solid transparent; border-radius:var(--golens-radius-md); background:transparent; color:var(--golens-text-secondary); text-align:left; }
+.settings-tab { display:grid; grid-template-columns:28px minmax(0,1fr); min-height:42px; align-items:center; gap:9px; width:100%; padding:0 10px; border:1px solid transparent; border-left:2px solid transparent; border-radius:var(--golens-radius-md); background:transparent; color:var(--golens-text-secondary); text-align:left; }
 .settings-tab:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); }
-.settings-tab[aria-selected="true"] { border-color:color-mix(in srgb,var(--golens-accent-primary) 32%,transparent); background:var(--golens-primary-soft); color:var(--golens-accent-primary-hover); }
+.settings-tab[aria-selected="true"] { border-left-color:var(--golens-accent-info); background:transparent; color:var(--golens-accent-info); }
 .settings-tab svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; stroke-width:1.65; }
 .settings-tab span { font-size:11.5px; font-weight:650; }
 .global-switch { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; padding:14px 18px; border-top:1px solid var(--golens-border-subtle); cursor:pointer; }
