@@ -5,8 +5,7 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
@@ -17,6 +16,10 @@ jobs:
     name: Publish
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       CHROME_BIN: ${{ github.workspace }}/.chrome/chrome-linux64/chrome
       CHROME_FOR_TESTING_VERSION: 151.0.7922.34
@@ -77,6 +80,11 @@ jobs:
         run: |
           npm run package
           unzip -t "dist/golens-for-gitlab-${GITHUB_REF_NAME}.zip"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: "dist/golens-for-gitlab-${{ github.ref_name }}.zip"
 
       - name: Publish GitHub release
         env:
