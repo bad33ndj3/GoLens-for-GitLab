@@ -106,13 +106,14 @@ branch). `renderSignature`/`choiceButton`/`showLoading` in `code-intel.js` now m
 
 **What was actually still missing (closed 2026-08-06):** three small finetuning-pass items from
 the sections above that never made it from the demo files into their production counterparts:
-- `settings.css`: the `.shortcut-row` odd/even-count-fragile border hack
-  (`:nth-last-child(-n+2)`/`:nth-last-child(2)`) replaced with the demo's
-  `:nth-child(even){border-right:0}` approach (desktop) and the now-redundant mobile
-  bottom-border-restore rule removed.
+- `settings.css`: the `.shortcut-row` odd/even-count-fragile border-bottom-suppression hack
+  (`:nth-last-child(-n+2)`/`:nth-last-child(2)`) removed outright, matching the demo (which never
+  suppresses border-bottom — every row keeps it). The pre-existing right-border toggle
+  (`:nth-child(odd){border-right:1px}`) is unrelated and was left untouched.
 - `page/features/onboarding.internal.js`: `.choice-card:has(input:checked)` (the keymap/
-  generated-files picker) moved from primary-orange to `--golens-accent-info` blue, matching the
-  demo's `.keymap-card.selected` and the documented "blue = this option is selected" rule.
+  generated-files picker) moved from primary-orange to `--golens-accent-info` blue, including the
+  2px left-accent-stripe inset layer, matching the demo's `.keymap-card.selected` and the
+  documented "blue = this option is selected" rule.
 - `page/features/controls.js`: the bookmark-drawer footer ("Clear current/stale/all") and the
   per-row "Remove" button (`button.quiet`) now get the error-outline treatment on hover instead
   of sharing the primary-orange hover of the drawer's Jump/Recover actions; the header close

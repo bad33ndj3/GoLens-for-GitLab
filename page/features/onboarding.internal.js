@@ -149,7 +149,7 @@ export function setupDialogMarkup({ mascotUrl, brandIconUrl, customOptionHtml, p
       .choice-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--golens-space-3); }
       .choice-card { position:relative; display:grid; grid-template-columns:auto minmax(0,1fr); gap:var(--golens-space-3); align-items:start; min-height:78px; padding:var(--golens-space-4); border:1px solid var(--golens-border-default); border-radius:var(--golens-radius-panel); background:var(--golens-surface-raised); cursor:pointer; }
       .choice-card:hover { border-color:var(--golens-border-strong); background:var(--golens-surface-hover); }
-      .choice-card:has(input:checked) { border-color:var(--golens-accent-info); background:var(--golens-surface-raised); box-shadow:inset 0 0 0 1px var(--golens-accent-info); }
+      .choice-card:has(input:checked) { border-color:var(--golens-accent-info); background:var(--golens-surface-raised); box-shadow:inset 0 0 0 1px var(--golens-accent-info), inset 2px 0 0 var(--golens-accent-info); }
       .choice-card input { width:16px; height:16px; margin:2px 0 0; accent-color:var(--golens-accent-info); }
       .choice-card strong { display:block; color:var(--golens-text-primary); font-size:12px; }
       .choice-card small { display:block; margin-top:4px; color:var(--golens-text-muted); font-size:10.5px; line-height:1.45; }
