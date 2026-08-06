@@ -520,12 +520,16 @@ const html = `<!doctype html>
           // close button while the search is in progress.
           const fullSearchAction = [...goUI.querySelectorAll('.choices button')].find((button) => button.textContent === 'Search complete project');
           fullSearchAction?.click();
-          setTimeout(() => {
-            document.body.dataset.goFullSearchLoading = String(popover.dataset.mode === 'searching' && Boolean(goUI.querySelector('.usages-spinner')));
-            document.body.dataset.goFullSearchCloseVisible = String(!goUI.querySelector('.close-button')?.hidden);
-            goUI.querySelector('.close-button')?.click();
-            document.body.dataset.goFullSearchCancelled = String(!popover.classList.contains('show'));
-          }, 700);
+          // showSearchProgress() runs synchronously inside open(), before
+          // runSearch()'s first await — the 'searching' mode is already live
+          // the instant .click() returns, so check right here instead of
+          // after a delay: the fixture's search/package-load endpoints can
+          // resolve in well under a second, and waiting risks reading the
+          // popover after it's already flipped back out of 'searching'.
+          document.body.dataset.goFullSearchLoading = String(popover.dataset.mode === 'searching' && Boolean(goUI.querySelector('.usages-spinner')));
+          document.body.dataset.goFullSearchCloseVisible = String(!goUI.querySelector('.close-button')?.hidden);
+          goUI.querySelector('.close-button')?.click();
+          document.body.dataset.goFullSearchCancelled = String(!popover.classList.contains('show'));
         }, 50);
         clearInterval(popoverWatch);
       }, 700);
