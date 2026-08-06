@@ -478,7 +478,7 @@ const html = `<!doctype html>
       const enabledNow = document.getElementById('gitlab-lens-root')?.shadowRoot?.querySelector('[data-action="toggle-enabled"]');
       document.body.dataset.hoverToggleState = enabledNow?.getAttribute('aria-pressed') || 'missing';
       const rect = target.getBoundingClientRect();
-      document.body.dataset.hoverRectSize = `${rect.width}x${rect.height}`;
+      document.body.dataset.hoverRectSize = rect.width + 'x' + rect.height;
       target.dispatchEvent(new MouseEvent('mousemove', { bubbles:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2 }));
       if (document.body.dataset.goStatus === 'ready' && !clicked) {
         clicked = true;
