@@ -95,24 +95,31 @@ Three states shown stacked, not interactive:
 2. Controls strip busy — preload showing in-button progress fill + count, bookmark badge + stale dot
 3. Bookmark drawer open — current-head list + stale-after-head-change list, compact flat rows
 
-## Not yet implemented in real code (biggest gap)
+## Status update (2026-08-06): popover flow is actually implemented
 
-`code-intel.js` only implements the OLD flow: hover always shows docs+signature+scope+choices,
-Cmd/Ctrl+click either jumps straight to a single definition or shows the old two-line ambiguous
-picker. None of this is real yet:
+This section previously listed the usages-list popover, compact choice rows, header
+spinner+count, `.tok-*` signature coloring, and the searching-mode dismiss-lock as "not yet
+real". That was stale — `code-intel.js` has since landed all of it (see 44cf6a6 "Reconcile
+design tokens; port popover to compact usages list and signature coloring" and 332f718 on this
+branch). `renderSignature`/`choiceButton`/`showLoading` in `code-intel.js` now match
+`popover-demo.html`'s states 1–4 and 3c.
 
-- Usages-list popover (state 2/3): grouped-by-file rows, header usage count, scroll-triggered
-  loading, skeleton rows. No DOM/markup, no JS, no data source for "all usages of X" exists.
-- Dropping docs/signature once "at definition" (state 4) — `showResult()` always renders docs.
-- Compact single-line choice rows (`.choice--compact`, `.choice-inline-path`) — real markup
-  still uses the old two-line `.choice-heading` / `.choice-context` layout.
-- Small header spinner+count pattern (`.usages-count.is-loading`) — real `showLoading()` still
-  renders the full `.loading-progress` bar (phase label + percentage + progress track).
-- Real syntax highlighting — `.tok-*` classes only exist as hand-tokenized HTML in the demo.
-  Production `renderSignature()` / `choiceButton()` render plain text; there's no Go tokenizer
-  to color dynamic signatures.
-- Per-file destination icon (in-diff vs. new-tab) grouped at the file-header level — real code
-  only has a per-choice destination icon, no file-grouping concept at all.
+**What was actually still missing (closed 2026-08-06):** three small finetuning-pass items from
+the sections above that never made it from the demo files into their production counterparts:
+- `settings.css`: the `.shortcut-row` odd/even-count-fragile border hack
+  (`:nth-last-child(-n+2)`/`:nth-last-child(2)`) replaced with the demo's
+  `:nth-child(even){border-right:0}` approach (desktop) and the now-redundant mobile
+  bottom-border-restore rule removed.
+- `page/features/onboarding.internal.js`: `.choice-card:has(input:checked)` (the keymap/
+  generated-files picker) moved from primary-orange to `--golens-accent-info` blue, matching the
+  demo's `.keymap-card.selected` and the documented "blue = this option is selected" rule.
+- `page/features/controls.js`: the bookmark-drawer footer ("Clear current/stale/all") and the
+  per-row "Remove" button (`button.quiet`) now get the error-outline treatment on hover instead
+  of sharing the primary-orange hover of the drawer's Jump/Recover actions; the header close
+  button now hovers neutral (border-strong) instead of primary, matching the demo.
+
+No remaining known drift between the four demo files and production for the states documented
+below.
 
 ## Known inconsistencies — decided
 
