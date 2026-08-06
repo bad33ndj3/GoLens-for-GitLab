@@ -4,6 +4,8 @@
 >
 > GITLAB is a trademark of GitLab Inc. in the United States and other countries and regions
 
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/bad33ndj3/GoLens-for-GitLab/badge)](https://securityscorecards.dev/viewer/?uri=github.com/bad33ndj3/GoLens-for-GitLab)
+
 <p align="center">
   <strong>A calmer, Go-aware code review experience for GitLab.</strong><br>
   Navigate symbols, find interface implementations, and focus on the diff without sending repository code anywhere.
