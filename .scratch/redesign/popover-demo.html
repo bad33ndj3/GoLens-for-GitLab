@@ -69,9 +69,6 @@
   .usage-row-skeleton:nth-child(1) i:last-child { width:78%; }
   .usage-row-skeleton:nth-child(2) i:last-child { width:52%; }
   .usages-scroll-hint { padding:6px var(--golens-space-3); color:var(--golens-text-muted); font:10px/1.4 var(--golens-font-mono); text-align:center; }
-  .usage-list-action { width:100%; padding:7px var(--golens-space-3); border:0; border-top:1px solid var(--golens-border-subtle); background:transparent; color:var(--golens-info-hover); font:600 10.5px/1.4 var(--golens-font-mono); text-align:center; cursor:pointer; }
-  .usage-list-action:hover { background:var(--golens-surface-hover); color:var(--golens-text-primary); }
-  .usage-list-action:focus-visible { outline:2px solid var(--golens-accent-focus); outline-offset:-2px; }
 
   /* --- Compact single-line choice row (IntelliJ "Implemented in N Types" style) --- */
   .choice--compact { display:flex; min-height:0; align-items:center; gap:6px; padding:4px var(--golens-space-3); overflow:hidden; }
@@ -318,10 +315,12 @@
 <div class="col">
   <p class="label">3b. Usages list — search coverage incomplete, offer full-project search</p>
   <!-- FLOW: same usages list, but the scope only covered a handful of indexed packages.
-       The action to widen the search is a full-width flush row anchored to the bottom of
-       the list (`.usage-list-action`) — NOT the bordered `.choice` row the hover popover's
-       plain choice lists use elsewhere. A 36px bordered row would visually clash with the
-       11px single-line usage rows immediately above it; this stays in the same register. -->
+       The action to widen the search reuses `.signature-toggle` (the same full-width
+       flush row the "Show full signature" toggle uses) — NOT the bordered `.choice` row
+       the hover popover's plain choice lists use elsewhere. A 36px bordered row would
+       visually clash with the 11px single-line usage rows immediately above it; reusing
+       the toggle's row keeps this in the same register with one shared style, not two
+       near-identical ones. -->
   <section class="popover popover--list">
     <header class="popover-header">
       <span class="symbol-badge symbol-struct">S</span>
@@ -346,7 +345,7 @@
         <button class="usage-row"><span class="usage-line">27</span><span class="usage-snippet"><span class="tok-kw">return</span> <span class="tok-param">p</span><span class="tok-punct">.</span><span class="tok-param">id</span> <span class="tok-punct">==</span> <span class="tok-param">id</span></span></button>
         <button class="usage-row"><span class="usage-line">89</span><span class="usage-snippet"><span class="tok-param">id</span> <span class="tok-type hl">ProductOfferingID</span><span class="tok-punct">) </span><span class="tok-type">ProductOffering</span></span></button>
       </div>
-      <button class="usage-list-action" type="button">Search complete project</button>
+      <button class="signature-toggle" type="button">Search complete project</button>
     </div>
   </section>
 </div>
