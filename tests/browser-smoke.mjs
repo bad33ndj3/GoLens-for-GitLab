@@ -184,6 +184,7 @@ async function runBrowserAttempt(url, completionExpression, profile, { extension
     const target = await devToolsTarget(endpointURL.port, url, deadline);
     connection = await connectDevTools(target.webSocketDebuggerUrl);
     if (extensionMessage) await sendExtensionTabMessage(endpointURL.port, url, extensionMessage, deadline);
+    let lastExtensionResend = Date.now();
     while (Date.now() < deadline) {
       try {
         const completion = await connection.send('Runtime.evaluate', {
@@ -200,6 +201,16 @@ async function runBrowserAttempt(url, completionExpression, profile, { extension
         }
       } catch {
         // Reloads briefly destroy the execution context; the next poll retries.
+      }
+      // A page fixture that simulates SPA navigation (ticket 05's own
+      // pushState/replaceState dance) can tear down and rebuild the module
+      // graph shortly after load. If the one-shot send above landed mid-churn,
+      // its ack raced a remount that silently discards the open overlay it
+      // just produced, and nothing here would ever ask again. Resend
+      // periodically so the message eventually lands once things settle.
+      if (extensionMessage && Date.now() - lastExtensionResend > 500) {
+        lastExtensionResend = Date.now();
+        await sendExtensionTabMessage(endpointURL.port, url, extensionMessage, Date.now() + 300).catch(() => {});
       }
       await delay(50);
     }
