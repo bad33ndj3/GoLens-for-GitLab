@@ -472,13 +472,8 @@ const html = `<!doctype html>
         }
       }
       if (sharing || !reloaded) return;
-      document.body.dataset.hoverTicks = String((Number(document.body.dataset.hoverTicks) || 0) + 1);
       const target = document.getElementById('go-target');
-      document.body.dataset.hoverTargetFound = String(Boolean(target));
-      const enabledNow = document.getElementById('gitlab-lens-root')?.shadowRoot?.querySelector('[data-action="toggle-enabled"]');
-      document.body.dataset.hoverToggleState = enabledNow?.getAttribute('aria-pressed') || 'missing';
       const rect = target.getBoundingClientRect();
-      document.body.dataset.hoverRectSize = rect.width + 'x' + rect.height;
       target.dispatchEvent(new MouseEvent('mousemove', { bubbles:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2 }));
       if (document.body.dataset.goStatus === 'ready' && !clicked) {
         clicked = true;
@@ -775,6 +770,7 @@ try {
       && document.body?.dataset.enabledToggle === 'true'
       && document.body?.dataset.goChoiceClosedPopover === 'true'
       && document.body?.dataset.goSemanticShortcut === 'true'
+      && document.body?.dataset.goFullSearchCancelled === 'true'
       && document.body?.dataset.fullFileInline === 'true'
       && document.body?.dataset.bookmarkDomReconciled === 'true'
   `, profile);
