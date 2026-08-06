@@ -125,6 +125,7 @@ const MARKUP = `
     .usage-row:hover { background:var(--golens-info-soft); box-shadow:inset 2px 0 0 var(--golens-info); } .usage-row:focus-visible { outline:2px solid var(--golens-focus-ring); outline-offset:-2px; }
     .usage-line { color:var(--golens-text-muted); font-variant-numeric:tabular-nums; text-align:right; }
     .usage-snippet { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .usage-snippet .hl { border-radius:2px; background:color-mix(in srgb,var(--golens-primary) 30%,transparent); color:var(--golens-text-primary); }
     .usage-row-skeleton { display:grid; grid-template-columns:28px minmax(0,1fr); gap:8px; padding:4px var(--golens-space-3) 4px calc(var(--golens-space-3) + 6px); }
     .usage-row-skeleton i { display:block; height:9px; border-radius:3px; background:var(--golens-surface-hover); }
     .usage-row-skeleton i:first-child { width:16px; }
@@ -386,6 +387,27 @@ export function mount(ctx = {}) {
     }
   }
 
+  // paintUsageSnippet(element, location) -> like paintSignatureText, but also
+  // marks whichever token overlaps [location.highlightStart,
+  // +highlightLength) with an extra `hl` class, the matched identifier
+  // occurrence on that usage row (demo's `.usage-snippet .hl` highlight).
+  function paintUsageSnippet(element, location) {
+    element.replaceChildren();
+    const { snippet = '', highlightStart = -1, highlightLength = 0 } = location;
+    let offset = 0;
+    for (const { text: chunk, cls } of tokenizeSignature(snippet)) {
+      const overlaps = highlightLength > 0
+        && offset < highlightStart + highlightLength
+        && offset + chunk.length > highlightStart;
+      offset += chunk.length;
+      if (!cls && !overlaps) { element.append(doc.createTextNode(chunk)); continue; }
+      const span = doc.createElement('span');
+      span.className = [cls, overlaps ? 'hl' : null].filter(Boolean).join(' ');
+      span.textContent = chunk;
+      element.append(span);
+    }
+  }
+
   function renderSignature(popover, definition = null, { showFullTypeBody = false } = {}) {
     const block = popover.querySelector('.signature-block');
     const signature = block.querySelector('.signature');
@@ -595,6 +617,7 @@ export function mount(ctx = {}) {
     lineElement.textContent = String(location.line);
     const snippetElement = doc.createElement('span');
     snippetElement.className = 'usage-snippet';
+    paintUsageSnippet(snippetElement, location);
     button.append(lineElement, snippetElement);
     button.title = `${location.path}:${location.line}`;
     button.setAttribute('aria-label', `${location.path}:${location.line}. ${destination.label}`);

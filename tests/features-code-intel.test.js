@@ -139,6 +139,27 @@ test('showResult(): groups multi-location references by file into compact usage 
   assert.equal(shadow.querySelector('.scope').hidden, true, 'no scope line crowding the usages list');
 });
 
+test('showResult(): each usage row renders its source line inline, syntax-colored, with the matched identifier highlighted', () => {
+  buildFixture();
+  const legacy = fakeLegacy();
+  const handle = mount({ legacy });
+  const result = {
+    status: 'references',
+    definition: { name: 'JetStream', kind: 'interface', path: 'jetstream/jetstream.go', line: 15 },
+    locations: [
+      { path: 'packages/ezjetstream/router.go', line: 15, snippet: 'js jetstream.JetStream,', highlightStart: 13, highlightLength: 9 },
+    ],
+    hasMore: false,
+    scope: { kind: 'currentPackage' },
+  };
+  assert.equal(handle.showResult(result, pointer), true);
+  const shadow = document.getElementById('golens-go-intelligence-root').shadowRoot;
+  const snippet = shadow.querySelector('.usage-snippet');
+  assert.equal(snippet.textContent, 'js jetstream.JetStream,');
+  const highlighted = snippet.querySelector('.hl');
+  assert.equal(highlighted?.textContent, 'JetStream', 'the matched identifier occurrence is marked for highlighting');
+});
+
 test('showResult({ compact: true }): a resolved definition drops its docs/signature when arriving via a usages-list click', () => {
   buildFixture();
   const legacy = fakeLegacy();

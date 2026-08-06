@@ -31,6 +31,20 @@ function textOf(source, node) {
   return node ? source.slice(node.startIndex, node.endIndex) : '';
 }
 
+// usageSnippet(source, node) -> the trimmed source line `node` sits on, plus
+// the [start,length) range of `node` within that trimmed text, so callers
+// can render the line with `node`'s occurrence highlighted (Find Usages
+// popover inline-code rows).
+function usageSnippet(source, node) {
+  const lineText = source.split('\n')[node.startPosition.row] || '';
+  const leading = lineText.match(/^\s*/)[0].length;
+  return {
+    snippet: lineText.trim(),
+    highlightStart: node.startPosition.column - leading,
+    highlightLength: node.endPosition.column - node.startPosition.column,
+  };
+}
+
 function unquoteImport(value) {
   if (value.startsWith('`') && value.endsWith('`')) return value.slice(1, -1);
   try { return JSON.parse(value); } catch { return value.replace(/^"|"$/g, ''); }
@@ -1415,6 +1429,7 @@ export class GoSemanticIndex {
       if (!candidateEntry) continue;
       const identifierNode = this._identifierNodeAt(file, node);
       if (!identifierNode) continue;
+      Object.assign(location, usageSnippet(file.source, identifierNode));
       const result = this._resolveAtNode({
         origin,
         project,
