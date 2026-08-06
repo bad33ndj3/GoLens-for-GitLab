@@ -74,7 +74,11 @@ import {
 const POPOVER_DISMISS_DELAY = 450;
 const FULL_TYPE_BODY_INITIAL_LINES = 40;
 const DIFF_ROOT_SELECTOR = 'diff-file, .diff-file, [data-testid="diff-file"], [data-testid="rd-diff-file"], [data-file-path]';
-const CODE_CELL_SELECTOR = 'td.line_content, td[class*="line-content"], [data-testid="diff-line-content"], [data-testid="rd-diff-line-content"], .rd-diff-code, .rd-diff-line-code';
+// The trailing `code.gl-absolute div.line` clause matches blob-dom.js's
+// `codeCellFor`'s real, highlighted `div.line#LC{n}` cells — the same
+// `HIGHLIGHT_SELECTOR` scoping blob-dom.js's own codeCellFor uses to pick
+// real lines over the transparent hit-test overlay above them.
+const CODE_CELL_SELECTOR = 'td.line_content, td[class*="line-content"], [data-testid="diff-line-content"], [data-testid="rd-diff-line-content"], .rd-diff-code, .rd-diff-line-code, code.gl-absolute div.line';
 
 const MARKUP = `
   <style>
@@ -1084,7 +1088,20 @@ export function mount(ctx = {}) {
       node = range?.startContainer;
       offset = range?.startOffset;
     }
-    if (!node || !cell.contains(node)) return null;
+    if (!node) return null;
+    if (!cell.contains(node)) {
+      // Blob pages: the caret-hit node lands in the transparent overlay
+      // layer (a sibling DOM subtree from `cell`, the highlighted
+      // `div.line`), so the normal containment check above always fails
+      // there. legacy.caretCellFor?.(node, offset, cell) (blob-dom.js's
+      // caretCellFor, wired only for blob pages) remaps the hit into the
+      // equivalent (node, offset) inside `cell`; if it isn't provided
+      // (diff-dom/MR case) or can't remap this hit, behavior is identical
+      // to before — bail out.
+      const remapped = legacy.caretCellFor?.(node, offset, cell);
+      if (!remapped) return null;
+      ({ node, offset } = remapped);
+    }
     const range = doc.createRange();
     range.selectNodeContents(cell);
     try { range.setEnd(node, offset); } catch { return null; }
@@ -1116,7 +1133,7 @@ export function mount(ctx = {}) {
   }
 
   function targetAtEvent(event) {
-    const cell = legacy.codeCellFor(event.target);
+    const cell = legacy.codeCellFor(event.target, event.clientX, event.clientY);
     if (!cell || !legacy.fileContextFor(cell)) return null;
     const caret = caretAtPoint(cell, event.clientX, event.clientY) || identifierFromElement(event.target, cell);
     return caret ? { ...caret, cell, x: event.clientX, y: event.clientY } : null;
@@ -1199,12 +1216,12 @@ export function mount(ctx = {}) {
       const selection = globalThis.getSelection?.();
       const target = (!selection || selection.isCollapsed) ? targetAtEvent(event) : null;
       if (target) selectSymbol(target);
-      else if (!legacy.codeCellFor(event.target)) clearSelectedSymbol();
+      else if (!legacy.codeCellFor(event.target, event.clientX, event.clientY)) clearSelectedSymbol();
       return;
     }
     const target = targetAtEvent(event);
     if (!target) {
-      if (legacy.codeCellFor(event.target)) legacy.toast('GoLens could not identify a Go symbol on this diff line.');
+      if (legacy.codeCellFor(event.target, event.clientX, event.clientY)) legacy.toast('GoLens could not identify a Go symbol on this diff line.');
       return;
     }
     event.preventDefault();

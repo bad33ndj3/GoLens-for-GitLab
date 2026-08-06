@@ -53,6 +53,16 @@ function fakeControls() {
   };
 }
 
+function fakeCodeIntel() {
+  const calls = [];
+  return { calls, setEnabled: (value) => calls.push(['setEnabled', value]) };
+}
+
+function fakeBookmarks() {
+  const calls = [];
+  return { calls, enable: () => calls.push(['enable']), disable: () => calls.push(['disable']) };
+}
+
 test('debounces page reconciliation across a mutation burst through an idle-deferred single pass', async () => {
   buildFixture();
   const controls = fakeControls();
@@ -162,4 +172,96 @@ test('diff observer bumps fileContextGeneration on a real diff mutation but igno
   } finally {
     session.deactivate();
   }
+});
+
+test('activate() on a blob-view URL enables code-intel only (no bookmarks UI/concept on blob pages)', () => {
+  buildFixture('https://gitlab.example/group/project/-/blob/main/pkg/cache.go');
+  const codeIntel = fakeCodeIntel();
+  const bookmarks = fakeBookmarks();
+  const session = createMrSession({
+    getSettings: () => fakeSettingsStore(),
+    getCodeIntelHandle: () => codeIntel,
+    getBookmarksHandle: () => bookmarks,
+  });
+  session.activate();
+  assert.equal(session.isActive(), true);
+  assert.deepEqual(codeIntel.calls, [['setEnabled', true]]);
+  assert.deepEqual(bookmarks.calls, [], 'blob pages never call getBookmarksHandle()?.enable()');
+
+  // deactivate() still calls both unconditionally (existing, already-safe
+  // idempotent behavior) — bookmarks.disable() is a harmless no-op here
+  // since it was never enabled.
+  session.deactivate();
+  assert.equal(session.isActive(), false);
+  assert.deepEqual(codeIntel.calls, [['setEnabled', true], ['setEnabled', false]]);
+  assert.deepEqual(bookmarks.calls, [['disable']]);
+});
+
+test('reconcilePage(): entering a blob-view page activates code-intel directly, without ever touching controls', async () => {
+  buildFixture('https://gitlab.example/group/project/-/blob/main/pkg/cache.go');
+  const controls = fakeControls();
+  const codeIntel = fakeCodeIntel();
+  const session = createMrSession({
+    getSettings: () => fakeSettingsStore(true),
+    getControlsHandle: () => controls,
+    getCodeIntelHandle: () => codeIntel,
+  });
+  await session.__test.reconcilePage();
+  assert.deepEqual(controls.calls, [], 'blob pages never create a controls widget');
+  assert.deepEqual(codeIntel.calls, [['setEnabled', true]]);
+  assert.equal(session.isActive(), true);
+  session.stop();
+});
+
+test('reconcilePage(): entering a blob-view page while the global setting is disabled leaves it inactive', async () => {
+  buildFixture('https://gitlab.example/group/project/-/blob/main/pkg/cache.go');
+  const codeIntel = fakeCodeIntel();
+  const session = createMrSession({
+    getSettings: () => fakeSettingsStore(false),
+    getCodeIntelHandle: () => codeIntel,
+  });
+  await session.__test.reconcilePage();
+  assert.equal(session.isActive(), false);
+  assert.deepEqual(codeIntel.calls, [['setEnabled', false]]);
+  session.stop();
+});
+
+test('reconcilePage(): navigating between page kinds tears down the previous kind before activating the new one, and only an MR-page teardown ever calls controls.destroy()', async () => {
+  const window = buildFixture('https://gitlab.example/group/project/-/merge_requests/42/diffs');
+  const controls = fakeControls();
+  const session = createMrSession({
+    getSettings: () => fakeSettingsStore(true),
+    getControlsHandle: () => controls,
+  });
+  await session.__test.reconcilePage();
+  assert.deepEqual(controls.calls, [['createControls'], ['setEnabled', true], ['refreshPreloadStatus']]);
+  controls.calls.length = 0;
+
+  // MR -> blob: leaves the merge-request page (destroy() included) before
+  // the blob branch activates; the blob branch itself never touches controls.
+  window.happyDOM.setURL('https://gitlab.example/group/project/-/blob/main/pkg/cache.go');
+  await session.__test.reconcilePage();
+  assert.deepEqual(controls.calls, [['leaveReviewFocus'], ['destroy']]);
+  controls.calls.length = 0;
+
+  // blob -> blob (a different file): re-triggers activation via
+  // blobPageKey's pathname comparison. leaveBlobPage() still calls
+  // leaveReviewFocus() (disableGoLens() is shared, and it's a safe no-op
+  // when review focus was never entered) but — unlike leaving an MR page —
+  // never calls destroy(), since no controls widget was ever created here.
+  window.happyDOM.setURL('https://gitlab.example/group/project/-/blob/main/pkg/other.go');
+  await session.__test.reconcilePage();
+  assert.deepEqual(controls.calls, [['leaveReviewFocus']]);
+  controls.calls.length = 0;
+
+  // blob -> MR: leaves the blob page (no destroy()), then re-enters a
+  // (new) merge-request page the same way the original MR-only flow did.
+  window.happyDOM.setURL('https://gitlab.example/group/project/-/merge_requests/43/diffs');
+  await session.__test.reconcilePage();
+  assert.deepEqual(controls.calls, [
+    ['leaveReviewFocus'],
+    ['createControls'], ['setEnabled', true], ['refreshPreloadStatus'],
+  ]);
+
+  session.stop();
 });

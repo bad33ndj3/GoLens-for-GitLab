@@ -586,3 +586,133 @@ test('throttles hover hit-tests to at most one per animation frame during a poin
   assert.equal(hitTests, 1, 'a burst of pointer events over one frame produces exactly one hit-test');
   handle.setEnabled(false);
 });
+
+// CODE_CELL_SELECTOR's trailing `code.gl-absolute div.line` clause: blob
+// pages' occurrence highlighting (occurrenceRanges(), driven purely off
+// CODE_CELL_SELECTOR + legacy.diffFileRoots(), independent of
+// legacy.codeCellFor) needs to find blob-dom.js's real, highlighted
+// `div.line#LC{n}` cells under `code.gl-absolute` the same way it already
+// finds diff-view `td.line_content`-shaped cells. Reuses the same
+// occurrence-cycling assertion shape as the diff-view test above.
+test('CODE_CELL_SELECTOR matches blob-view `code.gl-absolute div.line` cells for occurrence highlighting', () => {
+  const window = buildFixture(`
+    <div class="blob-content" data-path="pkg/run.go">
+      <pre class="code highlight">
+        <code class="gl-absolute">
+          <div class="line" id="LC1">Run Runner Run</div>
+          <div class="line" id="LC2"><span>Run</span>()</div>
+        </code>
+      </pre>
+    </div>`);
+  const legacy = fakeLegacy({
+    diffFileRoots: () => [...window.document.querySelectorAll('.blob-content')],
+    codeCellFor: (node) => node?.closest?.('div.line') || null,
+    fileContextFor: (cell) => (cell?.closest?.('div.line')
+      ? { path: 'pkg/run.go', oldPath: 'pkg/run.go', newPath: 'pkg/run.go', packagePath: 'pkg' }
+      : null),
+    lineContextFor: (cell) => {
+      const match = /^LC(\d+)$/.exec(cell?.closest?.('div.line')?.id || '');
+      return match ? { line: Number(match[1]), side: 'new' } : null;
+    },
+  });
+  const handle = mount({ legacy });
+  handle.setEnabled(true);
+
+  const span = window.document.querySelector('#LC2 span');
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: span });
+  Object.defineProperty(click, 'button', { value: 0 });
+  window.document.dispatchEvent(click);
+
+  // Same invariant as the diff-view occurrence test: three boundary-correct
+  // "Run" occurrences across the two `div.line` cells ("Runner" excluded as
+  // a substring match) — only found at all because CODE_CELL_SELECTOR now
+  // matches these blob-view cells too.
+  assert.equal(handle.navigationAction('nextOccurrence'), true);
+  assert.deepEqual(legacy.calls.toast, ['Run · 1 of 3']);
+  assert.deepEqual(handle.selectedOccurrenceSourceLocation(), { path: 'pkg/run.go', line: 1, character: 1, side: 'new' });
+
+  handle.setEnabled(false);
+});
+
+// caretAtPoint()'s legacy.caretCellFor?.() fallback: on blob pages, the
+// caret-hit node returned by caretPositionFromPoint/caretRangeFromPoint
+// lands in the transparent hit-test overlay — a sibling DOM subtree from
+// `cell`, the highlighted `div.line` legacy.codeCellFor resolved — so
+// `cell.contains(node)` always fails there. legacy.caretCellFor(node,
+// offset, cell) (blob-dom.js's caretCellFor, wired only for blob pages)
+// remaps the hit back into `cell`'s own text; this exercises that fallback
+// with a fake legacy standing in for blob-dom.js's real implementation.
+test('caretAtPoint(): a caret hit outside `cell` is remapped through legacy.caretCellFor before giving up', () => {
+  const window = buildFixture(`
+    <section class="diff-file" data-file-path="pkg/run.go">
+      <div class="overlay-line">Target</div>
+      <div class="cell-line" data-testid="rd-diff-line-content" data-line="1">Target</div>
+    </section>`);
+  const cell = window.document.querySelector('.cell-line');
+  const overlayTextNode = window.document.querySelector('.overlay-line').firstChild;
+  const cellTextNode = cell.firstChild;
+  window.document.caretPositionFromPoint = () => ({ offsetNode: overlayTextNode, offset: 3 });
+  const legacy = fakeLegacy({
+    diffFileRoots: () => [...window.document.querySelectorAll('.diff-file')],
+    codeCellFor: (node) => node?.closest?.('.cell-line') || null,
+    fileContextFor: (c) => (c?.closest?.('.cell-line')
+      ? { path: 'pkg/run.go', oldPath: 'pkg/run.go', newPath: 'pkg/run.go', packagePath: 'pkg' }
+      : null),
+    lineContextFor: (c) => ({ line: Number(c.closest?.('.cell-line')?.dataset.line || 0), side: 'new' }),
+    caretCellFor: (node, offset, targetCell) => (node === overlayTextNode && targetCell === cell
+      ? { node: cellTextNode, offset }
+      : null),
+  });
+  const handle = mount({ legacy });
+  handle.setEnabled(true);
+
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: cell });
+  Object.defineProperty(click, 'button', { value: 0 });
+  Object.defineProperty(click, 'clientX', { value: 5 });
+  Object.defineProperty(click, 'clientY', { value: 5 });
+  window.document.dispatchEvent(click);
+
+  // A plain click without a modifier key runs targetAtEvent() -> selectSymbol(),
+  // which records the *click-selected* symbol (selectedOccurrenceSourceLocation()),
+  // not the hovered one (selectedSymbolLocation()).
+  assert.deepEqual(handle.selectedOccurrenceSourceLocation(), { path: 'pkg/run.go', line: 1, character: 1, side: 'new' }, 'the caret hit on the overlay text node, remapped via legacy.caretCellFor, still resolves the "Target" identifier');
+  handle.setEnabled(false);
+});
+
+// Without legacy.caretCellFor (the diff-view/MR case — fakeLegacy's default
+// has no caretCellFor key), a caret hit outside `cell` behaves exactly as
+// before this change: caretAtPoint() gives up and returns null, so
+// targetAtEvent() falls back to identifierFromElement() only (no crash from
+// calling a missing legacy.caretCellFor).
+test('caretAtPoint(): without legacy.caretCellFor, a caret hit outside `cell` still just returns null (unchanged behavior)', () => {
+  const window = buildFixture(`
+    <section class="diff-file" data-file-path="pkg/run.go">
+      <div class="overlay-line">Target</div>
+      <div class="cell-line" data-testid="rd-diff-line-content" data-line="1">Target</div>
+    </section>`);
+  const cell = window.document.querySelector('.cell-line');
+  const overlayTextNode = window.document.querySelector('.overlay-line').firstChild;
+  window.document.caretPositionFromPoint = () => ({ offsetNode: overlayTextNode, offset: 3 });
+  const legacy = fakeLegacy({
+    diffFileRoots: () => [...window.document.querySelectorAll('.diff-file')],
+    codeCellFor: (node) => node?.closest?.('.cell-line') || null,
+    fileContextFor: (c) => (c?.closest?.('.cell-line')
+      ? { path: 'pkg/run.go', oldPath: 'pkg/run.go', newPath: 'pkg/run.go', packagePath: 'pkg' }
+      : null),
+    lineContextFor: (c) => ({ line: Number(c.closest?.('.cell-line')?.dataset.line || 0), side: 'new' }),
+  });
+  const handle = mount({ legacy });
+  handle.setEnabled(true);
+
+  const click = new window.Event('click', { bubbles: true });
+  Object.defineProperty(click, 'target', { value: cell });
+  Object.defineProperty(click, 'button', { value: 0 });
+  Object.defineProperty(click, 'clientX', { value: 5 });
+  Object.defineProperty(click, 'clientY', { value: 5 });
+  window.document.dispatchEvent(click);
+
+  assert.equal(handle.selectedOccurrenceSourceLocation(), null, 'no legacy.caretCellFor means the out-of-cell caret hit resolves nothing, identical to pre-change behavior');
+  handle.setEnabled(false);
+});

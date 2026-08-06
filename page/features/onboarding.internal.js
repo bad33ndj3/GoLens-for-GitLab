@@ -319,7 +319,7 @@ export function tourDialogMarkup({ mascotUrl, brandIconUrl }) {
             <section class="tour-panel" id="golens-tour-go" role="tabpanel" aria-labelledby="golens-tour-tab-go" tabindex="0" hidden>
               <p class="chapter-label">Browser-native Go navigation</p>
               <h2>Inspect and follow symbols</h2>
-              <p class="chapter-intro">Commit-pinned browser indexing provides safe navigation without speculative results.</p>
+              <p class="chapter-intro">Commit-pinned browser indexing provides safe navigation without speculative results, in merge request diffs and single-file blob views alike.</p>
               <ul class="feature-list">
                 <li class="feature">${onboardingFeatureIcon('hover')}<div><strong>Hover for Go insight</strong><p>See kind, signature, documentation, location, and usages for definitions. Type references show their complete struct or interface body, with a progressive reveal for long declarations.</p></div></li>
                 <li class="feature">${onboardingFeatureIcon('navigate')}<div><strong>Navigate by click or shortcut</strong><p><kbd>Cmd</kbd>/<kbd>Ctrl</kbd>-click or <kbd>Cmd/Ctrl F12</kbd> resolves definitions, usages, and implementations.</p></div></li>
