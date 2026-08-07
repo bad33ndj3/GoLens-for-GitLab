@@ -1222,6 +1222,10 @@ export function mount(ctx = {}) {
       doc.body.dataset.dbgTimerFired = (doc.body.dataset.dbgTimerFired || '') + '1';
       try {
         if (activeTarget?.key !== key) { doc.body.dataset.dbgTimerStale = (doc.body.dataset.dbgTimerStale || '') + '1'; return; }
+        {
+          const fresh = targetAtEvent(point);
+          doc.body.dataset.dbgFresh = (doc.body.dataset.dbgFresh || '') + `${target.cell?.isConnected ? 'c' : '-'}${fresh ? 'f' : '-'}${fresh && targetKey(fresh) === key ? 'k' : '-'}|`;
+        }
         doc.body.dataset.dbgShowLoading = (doc.body.dataset.dbgShowLoading || '') + '1';
         showLoading(`Looking up ${target.identifier}…`, target);
         const result = await resolveAt(target, 'resolveHover', (message, progress) => {
