@@ -49,6 +49,17 @@ test('rejects caret hits that snap from punctuation to an adjacent identifier', 
   assert.equal(caretElementMatchesIdentifier(cell, cell, 'model'), true);
 });
 
+test('accepts a caret hit whose span groups several tokens, as GitLab does for a method receiver', () => {
+  const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
+  window.document.body.innerHTML = '<code><span class="hljs-params">(t *runAtTimerTask)</span></code>';
+  const cell = window.document.querySelector('code');
+  const span = cell.querySelector('.hljs-params');
+  assert.equal(caretElementMatchesIdentifier(span, cell, 'runAtTimerTask'), true);
+  assert.equal(caretElementMatchesIdentifier(span, cell, 't'), true);
+  // Not a whole-word match: "Timer" is only a substring of "runAtTimerTask".
+  assert.equal(caretElementMatchesIdentifier(span, cell, 'Timer'), false);
+});
+
 test('does not resolve Go-looking text inside non-code tokens', () => {
   const source = 'target(*service, 42, "stringValue") // commentValue';
   assert.equal(identifierAtCharacter(source, source.indexOf('*')), null);
