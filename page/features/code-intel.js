@@ -928,6 +928,7 @@ export function mount(ctx = {}) {
     const file = legacy.fileContextFor(target.cell);
     const line = legacy.lineContextFor(target.cell);
     const context = legacy.projectContext();
+    doc.body.dataset.dbgResolveAt = (doc.body.dataset.dbgResolveAt || '') + `${file ? 'f' : '-'}${line ? 'l' : '-'}${context ? 'c' : '-'}|`;
     if (!file || !line || !context) return { status: 'unsupported', reason: 'diffContextUnavailable' };
     const refs = await legacy.mergeRequestRefsForFile(file);
     const sourcePath = line.side === 'old' ? file.oldPath : file.newPath;
@@ -1216,13 +1217,17 @@ export function mount(ctx = {}) {
     hidePopover();
     activeTarget = { key, ...target };
     markTarget(target.element);
+    doc.body.dataset.dbgSched = (doc.body.dataset.dbgSched || '') + '1';
     hoverTimer = setTimeout(async () => {
+      doc.body.dataset.dbgTimerFired = (doc.body.dataset.dbgTimerFired || '') + '1';
       try {
-        if (activeTarget?.key !== key) return;
+        if (activeTarget?.key !== key) { doc.body.dataset.dbgTimerStale = (doc.body.dataset.dbgTimerStale || '') + '1'; return; }
+        doc.body.dataset.dbgShowLoading = (doc.body.dataset.dbgShowLoading || '') + '1';
         showLoading(`Looking up ${target.identifier}…`, target);
         const result = await resolveAt(target, 'resolveHover', (message, progress) => {
           if (activeTarget?.key === key) showLoading(message, target, progress);
         });
+        doc.body.dataset.dbgResolved = (doc.body.dataset.dbgResolved || '') + '1';
         let displayResult = result;
         if (shouldShowReferencesOnHover(result)) {
           showLoading(`Finding usages of ${target.identifier}…`, target, null, { usages: true });
@@ -1230,6 +1235,7 @@ export function mount(ctx = {}) {
         }
         if (activeTarget?.key === key) showResult(displayResult, target);
       } catch (error) {
+        doc.body.dataset.dbgErr = (doc.body.dataset.dbgErr || '') + (error?.message || String(error)).slice(0, 40) + '|';
         if (activeTarget?.key === key) hidePopover();
         const message = error.message || 'Go intelligence is unavailable.';
         if (lastErrorToast !== message) {
