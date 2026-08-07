@@ -1171,8 +1171,11 @@ export function mount(ctx = {}) {
 
   function targetAtEvent(event) {
     const cell = legacy.codeCellFor(event.target, event.clientX, event.clientY);
+    doc.body.dataset.dbgCell = (doc.body.dataset.dbgCell || '') + (cell ? '1' : '0');
     if (!cell || !legacy.fileContextFor(cell)) return null;
+    doc.body.dataset.dbgCtx = (doc.body.dataset.dbgCtx || '') + '1';
     const caret = caretAtPoint(cell, event.clientX, event.clientY) || identifierFromElement(event.target, cell);
+    doc.body.dataset.dbgCaret = (doc.body.dataset.dbgCaret || '') + (caret ? '1' : '0');
     return caret ? { ...caret, cell, x: event.clientX, y: event.clientY } : null;
   }
 
@@ -1193,7 +1196,9 @@ export function mount(ctx = {}) {
   }
 
   const handleMouseMovePoint = throttleToFrame((point) => {
+    doc.body.dataset.dbgHmmp = (doc.body.dataset.dbgHmmp || '') + '1';
     if (!enabled) return;
+    doc.body.dataset.dbgHmmpEnabled = (doc.body.dataset.dbgHmmpEnabled || '') + '1';
     const target = targetAtEvent(point);
     const key = targetKey(target);
     if (key === activeTarget?.key) {
@@ -1236,12 +1241,14 @@ export function mount(ctx = {}) {
   });
 
   function onMouseMove(event) {
+    doc.body.dataset.dbgOmm = (doc.body.dataset.dbgOmm || '') + '1';
     if (!enabled) return;
+    doc.body.dataset.dbgOmmEnabled = (doc.body.dataset.dbgOmmEnabled || '') + '1';
     if (ui && event.composedPath().includes(ui)) {
       if (popoverMode !== 'searching') pinPopover();
       return;
     }
-    if (pinnedPopover) return;
+    if (pinnedPopover) { doc.body.dataset.dbgOmmPinned = (doc.body.dataset.dbgOmmPinned || '') + '1'; return; }
     handleMouseMovePoint({ target: event.target, clientX: event.clientX, clientY: event.clientY });
   }
 
@@ -1475,7 +1482,8 @@ export function mount(ctx = {}) {
 
   function setEnabled(next) {
     const value = Boolean(next);
-    if (value === enabled) return;
+    doc.body.dataset.dbgSetEnabled = (doc.body.dataset.dbgSetEnabled || '') + (value ? '1' : '0');
+    if (value === enabled) { doc.body.dataset.dbgSetEnabledNoop = (doc.body.dataset.dbgSetEnabledNoop || '') + (value ? '1' : '0'); return; }
     enabled = value;
     if (!legacy) return;
     if (enabled) {
