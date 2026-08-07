@@ -294,17 +294,19 @@ export function createMrSession({
     getControlsHandle()?.destroy();
   }
 
-  // leaveBlobPage(): blob pages never call getControlsHandle()?.createControls()
-  // (no controls widget exists for blob pages per this plan), so there is
-  // nothing for destroy()/leaveReviewFocus() to undo beyond deactivate()
-  // itself. disableGoLens() still safely calls leaveReviewFocus() (a no-op
-  // when review focus was never entered), so it's reused as-is.
+  // leaveBlobPage(): blob pages now create a controls widget too (see
+  // reconcilePage()'s isBlobView() branch), so — same as
+  // leaveMergeRequestPage() — it must be destroyed here. Without this, a
+  // stale connected #gitlab-lens-root would linger, and createControls()'s
+  // `if (host && (host.isConnected || !controlsMounted)) return;` guard
+  // would refuse to recreate it on the next page.
   async function leaveBlobPage() {
     if (!pageState.active) return;
     pageState.active = false;
     pageState.key = '';
     pageState.kind = null;
     await disableGoLens();
+    getControlsHandle()?.destroy();
   }
 
   // Tears down whichever page-kind is currently reconciled, dispatching on
@@ -328,13 +330,30 @@ export function createMrSession({
         pageState.active = true;
         pageState.key = pageKey;
         pageState.kind = 'blob';
-        // Blob pages always follow the global `enabled` setting directly
-        // (no per-page controls toggle/widget exists for them).
+        getControlsHandle()?.createControls();
+        // Blob pages always follow the global `enabled` setting directly.
+        // activate()/deactivate() stay the source of truth for code-intel
+        // (kept as a direct call, not routed solely through
+        // controlsHandle.setEnabled(), since blob activation must still work
+        // with no controls handle at all — see the tests that exercise
+        // activate()/deactivate() standalone). getControlsHandle()?.setEnabled()
+        // is called alongside it purely to drive the toolbar's own render
+        // (aria-pressed, disabled state) and its legacy.init()/teardown()
+        // wiring for the enable-toggle button's own click handler; both
+        // paths reach the same activate()/deactivate() and are idempotent.
+        // Deliberately NOT calling getBookmarksHandle()?.enable() — no
+        // bookmarks UI/concept on blob pages — and NOT calling
+        // refreshPreloadStatus(): there's no MR-relative cache to check from
+        // a blob page (see main.js's isBlob gating of
+        // legacy.mergeRequestPreloadStatus, which would otherwise throw).
         const settings = getSettings();
         const enabled = settings ? Boolean(settings.get('enabled')) : true;
         if (enabled) activate();
         else deactivate();
+        await getControlsHandle()?.setEnabled(enabled);
+        return;
       }
+      getControlsHandle()?.createControls();
       return;
     }
     if (!isMergeRequest(win)) {

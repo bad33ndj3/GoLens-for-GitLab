@@ -197,18 +197,21 @@ test('activate() on a blob-view URL enables code-intel only (no bookmarks UI/con
   assert.deepEqual(bookmarks.calls, [['disable']]);
 });
 
-test('reconcilePage(): entering a blob-view page activates code-intel directly, without ever touching controls', async () => {
+test('reconcilePage(): entering a blob-view page creates the controls widget and enables it, but never touches refreshPreloadStatus (no MR to check a cache against)', async () => {
   buildFixture('https://gitlab.example/group/project/-/blob/main/pkg/cache.go');
   const controls = fakeControls();
   const codeIntel = fakeCodeIntel();
+  const bookmarks = fakeBookmarks();
   const session = createMrSession({
     getSettings: () => fakeSettingsStore(true),
     getControlsHandle: () => controls,
     getCodeIntelHandle: () => codeIntel,
+    getBookmarksHandle: () => bookmarks,
   });
   await session.__test.reconcilePage();
-  assert.deepEqual(controls.calls, [], 'blob pages never create a controls widget');
+  assert.deepEqual(controls.calls, [['createControls'], ['setEnabled', true]], 'blob pages create/enable the toolbar, same as MR pages, minus refreshPreloadStatus');
   assert.deepEqual(codeIntel.calls, [['setEnabled', true]]);
+  assert.deepEqual(bookmarks.calls, [], 'blob pages still never enable bookmarks');
   assert.equal(session.isActive(), true);
   session.stop();
 });
@@ -226,7 +229,7 @@ test('reconcilePage(): entering a blob-view page while the global setting is dis
   session.stop();
 });
 
-test('reconcilePage(): navigating between page kinds tears down the previous kind before activating the new one, and only an MR-page teardown ever calls controls.destroy()', async () => {
+test('reconcilePage(): navigating between page kinds tears down the previous kind (both now via controls.destroy()) before activating the new one', async () => {
   const window = buildFixture('https://gitlab.example/group/project/-/merge_requests/42/diffs');
   const controls = fakeControls();
   const session = createMrSession({
@@ -237,29 +240,36 @@ test('reconcilePage(): navigating between page kinds tears down the previous kin
   assert.deepEqual(controls.calls, [['createControls'], ['setEnabled', true], ['refreshPreloadStatus']]);
   controls.calls.length = 0;
 
-  // MR -> blob: leaves the merge-request page (destroy() included) before
-  // the blob branch activates; the blob branch itself never touches controls.
+  // MR -> blob: leaves the merge-request page (destroy() included), then
+  // the blob branch creates/enables its own toolbar — no refreshPreloadStatus,
+  // since there's no MR-relative cache to check from a blob page.
   window.happyDOM.setURL('https://gitlab.example/group/project/-/blob/main/pkg/cache.go');
   await session.__test.reconcilePage();
-  assert.deepEqual(controls.calls, [['leaveReviewFocus'], ['destroy']]);
+  assert.deepEqual(controls.calls, [
+    ['leaveReviewFocus'], ['destroy'],
+    ['createControls'], ['setEnabled', true],
+  ]);
   controls.calls.length = 0;
 
   // blob -> blob (a different file): re-triggers activation via
-  // blobPageKey's pathname comparison. leaveBlobPage() still calls
-  // leaveReviewFocus() (disableGoLens() is shared, and it's a safe no-op
-  // when review focus was never entered) but — unlike leaving an MR page —
-  // never calls destroy(), since no controls widget was ever created here.
+  // blobPageKey's pathname comparison. leaveBlobPage() now calls destroy()
+  // too (blob pages create a real controls widget, so it must be torn down
+  // the same way leaveMergeRequestPage() does, or createControls()'s
+  // already-connected-host guard would refuse to recreate it below).
   window.happyDOM.setURL('https://gitlab.example/group/project/-/blob/main/pkg/other.go');
   await session.__test.reconcilePage();
-  assert.deepEqual(controls.calls, [['leaveReviewFocus']]);
+  assert.deepEqual(controls.calls, [
+    ['leaveReviewFocus'], ['destroy'],
+    ['createControls'], ['setEnabled', true],
+  ]);
   controls.calls.length = 0;
 
-  // blob -> MR: leaves the blob page (no destroy()), then re-enters a
+  // blob -> MR: leaves the blob page (destroy() included), then re-enters a
   // (new) merge-request page the same way the original MR-only flow did.
   window.happyDOM.setURL('https://gitlab.example/group/project/-/merge_requests/43/diffs');
   await session.__test.reconcilePage();
   assert.deepEqual(controls.calls, [
-    ['leaveReviewFocus'],
+    ['leaveReviewFocus'], ['destroy'],
     ['createControls'], ['setEnabled', true], ['refreshPreloadStatus'],
   ]);
 

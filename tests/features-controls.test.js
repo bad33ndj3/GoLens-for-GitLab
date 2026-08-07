@@ -288,3 +288,77 @@ test('unmount() only ever touches this instance\'s own host, never a same-id hos
   real.unmount();
   assert.equal(window.document.getElementById('gitlab-lens-root'), null);
 });
+
+// --- kind: 'blob' (standalone /-/blob/<ref>/<path> pages) ------------------
+// Same toolbar shell as an MR page, minus bookmarks/diff-view-toggle: both
+// are MR-only concepts (a bookmark anchors to an MR diff line; there is no
+// diff to switch orientation on). The enable toggle, focus, and preload
+// buttons stay.
+
+test('createControls({kind: "blob"}) renders the toggle/focus/preload buttons but omits bookmark-toggle and diff-view-toggle entirely', () => {
+  const window = buildFixture('https://gitlab.example/group/project/-/blob/main/service/runner.go');
+  window.document.body.innerHTML = '<div class="ai-panels"><div><nav><div><button>anchor</button></div></nav></div></div>';
+  const handle = mount({ settings: fakeSettingsStore(), clock: fakeClock(), legacy: {}, kind: 'blob' });
+  handle.createControls();
+  const shadow = window.document.getElementById('gitlab-lens-root').shadowRoot;
+  assert.ok(shadow.querySelector('[data-action="toggle-enabled"]'), 'enable toggle renders on blob pages');
+  assert.ok(shadow.querySelector('[data-action="focus"]'), 'review-focus button renders on blob pages');
+  assert.ok(shadow.querySelector('[data-action="preload"]'), 'preload button renders on blob pages');
+  assert.equal(shadow.querySelector('[data-action="bookmarks"]'), null, 'bookmark-toggle is not rendered at all on blob pages');
+  assert.equal(shadow.querySelector('[data-action="diff-view-toggle"]'), null, 'diff-view-toggle is not rendered at all on blob pages');
+  handle.unmount();
+});
+
+test('kind: "blob" — wireControls() does not throw despite the missing bookmark/diff-view buttons, and setEnabled(true) still reaches legacy.init()', async () => {
+  const window = buildFixture('https://gitlab.example/group/project/-/blob/main/service/runner.go');
+  window.document.body.innerHTML = '<div class="ai-panels"><div><nav><div><button>anchor</button></div></nav></div></div>';
+  let initCalls = 0;
+  let torndown = 0;
+  const handle = mount({
+    settings: fakeSettingsStore(),
+    clock: fakeClock(),
+    legacy: { init: () => { initCalls++; }, teardown: () => { torndown++; } },
+    kind: 'blob',
+  });
+  assert.doesNotThrow(() => handle.createControls());
+  await handle.setEnabled(true);
+  const shadow = window.document.getElementById('gitlab-lens-root').shadowRoot;
+  assert.equal(shadow.querySelector('[data-action="toggle-enabled"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(shadow.querySelector('[data-action="focus"]').disabled, false);
+  assert.equal(shadow.querySelector('[data-action="preload"]').disabled, false);
+  // The crux of the setEnabled() fix: isMergeRequestPath() is false on a
+  // blob URL, so without isBlobKind in that gate this would call
+  // legacy.teardown() instead of legacy.init() and silently deactivate
+  // code-intel every time the enable toggle is clicked on a blob page.
+  assert.equal(initCalls, 1, 'setEnabled(true) reaches legacy.init() on a blob page, not legacy.teardown()');
+  assert.equal(torndown, 0);
+
+  await handle.setEnabled(false);
+  assert.equal(torndown, 1);
+  handle.unmount();
+});
+
+test('kind: "blob" — legacy.bookmarks() subscription is never set up (no bookmarks concept on blob pages)', async () => {
+  const window = buildFixture('https://gitlab.example/group/project/-/blob/main/service/runner.go');
+  window.document.body.innerHTML = '<div class="ai-panels"><div><nav><div><button>anchor</button></div></nav></div></div>';
+  let subscribeCalls = 0;
+  const bookmarks = { snapshot: () => ({ scope: null, current: [], stale: [] }), subscribe: () => { subscribeCalls++; return () => {}; } };
+  const handle = mount({ settings: fakeSettingsStore(), clock: fakeClock(), legacy: { bookmarks: () => bookmarks }, kind: 'blob' });
+  handle.createControls();
+  await handle.setEnabled(true);
+  handle.render();
+  assert.equal(subscribeCalls, 0, 'blob pages never subscribe to bookmarks, even though legacy.bookmarks() is wired');
+  handle.unmount();
+});
+
+test('default kind (no ctx.kind, e.g. every existing MR-page test above) still renders the full five-button toolbar — regression guard for the isBlobKind branch', () => {
+  const window = buildFixture();
+  window.document.body.innerHTML = '<div class="ai-panels"><div><nav><div><button>anchor</button></div></nav></div></div>';
+  const handle = mount({ settings: fakeSettingsStore(), clock: fakeClock(), legacy: {} });
+  handle.createControls();
+  const shadow = window.document.getElementById('gitlab-lens-root').shadowRoot;
+  for (const action of ['toggle-enabled', 'focus', 'preload', 'bookmarks', 'diff-view-toggle']) {
+    assert.ok(shadow.querySelector(`[data-action="${action}"]`), `${action} renders when ctx.kind is unset (defaults to 'mr')`);
+  }
+  handle.unmount();
+});

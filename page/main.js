@@ -272,9 +272,25 @@ export function mount(ctx = {}) {
         name: 'controls',
         mount: trackHandle((handle) => { controlsHandle = handle; }, mountControls),
         capabilities: {
+          // 'blob' | 'mr' — read by controls.js's mount(ctx) to decide which
+          // buttons the toolbar renders (see isBlobKind there). Blob pages
+          // (standalone /-/blob/<ref>/<path> views) get the toolbar too, but
+          // without bookmarks/diff-view-toggle, both of which are MR-only
+          // concepts.
+          kind: isBlob ? 'blob' : 'mr',
           legacy: {
-            preloadMergeRequest: (progress = () => {}) => mrPreloadHandle.preloadMergeRequest({ progress }),
-            mergeRequestPreloadStatus: () => mrPreloadHandle.preloadStatus(),
+            // MR-head-relative preload has no meaning on a blob page — there
+            // is no MR to resolve a head SHA against, and
+            // mrPreloadHandle.preloadStatus()/preloadMergeRequest() throw via
+            // gitlab-api.js's mergeRequestHeadRef() when called there. Leaving
+            // these undefined on blob pages lets controls.js's own guards
+            // (`if (!preloadFn) return;` / `if (!statusFn) return;`) no-op the
+            // preload button instead of surfacing an error — including from
+            // its own unconditional focus/visibilitychange listeners.
+            ...(isBlob ? {} : {
+              preloadMergeRequest: (progress = () => {}) => mrPreloadHandle.preloadMergeRequest({ progress }),
+              mergeRequestPreloadStatus: () => mrPreloadHandle.preloadStatus(),
+            }),
             preloadFullProject: (progress = () => {}, requestedRef = '') => mrPreloadHandle.preloadFullProject({ progress, ref: requestedRef }),
             fullProjectPreloadStatus: () => mrPreloadHandle.fullProjectStatus(),
             invalidateCacheState: () => mrPreloadHandle.invalidateCache(),
