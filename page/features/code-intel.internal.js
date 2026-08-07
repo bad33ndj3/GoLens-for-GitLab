@@ -103,13 +103,18 @@ export function identifierAtCharacter(source, character) {
 
 // caretElementMatchesIdentifier(element, cell, identifier) -> whether a
 // caret hit-test's DOM element is either the code cell itself (a bare-text
-// hit) or an element whose own trimmed text is exactly the identifier — the
-// guard that rejects a caret snapping from punctuation onto an adjacent
-// identifier span. Byte-identical to go-navigation.js's former
-// caretElementMatchesIdentifier(). Total.
+// hit), an element whose own trimmed text is exactly the identifier, or an
+// element whose text contains the identifier as a whole word (GitLab's
+// highlighter sometimes groups several tokens into one span, e.g.
+// `hljs-params` wrapping an entire `(t *runAtTimerTask)` receiver, or a
+// trailing span holding a method name plus its parens) — the guard that
+// rejects a caret snapping from punctuation onto an adjacent identifier span.
 export function caretElementMatchesIdentifier(element, cell, identifier) {
   if (!element || element === cell) return element === cell;
-  return (element.textContent || '').trim() === identifier;
+  const text = (element.textContent || '').trim();
+  if (text === identifier) return true;
+  const boundary = new RegExp(`(?:^|[^\\p{L}\\p{N}_])${identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^\\p{L}\\p{N}_])`, 'u');
+  return boundary.test(text);
 }
 
 // isWholeIdentifier(text) -> whether `text` is, in its entirety, a single

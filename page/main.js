@@ -19,6 +19,7 @@ import { createClock } from './platform/clock.js';
 import { createSettingsStore } from './platform/settings-store.js';
 import { createOverlayRegistry } from './platform/overlay-registry.js';
 import * as diffDom from './platform/diff-dom.js';
+import * as blobDom from './platform/blob-dom.js';
 import * as gitlabApiPure from './platform/gitlab-api.js';
 import { projectLoadingProgress } from './platform/source-loader.js';
 import { start as startLifecycle } from './lifecycle/index.js';
@@ -41,6 +42,13 @@ export function mount(ctx = {}) {
   const settings = ctx.settings || createSettingsStore();
   const overlays = ctx.overlays || createOverlayRegistry();
   const root = document.documentElement;
+
+  // Page-kind detection, once per mount: mr-session.js's remount-per-SPA-
+  // navigation guarantee (page/main.js's module graph remounts on every
+  // page transition) means this only needs to be correct once per mount,
+  // unlike mr-session.js's own isBlobView(win) which re-checks live on every
+  // reconcile pass.
+  const isBlob = /\/-\/blob\//.test(location.pathname);
 
   // Test/observability hook only — no user-visible behavior. Proves the
   // module graph loaded and mounted (and, via the mount count set by the
@@ -218,18 +226,34 @@ export function mount(ctx = {}) {
         mount: trackHandle((handle) => { codeIntelHandle = handle; }, mountCodeIntel),
         capabilities: {
           legacy: {
-            fileContextFor: diffDom.fileContextFor,
-            lineContextFor: diffDom.lineContextFor,
-            codeCellFor: diffDom.codeCellFor,
-            diffFileRoots: diffDom.diffFileRoots,
+            fileContextFor: isBlob ? blobDom.fileContextFor : diffDom.fileContextFor,
+            lineContextFor: isBlob ? blobDom.lineContextFor : diffDom.lineContextFor,
+            codeCellFor: isBlob ? blobDom.codeCellFor : diffDom.codeCellFor,
+            // caretCellFor: blob-only (no diff-dom equivalent); left absent
+            // for the MR/diff case — code-intel.js's caretAtPoint() treats
+            // this as optional, calling it as `legacy.caretCellFor?.(...)`.
+            ...(isBlob ? { caretCellFor: (...args) => blobDom.caretCellFor(...args) } : {}),
+            diffFileRoots: isBlob ? blobDom.diffFileRoots : diffDom.diffFileRoots,
             projectContext: gitlabApiPure.projectContext,
             documentationURL: gitlabApiPure.documentationURL,
             projectPackageURL: gitlabApiPure.projectPackageURL,
-            visibleDiffRootForDefinition: (...args) => diffDom.visibleDiffRootForDefinition(...args),
-            navigateToLocation: (...args) => diffDom.navigateToLocation(...args),
+            visibleDiffRootForDefinition: isBlob
+              ? (...args) => blobDom.visibleDiffRootForDefinition(...args)
+              : (...args) => diffDom.visibleDiffRootForDefinition(...args),
+            navigateToLocation: isBlob
+              ? (...args) => blobDom.navigateToLocation(...args)
+              : (...args) => diffDom.navigateToLocation(...args),
             loadPackage: (...args) => session.sourceLoader.loadPackage(...args),
             preloadMergeRequest: (progress = () => {}) => mrPreloadHandle.preloadMergeRequest({ progress }),
-            mergeRequestRefsForFile: (...args) => session.gitlabApi.mergeRequestRefsForFile(...args),
+            // Blob pages resolve refs through the REST-based blobFileRef(file)
+            // (branch/tag/SHA -> full commit SHA) rather than the MR-only
+            // GraphQL mergeRequestRefsForFile path — wired under the same
+            // `legacy.mergeRequestRefsForFile` key since code-intel.js's
+            // resolveAt/findReferences/findImplementations call it generically
+            // and don't need to know which implementation backs it.
+            mergeRequestRefsForFile: isBlob
+              ? (...args) => session.gitlabApi.blobFileRef(...args)
+              : (...args) => session.gitlabApi.mergeRequestRefsForFile(...args),
             mergeRequestIID: gitlabApiPure.mergeRequestIID,
             sourceRefFor: gitlabApiPure.sourceRefFor,
             dirname: gitlabApiPure.dirname,
@@ -248,9 +272,25 @@ export function mount(ctx = {}) {
         name: 'controls',
         mount: trackHandle((handle) => { controlsHandle = handle; }, mountControls),
         capabilities: {
+          // 'blob' | 'mr' — read by controls.js's mount(ctx) to decide which
+          // buttons the toolbar renders (see isBlobKind there). Blob pages
+          // (standalone /-/blob/<ref>/<path> views) get the toolbar too, but
+          // without bookmarks/diff-view-toggle, both of which are MR-only
+          // concepts.
+          kind: isBlob ? 'blob' : 'mr',
           legacy: {
-            preloadMergeRequest: (progress = () => {}) => mrPreloadHandle.preloadMergeRequest({ progress }),
-            mergeRequestPreloadStatus: () => mrPreloadHandle.preloadStatus(),
+            // MR-head-relative preload has no meaning on a blob page — there
+            // is no MR to resolve a head SHA against, and
+            // mrPreloadHandle.preloadStatus()/preloadMergeRequest() throw via
+            // gitlab-api.js's mergeRequestHeadRef() when called there. Leaving
+            // these undefined on blob pages lets controls.js's own guards
+            // (`if (!preloadFn) return;` / `if (!statusFn) return;`) no-op the
+            // preload button instead of surfacing an error — including from
+            // its own unconditional focus/visibilitychange listeners.
+            ...(isBlob ? {} : {
+              preloadMergeRequest: (progress = () => {}) => mrPreloadHandle.preloadMergeRequest({ progress }),
+              mergeRequestPreloadStatus: () => mrPreloadHandle.preloadStatus(),
+            }),
             preloadFullProject: (progress = () => {}, requestedRef = '') => mrPreloadHandle.preloadFullProject({ progress, ref: requestedRef }),
             fullProjectPreloadStatus: () => mrPreloadHandle.fullProjectStatus(),
             invalidateCacheState: () => mrPreloadHandle.invalidateCache(),

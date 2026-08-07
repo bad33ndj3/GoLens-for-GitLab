@@ -60,6 +60,12 @@ export function mount(ctx) {
   const legacy = ctx.legacy || {};
   const doc = document;
   const win = window;
+  // Blob pages (standalone /-/blob/<ref>/<path> views) get the same toolbar
+  // shell as MR pages, minus the two controls that only make sense in an MR
+  // context: diff-view-toggle (there is no diff to switch orientation on)
+  // and bookmarks (no MR concept to anchor a bookmark's diff-line to). Every
+  // other button (enable toggle, review-focus, preload) stays.
+  const isBlobKind = ctx.kind === 'blob';
 
   let unmounted = false;
   let enabled = true;
@@ -216,6 +222,7 @@ export function mount(ctx) {
           </span>
           <svg class="preload-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>
         </button>
+        ${isBlobKind ? '' : `
         <button class="bookmark-toggle" data-action="bookmarks" title="Open MR bookmarks" aria-label="Open MR bookmarks" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h12v17l-6-4-6 4z"></path></svg>
           <span class="bookmark-count" aria-hidden="true" hidden></span>
@@ -224,18 +231,21 @@ export function mount(ctx) {
         <button class="diff-view-toggle" data-action="diff-view-toggle" title="Switch to side-by-side diff view" aria-label="Switch to side-by-side diff view" aria-pressed="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="7" height="15" rx="1"></rect><rect x="13.5" y="4.5" width="7" height="15" rx="1"></rect></svg>
         </button>
+        `}
       </div>
       `;
     mountControlsInAiPanels(controlsHost);
     wireControls(shadow);
-    ensureBookmarkSubscription();
-    renderBookmarkControl(shadow);
-    // Read fresh on every createControls() call (including the remount a
-    // successful toggle causes via bootstrap.js's location.href poll), not
-    // just from later renderControlState() calls — otherwise a freshly
-    // (re)mounted rail would show the static aria-pressed="false" baked
-    // into the template above regardless of GitLab's actual current view.
-    renderDiffViewControl(shadow);
+    if (!isBlobKind) {
+      ensureBookmarkSubscription();
+      renderBookmarkControl(shadow);
+      // Read fresh on every createControls() call (including the remount a
+      // successful toggle causes via bootstrap.js's location.href poll), not
+      // just from later renderControlState() calls — otherwise a freshly
+      // (re)mounted rail would show the static aria-pressed="false" baked
+      // into the template above regardless of GitLab's actual current view.
+      renderDiffViewControl(shadow);
+    }
   }
 
   function ensureBookmarkSubscription() {
@@ -430,8 +440,12 @@ export function mount(ctx) {
       renderControlState(shadow);
     });
     shadow.querySelector('[data-action="preload"]').addEventListener('click', preloadMergeRequest);
-    shadow.querySelector('[data-action="bookmarks"]').addEventListener('click', showBookmarkDrawer);
-    shadow.querySelector('[data-action="diff-view-toggle"]').addEventListener('click', () => toggleDiffView());
+    // Blob pages omit these two buttons from the template above entirely
+    // (see isBlobKind in mount()), so there is nothing to wire.
+    if (!isBlobKind) {
+      shadow.querySelector('[data-action="bookmarks"]').addEventListener('click', showBookmarkDrawer);
+      shadow.querySelector('[data-action="diff-view-toggle"]').addEventListener('click', () => toggleDiffView());
+    }
   }
 
   // --- diff view toggle (GitHub issue #5) ---------------------------------
@@ -600,8 +614,10 @@ export function mount(ctx) {
     focus.disabled = view.focusDisabled;
     focus.setAttribute('aria-pressed', view.focusAriaPressed);
     renderPreloadState(shadow, enabled);
-    renderBookmarkControl(shadow);
-    renderDiffViewControl(shadow);
+    if (!isBlobKind) {
+      renderBookmarkControl(shadow);
+      renderDiffViewControl(shadow);
+    }
   }
 
   function renderDiffViewControl(shadow) {
@@ -744,7 +760,13 @@ export function mount(ctx) {
       }
       renderControlState();
       const persisted = persist && settings ? settings.set('enabled', nextEnabled) : Promise.resolve();
-      if (nextEnabled && isMergeRequestPath(win.location.pathname)) {
+      // isBlobKind: blob pages have no MR path to match isMergeRequestPath,
+      // but the enable toggle is still live there (per createControls()
+      // above), so it must reach legacy.init()/teardown() too — otherwise
+      // clicking "on" on a blob page would fall through to the else branch
+      // below and tear down instead of activating. watchForRapidDiffs() is
+      // itself a no-op off an MR diff path, so it's safe to leave unguarded.
+      if (nextEnabled && (isBlobKind || isMergeRequestPath(win.location.pathname))) {
         watchForRapidDiffs();
         legacy.init?.();
       } else {

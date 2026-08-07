@@ -176,6 +176,7 @@ export function createGitLabApi({ fetch: fetchImpl, getClock, getSignal } = {}) 
   // teardown() also left alone.
   const absentSourcePaths = new Set();
   const modulePaths = new Map();
+  const blobRefs = new Map();
   let refsPromise = null;
   let refsKey = '';
   let refsFetchedAt = 0;
@@ -404,6 +405,41 @@ export function createGitLabApi({ fetch: fetchImpl, getClock, getSignal } = {}) 
     }
   }
 
+  // Blob-view counterpart to `mergeRequestRefsForFile`: there is no MR IID
+  // and no `diffRefs` query on a blob page, so the URL's ref (a branch name
+  // or a SHA) is resolved to a full commit SHA via the REST commits
+  // endpoint instead, then wrapped in the same `{ baseSha, headSha,
+  // startSha }` shape so `sourceRefFor`/`code-intel.js` need no changes to
+  // consume it. `baseSha`/`startSha` are always '' here (a blob view has no
+  // "old side"); `sourceRefFor` already falls back to `file.ref` when they're
+  // empty, which is exactly what an unpinned blob-view ref should resolve to.
+  async function blobFileRef(file) {
+    if (COMMIT_SHA.test(file.ref || '')) return { headSha: file.ref, baseSha: '', startSha: '' };
+    const key = `${projectContext().project} ${file.ref}`;
+    if (blobRefs.has(key)) return blobRefs.get(key);
+    const promise = (async () => {
+      try {
+        const { project } = projectContext();
+        const url = `${location.origin}/api/v4/projects/${encodeURIComponent(project)}/repository/commits/${encodeURIComponent(file.ref)}`;
+        const response = await authenticatedFetch(url);
+        if (!response.ok) throw new Error(`GitLab returned ${response.status} for commit ${file.ref}`);
+        const payload = await response.json();
+        return { headSha: payload.id || '', baseSha: '', startSha: '' };
+      } catch (error) {
+        // Unlike `modulePathFor`'s empty-string caching (a missing go.mod is
+        // a durable fact about the repo), a failed ref-resolution here is
+        // more likely a transient network blip, and there is no safe fake
+        // SHA to hand out. So the failure is NOT cached: the entry is
+        // dropped so the next call retries against the network instead of
+        // being stuck with a remembered failure for the rest of the session.
+        blobRefs.delete(key);
+        return { headSha: '', baseSha: '', startSha: '' };
+      }
+    })();
+    blobRefs.set(key, promise);
+    return promise;
+  }
+
   // Cache-reset surface. go-navigation.js's `teardown()` and its RPC
   // `onDisconnect` handler used to reach into `state.modulePaths`/
   // `state.refsPromise` directly; now they call these. `clearMergeRequestRefs`
@@ -428,6 +464,7 @@ export function createGitLabApi({ fetch: fetchImpl, getClock, getSignal } = {}) 
     mergeRequestRefs,
     mergeRequestRefsForFile,
     mergeRequestHeadRef,
+    blobFileRef,
     clearMergeRequestRefs,
     clearModulePaths,
   };

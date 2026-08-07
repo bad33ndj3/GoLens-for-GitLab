@@ -52,6 +52,7 @@
 // remount (bootstrap.js's NAV_POLL_MS poll) does not leak listeners.
 import { createLegacyDebounceIdle } from '../platform/clock.js';
 import * as diffDom from '../platform/diff-dom.js';
+import * as blobDom from '../platform/blob-dom.js';
 import { createGitLabApi, projectContext, mapLimit } from '../platform/gitlab-api.js';
 import { createSourceLoader } from '../platform/source-loader.js';
 import { createToast } from '../platform/toast.js';
@@ -104,9 +105,23 @@ function isMergeRequest(win) {
   return /\/-\/merge_requests\/\d+/.test(win.location.pathname);
 }
 
+// isBlobView/isMergeRequest are mutually exclusive in practice (a URL is
+// either a merge-request page or a standalone blob page, never both), but
+// each is detected independently rather than asserting that.
+function isBlobView(win) {
+  return /\/-\/blob\//.test(win.location.pathname);
+}
+
 function mergeRequestPageKey(win) {
   const match = win.location.pathname.match(/^(.*?\/-\/merge_requests\/\d+)/);
   return match ? `${win.location.origin}${match[1]}` : '';
+}
+
+// Blob pages have no MR-IID-shaped sub-path to key off; the full pathname
+// (ref + path) is the natural equivalent of mergeRequestPageKey's role —
+// navigating to a different blob file re-triggers activation cleanly.
+function blobPageKey(win) {
+  return `${win.location.origin}${win.location.pathname}`;
 }
 
 // Duplicated (not imported) from bookmarks.js's own bookmarkProjectionMutation
@@ -136,7 +151,11 @@ export function createMrSession({
     clock = overrides ? { ...defaultClock(), ...overrides } : defaultClock();
   }
 
-  const active = { enabled: false, abortController: null, diffObserver: null };
+  // active.kind ('mr' | 'blob' | null) records which page-kind activate()
+  // set up, so deactivate() / a later reconcile can tear down the right
+  // observer/handles without needing to re-detect the URL (which may have
+  // already changed by the time deactivate runs during an SPA transition).
+  const active = { enabled: false, abortController: null, diffObserver: null, kind: null };
 
   function getSignal() {
     return active.abortController?.signal;
@@ -201,23 +220,46 @@ export function createMrSession({
   // as go-navigation.js's former init()/teardown(): activate() on an already
   // -active session, or on a page that isn't a merge request, is a no-op.
   function activate() {
-    if (active.enabled || !isMergeRequest(win)) return;
-    active.enabled = true;
-    active.abortController = new AbortController();
-    getBookmarksHandle()?.enable();
-    getCodeIntelHandle()?.setEnabled(true);
-    doc.addEventListener('visibilitychange', refreshMergeRequestRefs, true);
-    active.diffObserver = new MutationObserver((mutations) => {
-      if (mutations.length && mutations.every(isBookmarkOnlyMutation)) return;
-      diffDom.bumpFileContextGeneration();
-    });
-    const diffObserverRoot = doc.getElementById('diffs') || doc.body;
-    active.diffObserver.observe(diffObserverRoot, { childList: true, subtree: true, characterData: true });
-    status('idle', 'Go intelligence · hover code to start');
+    if (active.enabled) return;
+    if (isMergeRequest(win)) {
+      active.enabled = true;
+      active.kind = 'mr';
+      active.abortController = new AbortController();
+      getBookmarksHandle()?.enable();
+      getCodeIntelHandle()?.setEnabled(true);
+      doc.addEventListener('visibilitychange', refreshMergeRequestRefs, true);
+      active.diffObserver = new MutationObserver((mutations) => {
+        if (mutations.length && mutations.every(isBookmarkOnlyMutation)) return;
+        diffDom.bumpFileContextGeneration();
+      });
+      const diffObserverRoot = doc.getElementById('diffs') || doc.body;
+      active.diffObserver.observe(diffObserverRoot, { childList: true, subtree: true, characterData: true });
+      status('idle', 'Go intelligence · hover code to start');
+      return;
+    }
+    if (isBlobView(win)) {
+      // Blob pages: no bookmarks UI/concept in this plan, so only code-intel
+      // is enabled (no getBookmarksHandle()?.enable()).
+      active.enabled = true;
+      active.kind = 'blob';
+      active.abortController = new AbortController();
+      getCodeIntelHandle()?.setEnabled(true);
+      active.diffObserver = new MutationObserver(() => {
+        blobDom.bumpFileContextGeneration();
+      });
+      // Reuse blob-dom.js's own root lookup (diffFileRoots()) rather than
+      // duplicating its BLOB_ROOT_SELECTOR literal here; falls back to
+      // doc.body if the root hasn't rendered yet at activate() time, same
+      // spirit as the MR branch's `doc.getElementById('diffs') || doc.body`.
+      const blobObserverRoot = blobDom.diffFileRoots()[0] || doc.body;
+      active.diffObserver.observe(blobObserverRoot, { childList: true, subtree: true, characterData: true });
+      status('idle', 'Go intelligence · hover code to start');
+    }
   }
 
   function deactivate() {
     active.enabled = false;
+    active.kind = null;
     active.abortController?.abort();
     active.abortController = null;
     active.diffObserver?.disconnect();
@@ -232,7 +274,11 @@ export function createMrSession({
   }
 
   // --- SPA reconcile loop, carved out of content.js -----------
-  const pageState = { active: false, key: '', reconcileCount: 0 };
+  // pageState.kind ('mr' | 'blob' | null) mirrors active.kind, so leaving
+  // the currently-reconciled page (navigating away, or between page kinds)
+  // tears down through the right leave* function without re-detecting the
+  // (possibly already-changed) URL.
+  const pageState = { active: false, key: '', kind: null, reconcileCount: 0 };
 
   async function disableGoLens() {
     deactivate();
@@ -243,21 +289,83 @@ export function createMrSession({
     if (!pageState.active) return;
     pageState.active = false;
     pageState.key = '';
+    pageState.kind = null;
     await disableGoLens();
     getControlsHandle()?.destroy();
   }
 
+  // leaveBlobPage(): blob pages now create a controls widget too (see
+  // reconcilePage()'s isBlobView() branch), so — same as
+  // leaveMergeRequestPage() — it must be destroyed here. Without this, a
+  // stale connected #gitlab-lens-root would linger, and createControls()'s
+  // `if (host && (host.isConnected || !controlsMounted)) return;` guard
+  // would refuse to recreate it on the next page.
+  async function leaveBlobPage() {
+    if (!pageState.active) return;
+    pageState.active = false;
+    pageState.key = '';
+    pageState.kind = null;
+    await disableGoLens();
+    getControlsHandle()?.destroy();
+  }
+
+  // Tears down whichever page-kind is currently reconciled, dispatching on
+  // pageState.kind rather than re-checking the (possibly already-navigated)
+  // URL.
+  async function leaveCurrentPage() {
+    if (pageState.kind === 'blob') await leaveBlobPage();
+    else await leaveMergeRequestPage();
+  }
+
   async function reconcilePage() {
     pageState.reconcileCount++;
-    if (!isGitLab(doc, win) || !isMergeRequest(win)) {
-      await leaveMergeRequestPage();
+    if (!isGitLab(doc, win)) {
+      await leaveCurrentPage();
+      return;
+    }
+    if (isBlobView(win)) {
+      const pageKey = blobPageKey(win);
+      if (pageState.active && (pageState.kind !== 'blob' || pageState.key !== pageKey)) await leaveCurrentPage();
+      if (!pageState.active) {
+        pageState.active = true;
+        pageState.key = pageKey;
+        pageState.kind = 'blob';
+        getControlsHandle()?.createControls();
+        // Blob pages always follow the global `enabled` setting directly.
+        // activate()/deactivate() stay the source of truth for code-intel
+        // (kept as a direct call, not routed solely through
+        // controlsHandle.setEnabled(), since blob activation must still work
+        // with no controls handle at all — see the tests that exercise
+        // activate()/deactivate() standalone). getControlsHandle()?.setEnabled()
+        // is called alongside it purely to drive the toolbar's own render
+        // (aria-pressed, disabled state) and its legacy.init()/teardown()
+        // wiring for the enable-toggle button's own click handler; both
+        // paths reach the same activate()/deactivate() and are idempotent.
+        // Deliberately NOT calling getBookmarksHandle()?.enable() — no
+        // bookmarks UI/concept on blob pages — and NOT calling
+        // refreshPreloadStatus(): there's no MR-relative cache to check from
+        // a blob page (see main.js's isBlob gating of
+        // legacy.mergeRequestPreloadStatus, which would otherwise throw).
+        const settings = getSettings();
+        const enabled = settings ? Boolean(settings.get('enabled')) : true;
+        if (enabled) activate();
+        else deactivate();
+        await getControlsHandle()?.setEnabled(enabled);
+        return;
+      }
+      getControlsHandle()?.createControls();
+      return;
+    }
+    if (!isMergeRequest(win)) {
+      await leaveCurrentPage();
       return;
     }
     const pageKey = mergeRequestPageKey(win);
-    if (pageState.active && pageState.key !== pageKey) await leaveMergeRequestPage();
+    if (pageState.active && (pageState.kind !== 'mr' || pageState.key !== pageKey)) await leaveCurrentPage();
     if (!pageState.active) {
       pageState.active = true;
       pageState.key = pageKey;
+      pageState.kind = 'mr';
       getControlsHandle()?.createControls();
       const settings = getSettings();
       const enabled = settings ? Boolean(settings.get('enabled')) : true;

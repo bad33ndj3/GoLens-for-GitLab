@@ -357,6 +357,60 @@ test('mergeRequestHeadRef resets the refs cache AND throws on a non-commit head'
   assert.equal(calls, 2);
 });
 
+// --- Blob-view ref resolution ----------------------------------------------
+
+test('blobFileRef returns a SHA ref directly without hitting the network', async () => {
+  let calls = 0;
+  const api = createGitLabApi({ fetch: async () => { calls++; return jsonResponse({ id: OTHER_SHA }); } });
+  assert.deepEqual(await api.blobFileRef({ path: 'a.go', ref: SHA }), { headSha: SHA, baseSha: '', startSha: '' });
+  assert.equal(calls, 0);
+});
+
+test('blobFileRef resolves a branch name to a full commit SHA via the commits API', async () => {
+  const requested = [];
+  const api = createGitLabApi({
+    fetch: async (url) => { requested.push(url); return jsonResponse({ id: SHA }); },
+  });
+  assert.deepEqual(await api.blobFileRef({ path: 'a.go', ref: 'main' }), { headSha: SHA, baseSha: '', startSha: '' });
+  assert.equal(requested.length, 1);
+  assert.equal(
+    requested[0],
+    'https://gitlab.example/api/v4/projects/group%2Fproject/repository/commits/main',
+  );
+});
+
+test('blobFileRef memoizes per project+ref, keeping different refs independent', async () => {
+  let calls = 0;
+  const shaByRef = { main: SHA, develop: OTHER_SHA };
+  const api = createGitLabApi({
+    fetch: async (url) => { calls++; const ref = decodeURIComponent(url.split('/commits/')[1]); return jsonResponse({ id: shaByRef[ref] }); },
+  });
+  assert.equal((await api.blobFileRef({ path: 'a.go', ref: 'main' })).headSha, SHA);
+  assert.equal((await api.blobFileRef({ path: 'a.go', ref: 'main' })).headSha, SHA);
+  assert.equal(calls, 1, 'the second call for the same ref is served from cache');
+  assert.equal((await api.blobFileRef({ path: 'a.go', ref: 'develop' })).headSha, OTHER_SHA);
+  assert.equal(calls, 2, 'a different ref is a separate cache entry');
+});
+
+test('blobFileRef degrades to empty refs on a failing response instead of throwing', async () => {
+  const api = createGitLabApi({ fetch: async () => jsonResponse({}, { status: 404 }) });
+  assert.deepEqual(await api.blobFileRef({ path: 'a.go', ref: 'main' }), { headSha: '', baseSha: '', startSha: '' });
+});
+
+test('blobFileRef degrades to empty refs when fetch itself rejects', async () => {
+  const api = createGitLabApi({ fetch: async () => { throw new Error('offline'); } });
+  assert.deepEqual(await api.blobFileRef({ path: 'a.go', ref: 'main' }), { headSha: '', baseSha: '', startSha: '' });
+});
+
+test('blobFileRef does not cache a failure, so a later call retries the network', async () => {
+  let calls = 0;
+  const results = [() => jsonResponse({}, { status: 500 }), () => jsonResponse({ id: SHA })];
+  const api = createGitLabApi({ fetch: async () => { calls++; return results.shift()(); } });
+  assert.deepEqual(await api.blobFileRef({ path: 'a.go', ref: 'main' }), { headSha: '', baseSha: '', startSha: '' });
+  assert.deepEqual(await api.blobFileRef({ path: 'a.go', ref: 'main' }), { headSha: SHA, baseSha: '', startSha: '' });
+  assert.equal(calls, 2);
+});
+
 // --- Pagination -----------------------------------------------------------
 
 test('fetches tree pages concurrently when GitLab reports a total page count', async () => {
