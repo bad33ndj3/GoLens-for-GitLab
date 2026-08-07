@@ -1222,16 +1222,22 @@ export function mount(ctx = {}) {
       doc.body.dataset.dbgTimerFired = (doc.body.dataset.dbgTimerFired || '') + '1';
       try {
         if (activeTarget?.key !== key) { doc.body.dataset.dbgTimerStale = (doc.body.dataset.dbgTimerStale || '') + '1'; return; }
-        {
-          const fresh = targetAtEvent(point);
-          doc.body.dataset.dbgFresh = (doc.body.dataset.dbgFresh || '') + `${target.cell?.isConnected ? 'c' : '-'}${fresh ? 'f' : '-'}${fresh && targetKey(fresh) === key ? 'k' : '-'}|`;
-        }
         doc.body.dataset.dbgShowLoading = (doc.body.dataset.dbgShowLoading || '') + '1';
         showLoading(`Looking up ${target.identifier}…`, target);
         const result = await resolveAt(target, 'resolveHover', (message, progress) => {
           if (activeTarget?.key === key) showLoading(message, target, progress);
         });
         doc.body.dataset.dbgResolved = (doc.body.dataset.dbgResolved || '') + '1';
+        if (result.status === 'unsupported' && result.reason === 'diffContextUnavailable') {
+          // The hovered DOM cell may have been replaced (diff re-render, focus toggle,
+          // bookmark reconciliation) since this target was captured 350ms ago. targetKey
+          // is content-based (path:line:character), so it stays identical across the swap
+          // and the next hover on the same symbol would otherwise short-circuit forever via
+          // the `key === activeTarget?.key` fast path in handleMouseMovePoint. Clear the
+          // latch so a subsequent hover re-resolves against the live cell.
+          if (activeTarget?.key === key) { activeTarget = null; hidePopover(); }
+          return;
+        }
         let displayResult = result;
         if (shouldShowReferencesOnHover(result)) {
           showLoading(`Finding usages of ${target.identifier}…`, target, null, { usages: true });
