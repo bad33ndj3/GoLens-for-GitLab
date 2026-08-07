@@ -1076,6 +1076,42 @@ export function mount(ctx = {}) {
     activeElement?.setAttribute('data-golens-go-target', '');
   }
 
+  // narrowIdentifierElement(cell, element, character, identifier) -> the
+  // element that should receive the hover/marker attribute for `identifier`.
+  // When `element`'s own text is exactly the identifier (the normal case),
+  // returns it unchanged. Otherwise `element` is a compound syntax-highlight
+  // span containing the identifier alongside other tokens (e.g. GitLab
+  // grouping `mr.log().WithField("phase", "boot-verify")` into one span) —
+  // marking that whole span would underline far more than the hovered
+  // symbol, so this splits out just the identifier's own text node and
+  // wraps it in a new span scoped to the match. Falls back to `element` if
+  // the identifier's characters don't fall within a single text node.
+  function narrowIdentifierElement(cell, element, character, identifier) {
+    const text = (element.textContent || '').trim();
+    if (text === identifier) return element;
+    const walker = doc.createTreeWalker(cell, globalThis.NodeFilter?.SHOW_TEXT || 4);
+    let node;
+    let offset = 0;
+    while ((node = walker.nextNode())) {
+      const len = (node.nodeValue || '').length;
+      if (character >= offset && character + identifier.length <= offset + len) {
+        const startOffset = character - offset;
+        try {
+          const middle = node.splitText(startOffset);
+          middle.splitText(identifier.length);
+          const span = doc.createElement('span');
+          middle.replaceWith(span);
+          span.appendChild(middle);
+          return span;
+        } catch {
+          return element;
+        }
+      }
+      offset += len;
+    }
+    return element;
+  }
+
   function caretAtPoint(cell, x, y) {
     let node;
     let offset;
@@ -1111,7 +1147,8 @@ export function mount(ctx = {}) {
     if (!identifier) return null;
     const element = node.nodeType === 1 ? node : node.parentElement;
     if (!caretElementMatchesIdentifier(element, cell, identifier.identifier)) return null;
-    return { ...identifier, element: element === cell ? null : element };
+    const marked = element === cell ? null : narrowIdentifierElement(cell, element, identifier.character, identifier.identifier);
+    return { ...identifier, element: marked };
   }
 
   function identifierFromElement(target, cell) {

@@ -716,3 +716,44 @@ test('caretAtPoint(): without legacy.caretCellFor, a caret hit outside `cell` st
   assert.equal(handle.selectedOccurrenceSourceLocation(), null, 'no legacy.caretCellFor means the out-of-cell caret hit resolves nothing, identical to pre-change behavior');
   handle.setEnabled(false);
 });
+
+// Regression: hovering a short identifier inside a compound syntax-highlight
+// span (GitLab sometimes groups several tokens into one unclassed span, e.g.
+// the whole `mr.log().WithField("phase", "boot-verify")` call chain) must
+// only mark that identifier's own text, not the entire compound span's text
+// — otherwise the underline visually spans from `mr` through the closing
+// `")"` instead of just `log`.
+test('hovering an identifier inside a compound highlight span only marks that identifier, not the whole span', () => {
+  const window = buildFixture(`
+    <table><tbody><tr>
+      <td data-testid="rd-diff-line-content" data-line="1"><span>logger := mr.log().WithField("phase", "boot-verify")</span></td>
+    </tr></tbody></table>`);
+  const cell = window.document.querySelector('[data-testid="rd-diff-line-content"]');
+  const span = cell.querySelector('span');
+  const textNode = span.firstChild;
+  const text = textNode.textContent;
+  const offset = text.indexOf('log(') ; // land on "log", the mr.log() call
+  window.document.caretPositionFromPoint = () => ({ offsetNode: textNode, offset });
+
+  const legacy = fakeLegacy({
+    codeCellFor: (node) => node?.closest?.('[data-testid="rd-diff-line-content"]') || null,
+    fileContextFor: () => ({ path: 'commands/boot_verify.go', oldPath: 'commands/boot_verify.go', newPath: 'commands/boot_verify.go', packagePath: 'commands', ref: '1'.repeat(40) }),
+    lineContextFor: (c) => ({ line: Number(c.dataset.line), side: 'new' }),
+    requestFrame: (fn) => fn(),
+  });
+  const handle = mount({ legacy });
+  handle.setEnabled(true);
+
+  const move = new window.Event('mousemove', { bubbles: true });
+  Object.defineProperty(move, 'target', { value: span });
+  Object.defineProperty(move, 'clientX', { value: 10 });
+  Object.defineProperty(move, 'clientY', { value: 10 });
+  window.document.dispatchEvent(move);
+
+  const marked = cell.querySelector('[data-golens-go-target]');
+  assert.ok(marked, 'expected an element to be marked as the hover target');
+  assert.equal(marked.textContent, 'log', `expected only "log" to be marked, got: ${JSON.stringify(marked.textContent)}`);
+  assert.equal(span.textContent, text, 'splitting/wrapping the identifier must not change the rendered line text');
+
+  handle.setEnabled(false);
+});
