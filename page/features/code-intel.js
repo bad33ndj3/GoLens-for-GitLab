@@ -928,7 +928,6 @@ export function mount(ctx = {}) {
     const file = legacy.fileContextFor(target.cell);
     const line = legacy.lineContextFor(target.cell);
     const context = legacy.projectContext();
-    doc.body.dataset.dbgResolveAt = (doc.body.dataset.dbgResolveAt || '') + `${file ? 'f' : '-'}${line ? 'l' : '-'}${context ? 'c' : '-'}|`;
     if (!file || !line || !context) return { status: 'unsupported', reason: 'diffContextUnavailable' };
     const refs = await legacy.mergeRequestRefsForFile(file);
     const sourcePath = line.side === 'old' ? file.oldPath : file.newPath;
@@ -1172,11 +1171,8 @@ export function mount(ctx = {}) {
 
   function targetAtEvent(event) {
     const cell = legacy.codeCellFor(event.target, event.clientX, event.clientY);
-    doc.body.dataset.dbgCell = (doc.body.dataset.dbgCell || '') + (cell ? '1' : '0');
     if (!cell || !legacy.fileContextFor(cell)) return null;
-    doc.body.dataset.dbgCtx = (doc.body.dataset.dbgCtx || '') + '1';
     const caret = caretAtPoint(cell, event.clientX, event.clientY) || identifierFromElement(event.target, cell);
-    doc.body.dataset.dbgCaret = (doc.body.dataset.dbgCaret || '') + (caret ? '1' : '0');
     return caret ? { ...caret, cell, x: event.clientX, y: event.clientY } : null;
   }
 
@@ -1197,9 +1193,7 @@ export function mount(ctx = {}) {
   }
 
   const handleMouseMovePoint = throttleToFrame((point) => {
-    doc.body.dataset.dbgHmmp = (doc.body.dataset.dbgHmmp || '') + '1';
     if (!enabled) return;
-    doc.body.dataset.dbgHmmpEnabled = (doc.body.dataset.dbgHmmpEnabled || '') + '1';
     const target = targetAtEvent(point);
     const key = targetKey(target);
     if (key === activeTarget?.key) {
@@ -1217,17 +1211,13 @@ export function mount(ctx = {}) {
     hidePopover();
     activeTarget = { key, ...target };
     markTarget(target.element);
-    doc.body.dataset.dbgSched = (doc.body.dataset.dbgSched || '') + '1';
     hoverTimer = setTimeout(async () => {
-      doc.body.dataset.dbgTimerFired = (doc.body.dataset.dbgTimerFired || '') + '1';
       try {
-        if (activeTarget?.key !== key) { doc.body.dataset.dbgTimerStale = (doc.body.dataset.dbgTimerStale || '') + '1'; return; }
-        doc.body.dataset.dbgShowLoading = (doc.body.dataset.dbgShowLoading || '') + '1';
+        if (activeTarget?.key !== key) return;
         showLoading(`Looking up ${target.identifier}…`, target);
         const result = await resolveAt(target, 'resolveHover', (message, progress) => {
           if (activeTarget?.key === key) showLoading(message, target, progress);
         });
-        doc.body.dataset.dbgResolved = (doc.body.dataset.dbgResolved || '') + '1';
         if (result.status === 'unsupported' && result.reason === 'diffContextUnavailable') {
           // The hovered DOM cell may have been replaced (diff re-render, focus toggle,
           // bookmark reconciliation) since this target was captured 350ms ago. targetKey
@@ -1245,7 +1235,6 @@ export function mount(ctx = {}) {
         }
         if (activeTarget?.key === key) showResult(displayResult, target);
       } catch (error) {
-        doc.body.dataset.dbgErr = (doc.body.dataset.dbgErr || '') + (error?.message || String(error)).slice(0, 40) + '|';
         if (activeTarget?.key === key) hidePopover();
         const message = error.message || 'Go intelligence is unavailable.';
         if (lastErrorToast !== message) {
@@ -1257,14 +1246,12 @@ export function mount(ctx = {}) {
   });
 
   function onMouseMove(event) {
-    doc.body.dataset.dbgOmm = (doc.body.dataset.dbgOmm || '') + '1';
     if (!enabled) return;
-    doc.body.dataset.dbgOmmEnabled = (doc.body.dataset.dbgOmmEnabled || '') + '1';
     if (ui && event.composedPath().includes(ui)) {
       if (popoverMode !== 'searching') pinPopover();
       return;
     }
-    if (pinnedPopover) { doc.body.dataset.dbgOmmPinned = (doc.body.dataset.dbgOmmPinned || '') + '1'; return; }
+    if (pinnedPopover) return;
     handleMouseMovePoint({ target: event.target, clientX: event.clientX, clientY: event.clientY });
   }
 
@@ -1498,8 +1485,7 @@ export function mount(ctx = {}) {
 
   function setEnabled(next) {
     const value = Boolean(next);
-    doc.body.dataset.dbgSetEnabled = (doc.body.dataset.dbgSetEnabled || '') + (value ? '1' : '0');
-    if (value === enabled) { doc.body.dataset.dbgSetEnabledNoop = (doc.body.dataset.dbgSetEnabledNoop || '') + (value ? '1' : '0'); return; }
+    if (value === enabled) return;
     enabled = value;
     if (!legacy) return;
     if (enabled) {
