@@ -66,6 +66,7 @@ export function mount(ctx = {}) {
   let codeIntelHandle = null;
   let projectSearchHandle = null;
   let mrPreloadHandle = null;
+  let discussionLineLinkHandle = null;
   let controlsHandle = null;
 
   const session = createMrSession({
@@ -266,7 +267,10 @@ export function mount(ctx = {}) {
           },
         },
       },
-      { name: 'discussion-line-link', mount: mountDiscussionLineLink },
+      {
+        name: 'discussion-line-link',
+        mount: trackHandle((handle) => { discussionLineLinkHandle = handle; }, mountDiscussionLineLink),
+      },
       { name: 'go-test-file-rows', mount: mountGoTestFileRows },
       {
         name: 'controls',
@@ -297,6 +301,7 @@ export function mount(ctx = {}) {
             init: session.activate,
             teardown: session.deactivate,
             bookmarks: () => bookmarksHandle,
+            reviewSolutions: () => discussionLineLinkHandle,
             enableRapidDiffs: () => undefined, // rapid-diffs stays controls.js's own, see its header
             watchForRapidDiffs: () => undefined,
             triggerPitstopMoment: () => requestMoment('pitstop'),

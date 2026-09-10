@@ -64,6 +64,16 @@ function fakeBookmarks(snapshot = { scope: null, current: [], stale: [] }) {
   };
 }
 
+function fakeReviewSolutions(records = []) {
+  const listeners = new Set();
+  return {
+    snapshot: () => records,
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    copyBundle: async () => ({ kind: 'copied', count: records.length }),
+    set(next) { records = next; listeners.forEach((fn) => fn(records)); },
+  };
+}
+
 test('mounted without ctx.legacy (the inert second instance registered in page/main.js): every call degrades to a safe no-op, no toolbar renders', async () => {
   buildFixture();
   const handle = mount({ settings: fakeSettingsStore(), clock: fakeClock() });
@@ -159,6 +169,35 @@ test('bookmark drawer renders current/stale bookmarks from legacy.bookmarks() an
   assert.equal(drawer.shadowRoot.querySelectorAll('[data-bookmark-list="current"] .bookmark-item').length, 1);
   handle.closeBookmarkDrawer();
   assert.equal(window.document.getElementById('golens-bookmark-drawer-root'), null);
+  handle.unmount();
+});
+
+test('review-solutions control shows the draft count and copies the bundle', async () => {
+  const window = buildFixture();
+  window.document.body.innerHTML = '<div class="ai-panels"><div><nav><div><button>anchor</button></div></nav></div></div>';
+  const reviewSolutions = fakeReviewSolutions([]);
+  const toasts = [];
+  const handle = mount({
+    settings: fakeSettingsStore(),
+    clock: fakeClock(),
+    legacy: { reviewSolutions: () => reviewSolutions, toast: (message) => toasts.push(message) },
+  });
+  handle.createControls();
+  await handle.setEnabled(true);
+  const button = window.document.getElementById('gitlab-lens-root').shadowRoot.querySelector('[data-action="review-solutions"]');
+  assert.equal(button.disabled, true);
+
+  reviewSolutions.set([{ solution: 'Use middleware x.' }]);
+  assert.equal(button.disabled, false);
+  assert.equal(button.querySelector('.review-solutions-count').textContent, '1');
+  button.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await Promise.resolve();
+  assert.deepEqual(toasts, ['Copied 1 accepted review comment for your agent.']);
+
+  reviewSolutions.copyBundle = async () => { throw new Error('Clipboard access is unavailable.'); };
+  button.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await Promise.resolve();
+  assert.equal(toasts.at(-1), 'Clipboard access is unavailable.');
   handle.unmount();
 });
 
@@ -351,13 +390,13 @@ test('kind: "blob" — legacy.bookmarks() subscription is never set up (no bookm
   handle.unmount();
 });
 
-test('default kind (no ctx.kind, e.g. every existing MR-page test above) still renders the full five-button toolbar — regression guard for the isBlobKind branch', () => {
+test('default kind (no ctx.kind, e.g. every existing MR-page test above) still renders the full six-button toolbar — regression guard for the isBlobKind branch', () => {
   const window = buildFixture();
   window.document.body.innerHTML = '<div class="ai-panels"><div><nav><div><button>anchor</button></div></nav></div></div>';
   const handle = mount({ settings: fakeSettingsStore(), clock: fakeClock(), legacy: {} });
   handle.createControls();
   const shadow = window.document.getElementById('gitlab-lens-root').shadowRoot;
-  for (const action of ['toggle-enabled', 'focus', 'preload', 'bookmarks', 'diff-view-toggle']) {
+  for (const action of ['toggle-enabled', 'focus', 'preload', 'bookmarks', 'diff-view-toggle', 'review-solutions']) {
     assert.ok(shadow.querySelector(`[data-action="${action}"]`), `${action} renders when ctx.kind is unset (defaults to 'mr')`);
   }
   handle.unmount();

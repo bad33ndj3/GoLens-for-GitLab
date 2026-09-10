@@ -50,6 +50,7 @@
 // `#golens-go-intelligence-root` by id (unaffected: the id itself didn't
 // move) — see this module's own render functions below for the markup,
 // trimmed of the `.toast` section and its CSS.
+import { writeClipboardText } from '../platform/clipboard.js';
 import {
   identifierAtCharacter,
   caretElementMatchesIdentifier,
@@ -238,32 +239,11 @@ export function mount(ctx = {}) {
     button.title = text ? `Copy ${text}` : 'Copy source location';
   }
 
-  function fallbackCopyText(text) {
-    const textarea = doc.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none;';
-    doc.body.append(textarea);
-    textarea.select();
-    const copied = doc.execCommand?.('copy') === true;
-    textarea.remove();
-    if (!copied) throw new Error('Clipboard access is unavailable.');
-  }
-
-  async function writeClipboardText(text) {
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('Clipboard API is unavailable.');
-      await navigator.clipboard.writeText(text);
-    } catch {
-      fallbackCopyText(text);
-    }
-  }
-
   async function copySourceLocation(button) {
     const text = button.dataset.copyText;
     if (!text) return;
     try {
-      await writeClipboardText(text);
+      await writeClipboardText(text, { doc, clipboard: navigator.clipboard });
       button.dataset.state = 'copied';
       button.setAttribute('aria-label', `Copied source location ${text}`);
       button.title = `Copied ${text}`;

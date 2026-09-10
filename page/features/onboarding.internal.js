@@ -313,6 +313,7 @@ export function tourDialogMarkup({ mascotUrl, brandIconUrl }) {
                   <li class="feature">${onboardingFeatureIcon('download')}<div><strong>Cache related MR packages</strong><p>Fetch changed and related Go packages at the MR head, with progress and completion states.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('bookmark')}<div><strong>Keep local MR bookmarks</strong><p>Open the fourth control to revisit marked lines and ranges, clear current or stale entries, and recover only uniquely matched destinations after a head change.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('diffView')}<div><strong>Switch inline or side-by-side view</strong><p>The fifth control (or <kbd>Alt</kbd> <kbd>V</kbd> by default) drives GitLab's own diff-view preference, so the choice matches what GitLab shows and survives navigation.</p></div></li>
+                  <li class="feature">${onboardingFeatureIcon('copy')}<div><strong>Copy accepted review comments</strong><p>Accept code discussions into a private batch, add optional guidance when useful, then use the sixth control to copy one paste-ready agent bundle. Nothing reaches GitLab and the batch remains available after refresh.</p></div></li>
                   <li class="feature">${onboardingFeatureIcon('brand', { brandIconUrl })}<div><strong>Mark review milestones</strong><p>The mascot marks completed caches, resolved discussions, approvals, merges, and the Friday beer-kart celebration. Reduced motion stays static.</p></div></li>
               </ul>
             </section>
@@ -344,7 +345,7 @@ export function tourDialogMarkup({ mascotUrl, brandIconUrl }) {
                 <li class="feature">${onboardingFeatureIcon('bookmark')}<div><strong>Bookmark lines and ranges</strong><p>Use a gutter marker, select contiguous lines on one diff side, or configure toggle/previous/next bookmark shortcuts. Old and new sides stay distinct.</p></div></li>
                 <li class="feature">${onboardingFeatureIcon('testFile')}<div><strong>Spot Go test files</strong><p><span class="feature-note">_test.go</span> files receive a subtle green file-tree label.</p></div></li>
                 <li class="feature">${onboardingFeatureIcon('generated')}<div><strong>Optionally hide generated files</strong><p>Hide <span class="feature-note">.gitattributes</span>-marked files while keeping large collapsed files visible.</p></div></li>
-                <li class="feature">${onboardingFeatureIcon('discussion')}<div><strong>Jump from overview discussions to code</strong><p><span class="feature-note">View in changes</span> opens the exact commented line.</p></div></li>
+                <li class="feature">${onboardingFeatureIcon('discussion')}<div><strong>Handle review discussions</strong><p><span class="feature-note">View</span> opens the exact commented line. <span class="feature-note">Accept</span> adds the reviewer’s exact request; writing <span class="feature-note">Guidance</span> adds local context and accepts the thread automatically.</p></div></li>
               </ul>
             </section>
             <section class="tour-panel" id="golens-tour-popup" role="tabpanel" aria-labelledby="golens-tour-tab-popup" tabindex="0" hidden>
