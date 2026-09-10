@@ -1,6 +1,6 @@
-// page/features/controls.js — toolbar (enable/focus/preload/bookmarks
-// buttons) + preload state machine + review-focus/fullscreen + bookmark
-// drawer, carved out of content.js.
+// page/features/controls.js — toolbar (enable/focus/preload/bookmarks/diff
+// view/review-solution buttons) + preload state machine + review-focus/
+// fullscreen + bookmark drawer, carved out of content.js.
 //
 // One module, not two: the drawer's trigger button lives inside the toolbar's
 // own shadow root, one bookmarks.subscribe() callback drives both the toolbar
@@ -73,6 +73,7 @@ export function mount(ctx) {
   let host = null;
   let controlsMounted = false;
   let bookmarkUnsubscribe = null;
+  let reviewSolutionUnsubscribe = null;
   let drawerHost = null;
   let drawerReturnFocus = null;
   let preload = { status: 'idle', message: '', progress: null };
@@ -208,6 +209,9 @@ export function mount(ctx) {
         .bookmark-stale { position:absolute; top:2px; right:2px; width:7px; height:7px; border:1px solid var(--golens-surface-panel); border-radius:50%; background:var(--golens-warning,#d99530); }
         .diff-view-toggle { color:var(--golens-info); }
         .diff-view-toggle[aria-pressed="true"] { border-color:var(--golens-info); background:var(--golens-info-soft); color:var(--golens-info-hover); }
+        .review-solutions-toggle { color:var(--golens-primary-hover); overflow:visible; }
+        .review-solutions-count { position:absolute; right:-4px; bottom:-4px; min-width:15px; height:15px; padding:0 3px; border:2px solid var(--golens-surface-panel); border-radius:999px; background:var(--golens-primary); color:var(--golens-text-inverse); font:800 8px/11px var(--golens-font-mono); font-variant-numeric:tabular-nums; }
+        .review-solutions-count[hidden] { display:none; }
         @keyframes preload-sweep { from { transform:translateX(-110%); } to { transform:translateX(250%); } }
         @media (prefers-reduced-motion:reduce) { button,button img,.preload-fill { transition:none; } button:active:not(:disabled) { transform:none; } .preload-toggle.is-indeterminate .preload-fill { width:100%; animation:none; opacity:.45; } }
       </style>
@@ -231,6 +235,10 @@ export function mount(ctx) {
         <button class="diff-view-toggle" data-action="diff-view-toggle" title="Switch to side-by-side diff view" aria-label="Switch to side-by-side diff view" aria-pressed="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="7" height="15" rx="1"></rect><rect x="13.5" y="4.5" width="7" height="15" rx="1"></rect></svg>
         </button>
+        <button class="review-solutions-toggle" data-action="review-solutions" title="No accepted review comments to copy" aria-label="No accepted review comments to copy" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h2"></path></svg>
+          <span class="review-solutions-count" aria-hidden="true" hidden></span>
+        </button>
         `}
       </div>
       `;
@@ -238,7 +246,9 @@ export function mount(ctx) {
     wireControls(shadow);
     if (!isBlobKind) {
       ensureBookmarkSubscription();
+      ensureReviewSolutionSubscription();
       renderBookmarkControl(shadow);
+      renderReviewSolutionControl(shadow);
       // Read fresh on every createControls() call (including the remount a
       // successful toggle causes via bootstrap.js's location.href poll), not
       // just from later renderControlState() calls — otherwise a freshly
@@ -254,6 +264,38 @@ export function mount(ctx) {
       renderBookmarkControl();
       renderBookmarkDrawer();
     });
+  }
+
+  function ensureReviewSolutionSubscription() {
+    if (reviewSolutionUnsubscribe || !legacy.reviewSolutions?.()) return;
+    reviewSolutionUnsubscribe = legacy.reviewSolutions().subscribe(() => renderReviewSolutionControl());
+  }
+
+  function renderReviewSolutionControl(shadow = host?.shadowRoot) {
+    const button = shadow?.querySelector('[data-action="review-solutions"]');
+    if (!button) return;
+    const count = legacy.reviewSolutions?.()?.snapshot().length || 0;
+    const label = count
+      ? `Copy ${count} accepted review comment${count === 1 ? '' : 's'} for an agent`
+      : 'No accepted review comments to copy';
+    const badge = button.querySelector('.review-solutions-count');
+    badge.textContent = count > 99 ? '99+' : String(count);
+    badge.hidden = count === 0;
+    button.disabled = !enabled || count === 0;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  }
+
+  async function copyReviewSolutions() {
+    if (!enabled) return;
+    try {
+      const result = await legacy.reviewSolutions?.()?.copyBundle();
+      if (result?.kind === 'copied') {
+        legacy.toast?.(`Copied ${result.count} accepted review comment${result.count === 1 ? '' : 's'} for your agent.`);
+      }
+    } catch (error) {
+      legacy.toast?.(error.message || 'Could not copy accepted review comments.');
+    }
   }
 
   function renderBookmarkControl(shadow = host?.shadowRoot) {
@@ -445,6 +487,7 @@ export function mount(ctx) {
     if (!isBlobKind) {
       shadow.querySelector('[data-action="bookmarks"]').addEventListener('click', showBookmarkDrawer);
       shadow.querySelector('[data-action="diff-view-toggle"]').addEventListener('click', () => toggleDiffView());
+      shadow.querySelector('[data-action="review-solutions"]').addEventListener('click', copyReviewSolutions);
     }
   }
 
@@ -617,6 +660,7 @@ export function mount(ctx) {
     if (!isBlobKind) {
       renderBookmarkControl(shadow);
       renderDiffViewControl(shadow);
+      renderReviewSolutionControl(shadow);
     }
   }
 
@@ -821,6 +865,8 @@ export function mount(ctx) {
       doc.removeEventListener('visibilitychange', onVisibilityChange);
       bookmarkUnsubscribe?.();
       bookmarkUnsubscribe = null;
+      reviewSolutionUnsubscribe?.();
+      reviewSolutionUnsubscribe = null;
       closeBookmarkDrawer({ restoreFocus: false });
       host?.remove();
       host = null;

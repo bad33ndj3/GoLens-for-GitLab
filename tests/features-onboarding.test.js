@@ -91,6 +91,8 @@ test('show() mounts the quick-tour dialog and claims the registry', () => {
   const dialog = host.shadowRoot.querySelector('[data-onboarding-dialog]');
   assert.equal(dialog.dataset.onboardingMode, undefined, 'show() opens the tour, not the setup wizard');
   assert.equal(dialog.querySelector('h1').textContent, 'Welcome to GoLens for GitLab');
+  assert.match(dialog.textContent, /Copy accepted review comments/);
+  assert.match(dialog.textContent, /Guidance/);
   assert.equal(overlays.claimCountFor('onboarding'), 1);
 
   handle.unmount();

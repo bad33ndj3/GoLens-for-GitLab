@@ -44,3 +44,34 @@ export function matchingDiscussionLineHref(candidateHrefs, { pageKey, baseHref }
 export function shouldShowDiscussionLineLinks({ enabled, isMergeRequest, isDiffPage }) {
   return Boolean(enabled && isMergeRequest && !isDiffPage);
 }
+
+function singleLine(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+export function normalizeReviewText(value) {
+  return String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// formatReviewSolution(record) -> one paste-ready agent instruction, or ''
+// when any required thread field is missing. JSON string escaping keeps
+// quotes and line breaks unambiguous without inventing a custom format.
+export function formatReviewSolution(record) {
+  const path = singleLine(record?.path);
+  const line = Number(record?.line);
+  const noteUrl = singleLine(record?.noteUrl);
+  const author = singleLine(record?.author).replace(/^@/, '');
+  const comment = normalizeReviewText(record?.comment);
+  const solution = normalizeReviewText(record?.solution);
+  if (!record?.accepted || !path || !Number.isInteger(line) || line < 1 || !noteUrl || !author || !comment) return '';
+  const guidance = solution ? ` Optional guidance: ${JSON.stringify(solution)}` : '';
+  return `${path}:${line} [${noteUrl} @${author} - ${JSON.stringify(comment)}] - Action: Implement exactly what the reviewer requested.${guidance}`;
+}
+
+export function formatReviewSolutionBundle(records) {
+  return (records || []).map(formatReviewSolution).filter(Boolean).join('\n\n');
+}

@@ -24,6 +24,7 @@ GoLens for GitLab is a dependency-light Manifest V3 extension for GitLab.com and
 - Go back and forward through in-diff semantic jumps without leaving the merge request.
 - Bookmark an old- or new-side line or contiguous range, navigate locally, and recover only uniquely matched destinations after the MR head changes.
 - Switch GitLab's diff between inline and side-by-side view from the control rail or a shortcut, without opening GitLab's own preferences dropdown.
+- Draft local solutions beside code discussions and copy them as one paste-ready agent bundle without sending them to GitLab.
 
 Navigation defaults follow familiar editor patterns: `Cmd/Ctrl+Alt+↑/↓` for occurrences, `Shift+Alt+F5`/`Alt+F5` for hunks, `Alt+Page Up/Down` for files, `Alt+V` for the inline/side-by-side diff view toggle, `Ctrl+-`/`Ctrl+Shift+-` for semantic history, and `Alt+M`/`Alt+,`/`Alt+.` for bookmark toggle, previous, and next. Settings can apply GoLens, VS Code, IntelliJ IDEA, or Vim-style keymaps before changing or clearing individual bindings; the Vim preset adds shortcuts only, not modal behavior.
 
@@ -53,7 +54,7 @@ GoLens teaches the highest-value bindings with contextual shortcut tips after th
 3. Choose **Load unpacked** and select the repository folder.
 4. Refresh a GitLab.com merge-request Changes page.
 
-The five-button control appears beside GitLab's AI-panel button: enable GoLens, enter review focus, cache related MR packages, open MR-local bookmarks, and toggle GitLab's inline/side-by-side diff view. The compact toolbar popup controls global enablement and full-project caching. Use its gear button to open the large tabbed settings overlay on GitLab, where you can configure shortcuts, approve self-hosted origins, manage cached source, or replay the quick tour. After approving a self-hosted HTTP(S) origin, refresh its merge-request page.
+The six-button control appears beside GitLab's AI-panel button: enable GoLens, enter review focus, cache related MR packages, open MR-local bookmarks, toggle GitLab's inline/side-by-side diff view, and copy accepted review comments as an agent-ready batch. On overview code discussions, **Accept** includes the reviewer's exact request, including suggested changes. Writing **Guidance** adds optional local context and accepts the thread automatically; the button changes to **Guided** so saved guidance remains visible. The batch is stored by the extension, remains available after refresh, and never reaches GitLab. The compact toolbar popup controls global enablement and full-project caching. Use its gear button to open the large tabbed settings overlay on GitLab, where you can configure shortcuts, approve self-hosted origins, manage cached source, or replay the quick tour. After approving a self-hosted HTTP(S) origin, refresh its merge-request page.
 
 ## Development
 

@@ -459,9 +459,11 @@ const html = `<!doctype html>
         const controlChildren = [...(controls.querySelector('.controls')?.children || [])];
         const bookmarkButton = controls.querySelector('[data-action="bookmarks"]');
         const diffViewButton = controls.querySelector('[data-action="diff-view-toggle"]');
+        const reviewSolutionsButton = controls.querySelector('[data-action="review-solutions"]');
         document.body.dataset.preloadLast = String(controlChildren.at(-1) === preload);
-        document.body.dataset.bookmarkSecondLast = String(controlChildren.at(-2) === bookmarkButton);
-        document.body.dataset.diffViewToggleLast = String(controlChildren.at(-1) === diffViewButton);
+        document.body.dataset.bookmarkThirdLast = String(controlChildren.at(-3) === bookmarkButton);
+        document.body.dataset.diffViewToggleSecondLast = String(controlChildren.at(-2) === diffViewButton);
+        document.body.dataset.reviewSolutionsLast = String(controlChildren.at(-1) === reviewSolutionsButton);
         if (!reloaded && !sharing) {
           focus?.click();
           document.body.dataset.focusActive = String(document.documentElement.classList.contains('gitlab-lens-review-focus'));
@@ -545,10 +547,14 @@ const overviewHtml = `<!doctype html>
     <div data-testid="discussion-content" class="js-discussion-container">
       <div class="discussion-header">
         <div class="note-header-info">
+          <a class="js-user-link" data-username="reviewer" href="/reviewer">Reviewer</a>
+          <a href="#note_9001">the note</a>
           <a href="/group/project/-/merge_requests/44/diffs?diff_id=77&amp;start_sha=abc#filehash_0_12">an old version of the diff</a>
         </div>
       </div>
+      <div data-testid="note-body">This middleware seems wrong.</div>
       <div class="diff-file">
+        <div class="diff-file-header"><a href="/group/project/-/blob/main/svc/contracting/core/main.go">svc/contracting/core/main.go</a></div>
         <table><tbody><tr class="line_holder"><td>12</td><td>commented line</td></tr></tbody></table>
       </div>
     </div>
@@ -733,12 +739,18 @@ try {
   const overviewURL = `http://127.0.0.1:${port}/group/project/-/merge_requests/44`;
   const overview = await runBrowser(overviewURL, `
     document.querySelector('[data-golens-discussion-line-link]')?.href.includes('#filehash_0_12')
+      && Boolean(document.querySelector('[data-golens-discussion-draft]'))
       && document.body?.dataset.golensSkeletonRemounted === 'true'
   `, profile);
   assert.match(
     overview.stdout,
     /data-golens-discussion-line-link=""[^>]+href="http:\/\/127\.0\.0\.1:\d+\/group\/project\/-\/merge_requests\/44\/diffs\?diff_id=77&amp;start_sha=abc#filehash_0_12"/,
     `overview discussion button did not preserve GitLab's exact line target\n${overview.stderr}`
+  );
+  assert.match(
+    overview.stdout,
+    /data-golens-discussion-draft=""/,
+    `overview discussion did not render the local solution control\n${overview.stderr}`
   );
   assert.match(
     overview.stdout,
@@ -779,10 +791,11 @@ try {
       && document.body?.dataset.bookmarkDomReconciled === 'true'
   `, profile);
   assert.match(stdout, /id="gitlab-lens-root"/, `extension shell was not injected\n${stderr}`);
-  assert.match(stdout, /data-control-count="5"/, `the five direct controls were not injected\n${stderr}`);
+  assert.match(stdout, /data-control-count="6"/, `the six direct controls were not injected\n${stderr}`);
   assert.match(stdout, /data-preload-last="false"/, `preload unexpectedly remained the bottom sidebar control\n${stderr}`);
-  assert.match(stdout, /data-bookmark-second-last="true"/, `bookmarks are not the fourth (second-to-last) sidebar control\n${stderr}`);
-  assert.match(stdout, /data-diff-view-toggle-last="true"/, `the diff-view toggle is not the bottom sidebar control\n${stderr}`);
+  assert.match(stdout, /data-bookmark-third-last="true"/, `bookmarks are not the fourth sidebar control\n${stderr}`);
+  assert.match(stdout, /data-diff-view-toggle-second-last="true"/, `the diff-view toggle is not the fifth sidebar control\n${stderr}`);
+  assert.match(stdout, /data-review-solutions-last="true"/, `the review-solutions copy action is not the bottom sidebar control\n${stderr}`);
   assert.match(stdout, /data-bookmark-reloaded="true"/, `bookmark state did not survive a real extension reload\n${stderr}`);
   assert.match(stdout, /data-bookmark-drawer="true"/, `bookmark drawer did not expose its accessible dialog\n${stderr}`);
   assert.match(stdout, /data-bookmark-dom-reconciled="true"/, `bookmark marker did not survive diff DOM replacement\n${stderr}`);
