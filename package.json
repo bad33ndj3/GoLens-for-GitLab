@@ -15,9 +15,9 @@
     "check": "npm run check:syntax && npm test && npm run test:browser"
   },
   "devDependencies": {
-    "happy-dom": "20.11.1",
+    "happy-dom": "20.14.0",
     "tree-sitter-go": "0.25.0",
-    "web-tree-sitter": "0.26.11",
-    "ws": "8.21.1"
+    "web-tree-sitter": "0.27.0",
+    "ws": "8.21.3"
   }
 }
