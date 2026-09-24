@@ -108,6 +108,7 @@ function buildFixture() {
         <a id="tree-rapid-large" data-file-row="rapid-large">rapid-large.go</a>
         <a id="tree-generic-collapsed" data-file-row="generic-collapsed-file">generic-collapsed.go</a>
       </nav>
+      <header id="mr-header"><span data-testid="diff-stats">+15 -7</span></header>
       <main id="diffs">
         ${rapidDiff({ id: 'rapid-file' })}
         ${legacyDiff('legacy-native', { options: true })}
@@ -127,6 +128,10 @@ function buildFixture() {
         <div id="generic-collapsed-file" class="diff-file file-holder" data-path="svc/mixed/generic-collapsed.go">
           <div class="file-title" data-testid="file-title-container"><div class="file-actions"></div></div>
           <p>Collapsed file without a generated marker</p>
+        </div>
+        <div id="nodiff-gen" class="diff-file file-holder" data-path="svc/nodiff.gen.go">
+          <div class="file-title" data-testid="file-title-container"><strong>nodiff.gen.go</strong><span class="file-stats">+10 -4</span></div>
+          <div class="diff-content"><p>Plain diff, only matched by root .gitattributes -diff rules.</p></div>
         </div>
       </main>
     </body></html>
@@ -408,4 +413,304 @@ test('mount-after-unmount is safe: a second mount() re-establishes buttons and h
   assert.ok(document.getElementById('rapid-generated').hasAttribute('data-golens-generated-hidden'));
 
   handleB.unmount();
+});
+
+function stubGitAttributes(text = '*.gen.go -diff\n') {
+  return {
+    getHeadRef: async () => 'abc123def456abc123def456abc123def456abcd',
+    fetchSource: async (path) => {
+      assert.equal(path, '.gitattributes');
+      return text;
+    },
+    getSignal: () => undefined,
+  };
+}
+
+test('-diff: hides root .gitattributes -diff files and shows the recalculated total beside GitLab\'s', async () => {
+  const window = buildFixture();
+  const settings = fakeSettingsStore({ enabled: true, hideGeneratedFiles: false, hideNoDiffAttributes: true });
+  const handle = mount({ settings, clock: fakeClock(), gitAttributes: stubGitAttributes() });
+  settings.resolveReady();
+  await delay();
+  await delay();
+  await delay();
+
+  assert.ok(
+    window.document.getElementById('nodiff-gen').hasAttribute('data-golens-generated-hidden'),
+    'a non-generated file matched by -diff rules is hidden through the same marker'
+  );
+  assert.equal(
+    window.document.getElementById('rapid-generated').hasAttribute('data-golens-generated-hidden'),
+    false,
+    'without the generated-files setting, GitLab-marked files stay visible'
+  );
+  const gitlabTotal = window.document.querySelector('#mr-header [data-testid="diff-stats"]');
+  assert.equal(gitlabTotal.textContent, '+15 -7', 'GitLab\'s own total is never overwritten');
+  const badge = window.document.querySelector('[data-golens-nodiff-stats]');
+  assert.ok(badge, 'the recalculated total badge was not created');
+  assert.equal(badge.textContent, '· zonder -diff: 5+ 3-');
+  assert.equal(badge.previousElementSibling, gitlabTotal, 'the badge sits directly after GitLab\'s total');
+  assert.equal(window.document.querySelectorAll('[data-golens-nodiff-stats]').length, 1);
+
+  handle.unmount();
+  assert.equal(window.document.querySelector('[data-golens-generated-hidden]'), null, 'unmount() restores hidden diffs');
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null, 'unmount() removes the badge');
+});
+
+test('-diff: a missing or failing .gitattributes fails closed to current behavior', async () => {
+  const window = buildFixture();
+  const settings = fakeSettingsStore({ enabled: true, hideGeneratedFiles: false, hideNoDiffAttributes: true });
+  const missing = {
+    getHeadRef: async () => 'abc123def456abc123def456abc123def456abcd',
+    fetchSource: async () => { throw new Error('GitLab returned 404 for .gitattributes'); },
+    getSignal: () => undefined,
+  };
+  const handle = mount({ settings, clock: fakeClock(), gitAttributes: missing });
+  settings.resolveReady();
+  await delay();
+  await delay();
+  await delay();
+
+  assert.equal(window.document.querySelector('[data-golens-generated-hidden]'), null, 'nothing is hidden without rules');
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null, 'no badge without hidden lines');
+
+  handle.unmount();
+});
+
+test('-diff: toggling the setting restores files and the badge live, without a remount', async () => {
+  const window = buildFixture();
+  const settings = fakeSettingsStore({ enabled: true, hideGeneratedFiles: false, hideNoDiffAttributes: true });
+  const handle = mount({ settings, clock: fakeClock(), gitAttributes: stubGitAttributes() });
+  settings.resolveReady();
+  await delay();
+  await delay();
+  await delay();
+
+  assert.ok(window.document.querySelector('[data-golens-nodiff-stats]'));
+
+  settings.fireChange('hideNoDiffAttributes', false);
+  assert.equal(window.document.querySelector('[data-golens-generated-hidden]'), null);
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null);
+
+  settings.fireChange('hideNoDiffAttributes', true);
+  assert.ok(window.document.getElementById('nodiff-gen').hasAttribute('data-golens-generated-hidden'));
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]').textContent, '· zonder -diff: 5+ 3-');
+
+  handle.unmount();
+});
+
+test('-diff: split diff-stats-group markup telt de groene + teller mee in hiddenAdded', async () => {
+  const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
+  window.document.write(`
+    <!doctype html>
+    <html><head></head><body>
+      <header id="mr-header">
+        <div id="page-total">
+          <div class="diff-stats-group gl-flex gl-items-center gl-text-success gl-font-bold"><span>+</span> <span data-testid="js-file-addition-line">2850</span></div>
+          <div class="diff-stats-group gl-flex gl-items-center gl-text-danger gl-font-bold"><span>-</span> <span data-testid="js-file-deletion-line">10</span></div>
+        </div>
+      </header>
+      <main id="diffs">
+        <div id="nodiff-split" class="diff-file file-holder" data-path="svc/split.gen.go">
+          <div class="file-title" data-testid="file-title-container">
+            <strong>split.gen.go</strong>
+            <div class="diff-stats-group gl-flex gl-items-center gl-text-success gl-font-bold"><span>+</span> <span data-testid="js-file-addition-line">2840</span></div>
+            <div class="diff-stats-group gl-flex gl-items-center gl-text-danger gl-font-bold"><span>-</span> <span data-testid="js-file-deletion-line">7</span></div>
+          </div>
+          <div class="diff-content"><p>Plain diff, only matched by root .gitattributes -diff rules.</p></div>
+        </div>
+      </main>
+    </body></html>
+  `);
+
+  globalThis.window = window;
+  globalThis.document = window.document;
+  globalThis.location = window.location;
+  globalThis.MutationObserver = window.MutationObserver;
+  globalThis.Event = window.Event;
+  globalThis.CustomEvent = window.CustomEvent;
+
+  const settings = fakeSettingsStore({ enabled: true, hideGeneratedFiles: false, hideNoDiffAttributes: true });
+  const handle = mount({ settings, clock: fakeClock(), gitAttributes: stubGitAttributes() });
+  settings.resolveReady();
+  await delay();
+  await delay();
+  await delay();
+
+  assert.ok(
+    window.document.getElementById('nodiff-split').hasAttribute('data-golens-generated-hidden'),
+    'a split-markup file matched by -diff rules is hidden'
+  );
+  assert.equal(
+    window.document.querySelector('#page-total [data-testid="js-file-addition-line"]').textContent,
+    '2850',
+    "GitLab's own page total is never overwritten"
+  );
+  const badge = window.document.querySelector('[data-golens-nodiff-stats]');
+  assert.ok(badge, 'the recalculated total badge was not created for split markup');
+  assert.equal(badge.textContent, '· zonder -diff: 10+ 3-', 'hidden +2840/-7 is subtracted from page +2850/-10');
+  assert.equal(badge.previousElementSibling.id, 'page-total', 'the badge sits after the page-total container, never a per-file badge');
+  assert.equal(window.document.querySelectorAll('[data-golens-nodiff-stats]').length, 1);
+
+  settings.fireChange('enabled', false);
+  assert.equal(window.document.querySelector('[data-golens-generated-hidden]'), null, 'disabling restores hidden diffs');
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null, 'disabling removes the badge');
+
+  settings.fireChange('enabled', true);
+  assert.ok(window.document.getElementById('nodiff-split').hasAttribute('data-golens-generated-hidden'));
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]').textContent, '· zonder -diff: 10+ 3-');
+
+  handle.unmount();
+  assert.equal(window.document.querySelector('[data-golens-generated-hidden]'), null, 'unmount() restores hidden diffs');
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null, 'unmount() removes the badge');
+});
+
+test('-diff: disabling the extension removes -diff hiding and the badge, re-enabling restores them', async () => {
+  const window = buildFixture();
+  const settings = fakeSettingsStore({ enabled: true, hideGeneratedFiles: false, hideNoDiffAttributes: true });
+  const handle = mount({ settings, clock: fakeClock(), gitAttributes: stubGitAttributes() });
+  settings.resolveReady();
+  await delay();
+  await delay();
+  await delay();
+
+  assert.ok(window.document.querySelector('[data-golens-nodiff-stats]'));
+
+  settings.fireChange('enabled', false);
+  assert.equal(window.document.querySelector('[data-golens-generated-hidden]'), null);
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null);
+
+  settings.fireChange('enabled', true);
+  assert.ok(window.document.getElementById('nodiff-gen').hasAttribute('data-golens-generated-hidden'));
+  assert.ok(window.document.querySelector('[data-golens-nodiff-stats]'));
+
+  handle.unmount();
+});
+
+function buildAriaLabelFixture({ pageTotal, diffFiles }) {
+  const window = new Window({ url: 'https://gitlab.example/group/project/-/merge_requests/42/diffs' });
+  window.document.write(`
+    <!doctype html>
+    <html><head></head><body>
+      <header id="mr-header">${pageTotal}</header>
+      <main id="diffs">${diffFiles}</main>
+    </body></html>
+  `);
+
+  globalThis.window = window;
+  globalThis.document = window.document;
+  globalThis.location = window.location;
+  globalThis.MutationObserver = window.MutationObserver;
+  globalThis.Event = window.Event;
+  globalThis.CustomEvent = window.CustomEvent;
+
+  return window;
+}
+
+// The exact structure GitLab renders for its real page total: the outer
+// wrapper carries no total-specific selector, only gl-flex + the accessible
+// name — the inner split groups are identical to per-file stats.
+const ariaLabelPageTotal = (added, deleted) => `
+  <div aria-label="Added ${added} lines. Removed ${deleted} lines." class="gl-flex"><div class="diff-stats-group gl-flex gl-items-center gl-text-success gl-font-bold"><span>+</span> <span data-testid="js-file-addition-line">${added}</span></div> <div class="diff-stats-group gl-flex gl-items-center gl-text-danger gl-font-bold"><span>−</span> <span data-testid="js-file-deletion-line">${deleted}</span></div></div>
+`;
+
+const noDiffFile = (id, path, stat) => `
+  <div id="${id}" class="diff-file file-holder" data-path="${path}">
+    <div class="file-title" data-testid="file-title-container"><strong>${id}.go</strong><span class="file-stats">${stat}</span></div>
+    <div class="diff-content"><p>Plain diff, only matched by root .gitattributes -diff rules.</p></div>
+  </div>
+`;
+
+async function mountNoDiff(window) {
+  const settings = fakeSettingsStore({ enabled: true, hideGeneratedFiles: false, hideNoDiffAttributes: true });
+  const handle = mount({ settings, clock: fakeClock(), gitAttributes: stubGitAttributes() });
+  settings.resolveReady();
+  await delay();
+  await delay();
+  await delay();
+  return { settings, handle };
+}
+
+test('-diff: echte page-totaal wrapper (aria-label) krijgt de badge ERNA, niet tussen + en − in', async () => {
+  const window = buildAriaLabelFixture({
+    pageTotal: ariaLabelPageTotal(2840, 755),
+    diffFiles: noDiffFile('nodiff-exact', 'svc/exact.gen.go', '+10 -4'),
+  });
+  const { handle } = await mountNoDiff(window);
+
+  assert.ok(
+    window.document.getElementById('nodiff-exact').hasAttribute('data-golens-generated-hidden'),
+    'the -diff file is hidden'
+  );
+  const wrapper = window.document.querySelector('#mr-header .gl-flex');
+  assert.equal(
+    wrapper.querySelector('[data-testid="js-file-addition-line"]').textContent,
+    '2840',
+    "GitLab's eigen page-totaal wordt nooit overschreven"
+  );
+  const badge = window.document.querySelector('[data-golens-nodiff-stats]');
+  assert.ok(badge, 'de badge verschijnt bij het echte page-totaal');
+  assert.equal(badge.textContent, '· zonder -diff: 2830+ 751-', 'hidden +10/-4 is afgetrokken van page +2840/-755');
+  assert.equal(badge.previousElementSibling, wrapper, 'de badge staat direct NA de wrapper');
+  assert.equal(wrapper.nextElementSibling, badge);
+  assert.equal(wrapper.contains(badge), false, 'de badge staat niet tussen + en − in');
+  assert.equal(window.document.querySelectorAll('[data-golens-nodiff-stats]').length, 1);
+
+  handle.unmount();
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null, 'unmount() removes the badge');
+});
+
+test('-diff: identieke stat-structuur binnen een diff-file is per-file stat, nooit page-totaal', async () => {
+  const window = buildAriaLabelFixture({
+    pageTotal: '',
+    diffFiles: `
+      <div id="nodiff-perfile" class="diff-file file-holder" data-path="svc/perfile.gen.go">
+        <div class="file-title" data-testid="file-title-container"><strong>perfile.gen.go</strong>${ariaLabelPageTotal(2840, 755)}</div>
+        <div class="diff-content"><p>Plain diff, only matched by root .gitattributes -diff rules.</p></div>
+      </div>
+    `,
+  });
+  const { handle } = await mountNoDiff(window);
+
+  const diffFile = window.document.getElementById('nodiff-perfile');
+  assert.ok(diffFile.hasAttribute('data-golens-generated-hidden'), 'the -diff file is hidden');
+  const perFileWrapper = diffFile.querySelector('.gl-flex');
+  const badge = window.document.querySelector('[data-golens-nodiff-stats]');
+  assert.ok(badge, 'verborgen regels tonen toch een badge, ook zonder page-totaal');
+  assert.equal(
+    badge.textContent,
+    '· zonder -diff: ≈2840+ 755- verborgen',
+    'de per-file +2840/-755 is als hidden stat gelezen'
+  );
+  assert.equal(
+    diffFile.querySelector('[data-golens-nodiff-stats]'),
+    null,
+    'de per-file stat wordt nooit als page-totaal gebruikt'
+  );
+  assert.equal(perFileWrapper.contains(badge), false);
+  assert.equal(badge.parentNode.id, 'diffs', 'de fallback-badge staat bij #diffs');
+  assert.equal(window.document.querySelectorAll('[data-golens-nodiff-stats]').length, 1);
+
+  handle.unmount();
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null, 'unmount() removes the badge');
+});
+
+test('-diff: onparseerbaar page-totaal met verborgen regels toont toch de fallback-badge', async () => {
+  const window = buildAriaLabelFixture({
+    pageTotal: '<span data-testid="diff-stats">changed files</span>',
+    diffFiles: noDiffFile('nodiff-unparsed', 'svc/unparsed.gen.go', '+10 -4'),
+  });
+  const { handle } = await mountNoDiff(window);
+
+  assert.ok(window.document.getElementById('nodiff-unparsed').hasAttribute('data-golens-generated-hidden'));
+  const legacyTotal = window.document.querySelector('#mr-header [data-testid="diff-stats"]');
+  assert.equal(legacyTotal.textContent, 'changed files', "GitLab's eigen totaal wordt nooit overschreven");
+  const badge = window.document.querySelector('[data-golens-nodiff-stats]');
+  assert.ok(badge, 'ook bij een onparseerbaar totaal verschijnt een badge');
+  assert.equal(badge.textContent, '· zonder -diff: ≈10+ 4- verborgen');
+  assert.equal(badge.parentNode.id, 'diffs', 'de fallback-badge staat bij #diffs');
+  assert.equal(window.document.querySelectorAll('[data-golens-nodiff-stats]').length, 1);
+
+  handle.unmount();
+  assert.equal(window.document.querySelector('[data-golens-nodiff-stats]'), null, 'unmount() removes the badge');
 });

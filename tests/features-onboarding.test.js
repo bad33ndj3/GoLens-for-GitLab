@@ -379,3 +379,16 @@ test('dismissing the setup wizard without saving still bumps the stored onboardi
 
   handle.unmount();
 });
+
+test('the Help reference teaches root .gitattributes -diff hiding with its recalculated total', () => {
+  buildFixture();
+  const handle = mount({ overlays: fakeOverlayRegistry(), runtime: fakeRuntime(), settings: fakeSettings() });
+
+  assert.deepEqual(handle.show(), { kind: 'shown' });
+  const dialog = document.getElementById('golens-onboarding-root').shadowRoot.querySelector('[data-onboarding-dialog]');
+  assert.match(dialog.textContent, /Optionally hide generated files/);
+  assert.match(dialog.textContent, /-diff/);
+  assert.match(dialog.textContent, /GitLab totals stay visible with a recalculated total beside them/);
+
+  handle.unmount();
+});

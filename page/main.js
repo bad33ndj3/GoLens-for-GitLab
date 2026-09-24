@@ -88,7 +88,13 @@ export function mount(ctx = {}) {
   const lifecycle = startLifecycle({
     platform: { clock, settings, overlays },
     features: [
-      { name: 'generated-files', mount: mountGeneratedFiles },
+      { name: 'generated-files', mount: mountGeneratedFiles, capabilities: { gitAttributes: {
+        // Late-bound closures onto the session's platform services (never
+        // captured values), following the mr-preload `legacy` pattern above.
+        fetchSource: (...args) => session.gitlabApi.fetchSource(...args),
+        getHeadRef: (...args) => session.gitlabApi.mergeRequestHeadRef(...args),
+        getSignal: () => session.getSignal(),
+      } } },
       { name: 'settings-overlay', mount: mountSettingsOverlay },
       { name: 'onboarding', mount: mountOnboarding },
       {

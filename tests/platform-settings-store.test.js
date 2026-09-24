@@ -35,6 +35,7 @@ test('ready() resolves defaults for unset keys, get() returns a sync snapshot', 
   await store.ready();
   assert.equal(store.get('enabled'), true);
   assert.equal(store.get('hideGeneratedFiles'), false);
+  assert.equal(store.get('hideNoDiffAttributes'), false);
   assert.equal(store.get('shortcutCoachEnabled'), true);
   assert.deepEqual(store.get('shortcutBindings'), defaultBindings());
   assert.equal(store.get('golensOnboardingVersion'), 0);

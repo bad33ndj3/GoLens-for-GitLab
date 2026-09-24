@@ -2,7 +2,7 @@ import { cacheRequest, createFullProjectCacheController, formatBytes } from './e
 import { grantedSelfHostedPatterns, normalizeGitLabOrigin } from './gitlab-host-access.js';
 import * as shortcutSettings from './shortcut-settings.js';
 
-const defaults = { enabled: true, hideGeneratedFiles: false, shortcutCoachEnabled: true, shortcutBindings: shortcutSettings.defaultBindings() };
+const defaults = { enabled: true, hideGeneratedFiles: false, hideNoDiffAttributes: false, shortcutCoachEnabled: true, shortcutBindings: shortcutSettings.defaultBindings() };
 const pageMeta = {
   general: ['General', 'Choose how GoLens behaves across GitLab reviews.'],
   shortcuts: ['Keyboard shortcuts', 'Move through large diffs without leaving the keyboard.'],

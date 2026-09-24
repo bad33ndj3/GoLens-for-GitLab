@@ -23,6 +23,14 @@ import {
   isGeneratedWarning,
   classifyFolders,
   shouldHideGeneratedFiles,
+  shouldHideNoDiff,
+  isNoDiffPath,
+  parseNoDiffRules,
+  parseDiffStatBadge,
+  parsePageTotal,
+  parsePageTotalAriaLabel,
+  formatNoDiffTotal,
+  formatNoDiffHiddenOnly,
   shouldShowFullFileButtons,
   findRapidFullFileItem,
   viewerIsText,
@@ -111,10 +119,69 @@ export function mount(ctx) {
   let unmounted = false;
   let enabled = false;
   let hideGeneratedFiles = false;
+  let hideNoDiffAttributes = false;
   const autoCollapsedGeneratedFolders = new Set();
+
+  // Root-`.gitattributes` `-diff` rules, fetched once per diff page through
+  // the injected `gitAttributes` capability (late-bound closures from
+  // page/main.js — never a captured value). Absent (older wiring, tests
+  // without the capability) means fail-closed to the pre-`-diff` behavior.
+  const gitAttributes = ctx.gitAttributes || null;
+  let noDiffPageKey = '';
+  let noDiffRules = [];
+  let noDiffAttempted = false;
+  let noDiffLoading = false;
 
   function isDiffPage() {
     return isMergeRequestDiff(loc);
+  }
+
+  function diffPageKey() {
+    return `${loc.pathname}${loc.search}`;
+  }
+
+  function shouldHideNoDiffNow() {
+    return shouldHideNoDiff({ enabled, hideNoDiffAttributes, isDiffPage: isDiffPage() });
+  }
+
+  // ensureNoDiffRules() -> kicks off the single root-`.gitattributes` fetch
+  // for this diff page (1x per navigation key) when the `-diff` gate is on,
+  // then reconciles again once the rules land. Any failure (404, unparsable
+  // head ref, fetch error) resolves to `rules = []`, so nothing is ever
+  // hidden without rules — fail-closed to the current behavior.
+  function ensureNoDiffRules() {
+    if (!gitAttributes || unmounted) return;
+    if (!shouldHideNoDiffNow()) return;
+    const key = diffPageKey();
+    if (key !== noDiffPageKey) {
+      noDiffPageKey = key;
+      noDiffRules = [];
+      noDiffAttempted = false;
+      noDiffLoading = false;
+    }
+    if (noDiffLoading || noDiffAttempted) return;
+    noDiffLoading = true;
+    noDiffAttempted = true;
+    (async () => {
+      try {
+        const headSha = await gitAttributes.getHeadRef();
+        if (unmounted || diffPageKey() !== key) return;
+        if (!headSha) {
+          noDiffRules = [];
+          return;
+        }
+        const signal = gitAttributes.getSignal ? gitAttributes.getSignal() : undefined;
+        const text = await gitAttributes.fetchSource('.gitattributes', headSha, signal);
+        if (unmounted || diffPageKey() !== key) return;
+        noDiffRules = parseNoDiffRules(text).rules;
+      } catch {
+        noDiffRules = [];
+      } finally {
+        if (diffPageKey() !== key) return;
+        noDiffLoading = false;
+        if (!unmounted) reconcile();
+      }
+    })();
   }
 
   // --- generated-file hiding ------------------------------------------
@@ -129,6 +196,7 @@ export function mount(ctx) {
     doc.querySelectorAll('[data-golens-generated-folder]').forEach((folder) => {
       folder.removeAttribute('data-golens-generated-folder');
     });
+    removeNoDiffBadge();
     autoCollapsedGeneratedFolders.clear();
   }
 
@@ -152,21 +220,278 @@ export function mount(ctx) {
     });
   }
 
+  // --- recalculated -diff total badge -----------------------------------
+
+  function removeNoDiffBadge() {
+    doc.querySelectorAll('[data-golens-nodiff-stats]').forEach((badge) => badge.remove());
+  }
+
+  // hiddenFileStat(diffFile) -> { added, deleted } | null, from the file's
+  // own stat badge. GitLab's current split markup is read first: bare
+  // `[data-testid="js-file-addition-line|js-file-deletion-line"]` counts
+  // (plain numbers without a +/- prefix, so Number() not the badge parser),
+  // then whole `.diff-stats-group` containers whose combined textContent
+  // ("+ 2840" / "- 12") parses via parseDiffStatBadge — container-level so
+  // a split sign span and count span still combine. Legacy precise
+  // `[data-testid="additions|deletions"]` nodes, a combined
+  // `.diff-stats`/`.file-stats` node, and a header-scoped leaf scan stay as
+  // fallbacks (never diff line content — a `+12` code line is not a stat).
+  // Only successfully parsed badges count; anything else is null so the
+  // caller can track it as unparseable. Total.
+  function hiddenFileStat(diffFile) {
+    try {
+      const additionLineNode = diffFile.querySelector('[data-testid="js-file-addition-line"]');
+      const deletionLineNode = diffFile.querySelector('[data-testid="js-file-deletion-line"]');
+      if (additionLineNode || deletionLineNode) {
+        const readSplitCount = (node) => {
+          try {
+            if (!node) return null;
+            const raw = (node.textContent || '').replace(/[,\s]/g, '');
+            if (!/^\d+$/.test(raw)) return null;
+            const value = Number(raw);
+            if (!Number.isFinite(value) || value < 0) return null;
+            return value;
+          } catch {
+            return null;
+          }
+        };
+        const splitAdded = readSplitCount(additionLineNode);
+        const splitDeleted = readSplitCount(deletionLineNode);
+        if (splitAdded !== null || splitDeleted !== null) {
+          return { added: splitAdded ?? 0, deleted: splitDeleted ?? 0 };
+        }
+      }
+      const statGroups = diffFile.querySelectorAll('.diff-stats-group');
+      if (statGroups.length > 0) {
+        let groupedAdded = 0;
+        let groupedDeleted = 0;
+        let groupedFound = false;
+        for (const group of statGroups) {
+          if (group.closest('[data-golens-nodiff-stats]')) continue;
+          const parsed = parseDiffStatBadge(group.textContent);
+          if (parsed && (parsed.added > 0 || parsed.deleted > 0)) {
+            groupedAdded += parsed.added;
+            groupedDeleted += parsed.deleted;
+            groupedFound = true;
+          }
+        }
+        if (groupedFound) return { added: groupedAdded, deleted: groupedDeleted };
+      }
+      const additionsNode = diffFile.querySelector('[data-testid="additions"]');
+      const deletionsNode = diffFile.querySelector('[data-testid="deletions"]');
+      if (additionsNode || deletionsNode) {
+        const added = additionsNode ? parseDiffStatBadge(additionsNode.textContent) : null;
+        const deleted = deletionsNode ? parseDiffStatBadge(deletionsNode.textContent) : null;
+        if (!added && !deleted) return null;
+        return { added: added ? added.added : 0, deleted: deleted ? deleted.deleted : 0 };
+      }
+      const combined = diffFile.querySelector('.diff-stats, .file-stats');
+      if (combined) return parseDiffStatBadge(combined.textContent);
+      const header = diffFile.querySelector(
+        'header, [data-testid="file-title-container"], .file-title, [data-testid="rd-diff-file-header"]'
+      );
+      const scope = header || diffFile;
+      for (const leaf of scope.querySelectorAll('span, strong, small, em')) {
+        if (leaf.children.length > 0) continue;
+        const parsed = parseDiffStatBadge((leaf.textContent || '').trim());
+        if (parsed && (parsed.added > 0 || parsed.deleted > 0)) return parsed;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // liftToGroupedParent(node) -> the parent grouping several
+  // `.diff-stats-group` containers (GitLab's current split style: one `+`
+  // group and one `-` group) when it parses as a combined total, or null. A
+  // lone single-sided group must never become the total node: placing the
+  // badge after it lands *between* GitLab's `+` and `-` halves, where it is
+  // invisible and fragile. Total.
+  function liftToGroupedParent(node) {
+    if (!node || !node.matches?.('.diff-stats-group')) return null;
+    const parent = node.parentElement;
+    if (!parent || parent === doc.body) return null;
+    if (parent.hasAttribute('data-golens-nodiff-stats')) return null;
+    if (parent.closest('[data-golens-nodiff-stats]')) return null;
+    if (parent.closest('diff-file, .diff-file.file-holder')) return null;
+    if (parent.querySelectorAll('.diff-stats-group').length <= 1) return null;
+    const parentParsed = parsePageTotal(parent.textContent);
+    if (!parentParsed || (parentParsed.added <= 0 && parentParsed.deleted <= 0)) return null;
+    return parent;
+  }
+
+  // findAriaLabelPageTotal() -> GitLab's current page-total wrapper: a plain
+  // `gl-flex` container with no total-specific selector, identified only by
+  // `aria-label="Added N lines. Removed M lines."` (case-insensitive
+  // added+removed or additions+deletions). Per-file lookalikes live inside a
+  // diff-file root and stay excluded. The WRAPPER itself is returned (never
+  // an inner group) so the badge lands after the whole total, and it is
+  // verified via the combined textContent (both sides > 0) or the
+  // aria-label numbers. Total.
+  function findAriaLabelPageTotal() {
+    for (const node of doc.querySelectorAll('[aria-label]')) {
+      if (node.hasAttribute('data-golens-nodiff-stats')) continue;
+      if (node.closest('[data-golens-nodiff-stats]')) continue;
+      if (node.closest('diff-file, .diff-file.file-holder')) continue;
+      const labelParsed = parsePageTotalAriaLabel(node.getAttribute('aria-label') || '');
+      if (!labelParsed) continue;
+      const textParsed = parsePageTotal(node.textContent);
+      if (textParsed && textParsed.added > 0 && textParsed.deleted > 0) return node;
+      if (labelParsed.added > 0 || labelParsed.deleted > 0) return node;
+    }
+    return null;
+  }
+
+  // findPageTotalNode() -> GitLab's own page-total stat node, never a
+  // per-file badge (those live inside a diff-file root) and never GoLens's
+  // own badge. The aria-label wrapper is recognized directly first (it
+  // matches no legacy total selector); besides those, page totals in
+  // GitLab's current split style are recognized: `.diff-stats-group`
+  // containers outside diff-file roots (lifted to their parent when it
+  // groups several stat groups, so a split + group and - group report
+  // together), and containers holding
+  // `js-file-addition-line`/`js-file-deletion-line` counts (with the same
+  // parent lift). Total.
+  function findPageTotalNode() {
+    const ariaLabelTotal = findAriaLabelPageTotal();
+    if (ariaLabelTotal) return ariaLabelTotal;
+    const matches = doc.querySelectorAll(
+      '[data-testid="diff-stats"], .diff-stats, .changed-files-summary, [data-testid="diffs-stats"], .diff-stats-group'
+    );
+    for (const node of matches) {
+      if (node.hasAttribute('data-golens-nodiff-stats')) continue;
+      if (node.closest('[data-golens-nodiff-stats]')) continue;
+      if (node.closest('diff-file, .diff-file.file-holder')) continue;
+      if (node.matches('.diff-stats-group')) {
+        const grouped = parsePageTotal(node.textContent);
+        if (!grouped || (grouped.added <= 0 && grouped.deleted <= 0)) continue;
+        const lifted = liftToGroupedParent(node);
+        if (lifted) return lifted;
+        return node;
+      }
+      return node;
+    }
+    for (const leaf of doc.querySelectorAll('[data-testid="js-file-addition-line"], [data-testid="js-file-deletion-line"]')) {
+      if (leaf.closest('[data-golens-nodiff-stats]')) continue;
+      if (leaf.closest('diff-file, .diff-file.file-holder')) continue;
+      const container = leaf.closest('.diff-stats-group') || leaf.parentElement;
+      if (!container || container === doc.body) continue;
+      if (container.hasAttribute?.('data-golens-nodiff-stats')) continue;
+      if (container.closest('[data-golens-nodiff-stats]')) continue;
+      if (container.closest('diff-file, .diff-file.file-holder')) continue;
+      const lifted = liftToGroupedParent(container);
+      if (lifted) return lifted;
+      const parsed = parsePageTotal(container.textContent);
+      if (parsed && (parsed.added > 0 || parsed.deleted > 0)) return container;
+    }
+    const diffs = doc.getElementById('diffs');
+    const scope = diffs?.parentElement || doc.body;
+    for (const node of scope.querySelectorAll('header, [data-testid="file-tree-header"], .file-tree-header')) {
+      if (node.closest('diff-file, .diff-file.file-holder')) continue;
+      if (node.querySelector('[data-golens-nodiff-stats]')) continue;
+      const parsed = parsePageTotal(node.textContent);
+      if (parsed && (parsed.added > 0 || parsed.deleted > 0)) return node;
+    }
+    return null;
+  }
+
+  // reconcileNoDiffTotal(hiddenStats, unparseableBadgeCount) -> creates,
+  // moves, or removes the `span[data-golens-nodiff-stats]`. Main path: the
+  // badge sits directly after GitLab's total node (GitLab's node itself is
+  // never written to). Fallback path: when the page total is missing or
+  // unparseable but lines were hidden, an ≈-marked badge with the hidden
+  // counts is shown at the top of `#diffs` (else after the file-tree
+  // header) — hidden lines without any badge must never happen. Idempotent
+  // (equal text is not re-applied and a settled badge is not moved, so the
+  // badge never retriggers the observer loop) and only active while the
+  // `-diff` gate is on. Total.
+  function reconcileNoDiffTotal(hiddenStats, unparseableBadgeCount) {
+    if (!shouldHideNoDiffNow()) {
+      removeNoDiffBadge();
+      return;
+    }
+    const hiddenAdded = hiddenStats.reduce((sum, stat) => sum + stat.added, 0);
+    const hiddenDeleted = hiddenStats.reduce((sum, stat) => sum + stat.deleted, 0);
+    const unparseable = String(unparseableBadgeCount);
+    const existing = doc.querySelector('[data-golens-nodiff-stats]');
+    const placeBadge = (text, anchor, position) => {
+      if (!text) {
+        existing?.remove();
+        return;
+      }
+      let badge = existing;
+      if (!badge) {
+        badge = doc.createElement('span');
+        badge.setAttribute('data-golens-nodiff-stats', '');
+      }
+      if (badge.textContent !== text) badge.textContent = text;
+      if (badge.dataset.golensNodiffUnparseable !== unparseable) badge.dataset.golensNodiffUnparseable = unparseable;
+      if (position === 'after') {
+        if (badge.previousElementSibling !== anchor || badge.parentNode !== anchor.parentNode) {
+          anchor.after(badge);
+        }
+      } else if (badge.parentNode !== anchor || badge.previousElementSibling !== null) {
+        anchor.prepend(badge);
+      }
+    };
+    const totalNode = findPageTotalNode();
+    if (totalNode?.isConnected) {
+      const page = parsePageTotal(totalNode.textContent);
+      if (page) {
+        placeBadge(
+          formatNoDiffTotal({ pageAdded: page.added, pageDeleted: page.deleted, hiddenAdded, hiddenDeleted }),
+          totalNode,
+          'after'
+        );
+        return;
+      }
+    }
+    const fallbackText = formatNoDiffHiddenOnly({ hiddenAdded, hiddenDeleted });
+    if (!fallbackText) {
+      existing?.remove();
+      return;
+    }
+    const diffs = doc.getElementById('diffs');
+    if (diffs) {
+      placeBadge(fallbackText, diffs, 'prepend');
+      return;
+    }
+    const treeHeader = doc.querySelector('[data-testid="file-tree-header"], .file-tree-header');
+    if (treeHeader) {
+      placeBadge(fallbackText, treeHeader, 'after');
+      return;
+    }
+    existing?.remove();
+  }
+
   function reconcileGeneratedDiffFiles() {
-    if (!shouldHideGeneratedFiles({ enabled, hideGeneratedFiles, isDiffPage: isDiffPage() })) {
+    const hideGenerated = shouldHideGeneratedFiles({ enabled, hideGeneratedFiles, isDiffPage: isDiffPage() });
+    const hideNoDiff = shouldHideNoDiffNow();
+    if (!hideGenerated && !hideNoDiff) {
       restoreGeneratedDiffFiles();
       return;
     }
+    if (hideNoDiff) ensureNoDiffRules();
     const hiddenFileHashes = new Set();
     const allFilePaths = new Set();
     const hiddenFilePaths = new Set();
+    const hiddenStats = [];
+    let unparseableBadgeCount = 0;
     diffFileRoots(doc).forEach((diffFile) => {
-      const hidden = isGeneratedCollapsedDiff(diffFile, loc);
       const filePath = diffFilePath(diffFile);
+      const generated = hideGenerated && isGeneratedCollapsedDiff(diffFile, loc);
+      const noDiff = hideNoDiff && Boolean(filePath) && isNoDiffPath(noDiffRules, filePath);
+      const hidden = Boolean(generated || noDiff);
       diffFile.toggleAttribute('data-golens-generated-hidden', hidden);
       if (hidden && diffFile.id) hiddenFileHashes.add(diffFile.id);
       if (filePath) allFilePaths.add(filePath);
       if (hidden && filePath) hiddenFilePaths.add(filePath);
+      if (hidden) {
+        const stat = hiddenFileStat(diffFile);
+        if (stat) hiddenStats.push(stat);
+        else unparseableBadgeCount += 1;
+      }
     });
     doc.querySelectorAll('[data-file-row]').forEach((fileRow) => {
       fileRow.toggleAttribute(
@@ -175,6 +500,7 @@ export function mount(ctx) {
       );
     });
     reconcileGeneratedFileFolders(allFilePaths, hiddenFilePaths);
+    reconcileNoDiffTotal(hiddenStats, unparseableBadgeCount);
   }
 
   // --- full-file button --------------------------------------------------
@@ -366,9 +692,27 @@ export function mount(ctx) {
     reconcileGeneratedDiffFiles();
   }
 
+  // isNoDiffBadgeOnlyMutation(mutation) -> true when a mutation only touches
+  // GoLens's own recalculated-total badge, so maintaining that badge never
+  // reschedules (and thereby never re-triggers) a reconcile pass. Total.
+  function isNoDiffBadgeOnlyMutation(mutation) {
+    if (mutation.type === 'attributes') return Boolean(mutation.target?.closest?.('[data-golens-nodiff-stats]'));
+    if (mutation.type === 'characterData') {
+      return Boolean(mutation.target?.parentElement?.closest?.('[data-golens-nodiff-stats]'));
+    }
+    const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+    if (!nodes.length) return false;
+    return nodes.every((node) => node.nodeType === 1 && (
+      node.matches?.('[data-golens-nodiff-stats]') || node.closest?.('[data-golens-nodiff-stats]')
+    ));
+  }
+
   const scheduleReconcile = clock.debounceIdle(reconcile, { delayMs: RECONCILE_DEBOUNCE_MS });
 
-  const observer = new MutationObserver(scheduleReconcile);
+  const observer = new MutationObserver((mutations) => {
+    if (mutations.length && mutations.every(isNoDiffBadgeOnlyMutation)) return;
+    scheduleReconcile();
+  });
   observer.observe(doc.body, { childList: true, subtree: true });
 
   const onVisibilityChange = () => {
@@ -380,15 +724,21 @@ export function mount(ctx) {
   doc.addEventListener('visibilitychange', onVisibilityChange);
 
   let unsubscribeHideGeneratedFiles = null;
+  let unsubscribeHideNoDiffAttributes = null;
   let unsubscribeEnabled = null;
   if (settings) {
     settings.ready().then(() => {
       if (unmounted) return;
       hideGeneratedFiles = Boolean(settings.get('hideGeneratedFiles'));
+      hideNoDiffAttributes = Boolean(settings.get('hideNoDiffAttributes'));
       enabled = Boolean(settings.get('enabled'));
       reconcile();
       unsubscribeHideGeneratedFiles = settings.subscribe('hideGeneratedFiles', (value) => {
         hideGeneratedFiles = Boolean(value);
+        reconcile();
+      });
+      unsubscribeHideNoDiffAttributes = settings.subscribe('hideNoDiffAttributes', (value) => {
+        hideNoDiffAttributes = Boolean(value);
         reconcile();
       });
       unsubscribeEnabled = settings.subscribe('enabled', (value) => {
@@ -409,6 +759,7 @@ export function mount(ctx) {
       doc.removeEventListener('pjax:end', scheduleReconcile);
       doc.removeEventListener('visibilitychange', onVisibilityChange);
       unsubscribeHideGeneratedFiles?.();
+      unsubscribeHideNoDiffAttributes?.();
       unsubscribeEnabled?.();
       removeFullFileButtons();
       restoreGeneratedDiffFiles();

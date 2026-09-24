@@ -5,8 +5,9 @@
 //   createSettingsStore() -> { get(key), ready(), subscribe(key, fn), set(key, value) }
 //
 // Key ownership is a convention this module documents but does not enforce:
-// `enabled` belongs to lifecycle, `hideGeneratedFiles` to
-// features/generated-files, `shortcutBindings`/`shortcutCoachEnabled` to this
+// `enabled` belongs to lifecycle, `hideGeneratedFiles` and
+// `hideNoDiffAttributes` to features/generated-files,
+// `shortcutBindings`/`shortcutCoachEnabled` to this
 // module itself (the seam toward `settings.js`/`shortcut-settings.js`, which
 // stay out of scope and keep writing those keys directly for now).
 import { defaultBindings } from '../../shortcut-settings.js';
@@ -14,6 +15,7 @@ import { defaultBindings } from '../../shortcut-settings.js';
 const SCHEMA = {
   enabled: { area: 'sync', default: true },
   hideGeneratedFiles: { area: 'sync', default: false },
+  hideNoDiffAttributes: { area: 'sync', default: false },
   shortcutCoachEnabled: { area: 'sync', default: true },
   shortcutBindings: {
     area: 'sync',

@@ -6,6 +6,13 @@ import {
   hasCollapseGeneratedFilesLink,
   isGeneratedWarning,
   shouldHideGeneratedFiles,
+  shouldHideNoDiff,
+  parseNoDiffRules,
+  matchesNoDiffPattern,
+  isNoDiffPath,
+  parseDiffStatBadge,
+  parsePageTotal,
+  formatNoDiffTotal,
   shouldShowFullFileButtons,
   classifyFolders,
   findRapidFullFileItem,
@@ -69,6 +76,130 @@ test('shouldHideGeneratedFiles gates on enabled, the setting, and being on a dif
   assert.equal(shouldHideGeneratedFiles({ enabled: false, hideGeneratedFiles: true, isDiffPage: true }), false);
   assert.equal(shouldHideGeneratedFiles({ enabled: true, hideGeneratedFiles: false, isDiffPage: true }), false);
   assert.equal(shouldHideGeneratedFiles({ enabled: true, hideGeneratedFiles: true, isDiffPage: false }), false);
+});
+
+test('shouldHideNoDiff gates on enabled, the new setting, and being on a diff page', () => {
+  assert.equal(shouldHideNoDiff({ enabled: true, hideNoDiffAttributes: true, isDiffPage: true }), true);
+  assert.equal(shouldHideNoDiff({ enabled: false, hideNoDiffAttributes: true, isDiffPage: true }), false);
+  assert.equal(shouldHideNoDiff({ enabled: true, hideNoDiffAttributes: false, isDiffPage: true }), false);
+  assert.equal(shouldHideNoDiff({ enabled: true, hideNoDiffAttributes: true, isDiffPage: false }), false);
+});
+
+test('parseNoDiffRules keeps file order and marks only exact -diff / diff=false attributes', () => {
+  const { rules, truncated } = parseNoDiffRules('# comment\n\n*.gen.go -diff\nkeep.go diff=true\n*.min.js diff=false\n');
+  assert.equal(truncated, false);
+  assert.deepEqual(rules, [
+    { pattern: '*.gen.go', noDiff: true },
+    { pattern: 'keep.go', noDiff: false },
+    { pattern: '*.min.js', noDiff: true },
+  ]);
+});
+
+test('parseNoDiffRules is total and caps input explicitly instead of silently indexing a partial package', () => {
+  assert.deepEqual(parseNoDiffRules(undefined), { rules: [], truncated: false });
+  assert.deepEqual(parseNoDiffRules(''), { rules: [], truncated: false });
+  assert.doesNotThrow(() => parseNoDiffRules(null));
+  const manyLines = `${Array.from({ length: 501 }, (_, index) => `file${index}.go -diff`).join('\n')}\n`;
+  const capped = parseNoDiffRules(manyLines);
+  assert.equal(capped.rules.length, 500);
+  assert.equal(capped.truncated, true);
+  assert.equal(parseNoDiffRules(`${'x'.repeat(100 * 1024 + 1)} -diff`).truncated, true);
+});
+
+test('matchesNoDiffPattern: a pattern without a slash matches basenames, with * staying inside one segment', () => {
+  assert.equal(matchesNoDiffPattern('*.gen.go', 'svc/a.gen.go'), true);
+  assert.equal(matchesNoDiffPattern('*.gen.go', 'svc/a.go'), false);
+  assert.equal(matchesNoDiffPattern('*.gen.go', 'a.gen.go'), true);
+  assert.equal(matchesNoDiffPattern('docs/*.md', 'docs/a.md'), true);
+  assert.equal(matchesNoDiffPattern('docs/*.md', 'docs/a/b.md'), false);
+});
+
+test('matchesNoDiffPattern: leading slashes anchor to the root, ** spans directories, ? one character', () => {
+  assert.equal(matchesNoDiffPattern('/root.go', 'root.go'), true);
+  assert.equal(matchesNoDiffPattern('/root.go', 'sub/root.go'), false);
+  assert.equal(matchesNoDiffPattern('**/*.gen.go', 'svc/nested/a.gen.go'), true);
+  assert.equal(matchesNoDiffPattern('**/*.gen.go', 'a.gen.go'), true);
+  assert.equal(matchesNoDiffPattern('a?c.go', 'svc/abc.go'), true);
+  assert.equal(matchesNoDiffPattern('a?c.go', 'svc/ac.go'), false);
+  assert.equal(matchesNoDiffPattern('a?c.go', 'svc/abbc.go'), false);
+});
+
+test('matchesNoDiffPattern: a trailing slash matches a directory prefix', () => {
+  assert.equal(matchesNoDiffPattern('build/', 'build/a.go'), true);
+  assert.equal(matchesNoDiffPattern('build/', 'src/build/a.go'), true);
+  assert.equal(matchesNoDiffPattern('build/', 'builder/a.go'), false);
+  assert.equal(matchesNoDiffPattern('docs/build/', 'docs/build/a.go'), true);
+  assert.equal(matchesNoDiffPattern('docs/build/', 'other/build/a.go'), false);
+});
+
+test('matchesNoDiffPattern rejects unknown glob syntax and never throws', () => {
+  assert.equal(matchesNoDiffPattern('*.{go,js}', 'a.go'), false);
+  assert.equal(matchesNoDiffPattern('[abc].go', 'a.go'), false);
+  assert.equal(matchesNoDiffPattern('(a).go', 'a.go'), false);
+  assert.equal(matchesNoDiffPattern('a!b.go', 'a!b.go'), false);
+  assert.equal(matchesNoDiffPattern('', 'a.go'), false);
+  assert.equal(matchesNoDiffPattern(undefined, 'a.go'), false);
+  assert.equal(matchesNoDiffPattern('*.go', ''), false);
+  assert.doesNotThrow(() => matchesNoDiffPattern(null, null));
+});
+
+test('matchesNoDiffPattern strips a leading ! without inverting (negation lives in isNoDiffPath)', () => {
+  assert.equal(matchesNoDiffPattern('!*.go', 'a.go'), true);
+});
+
+test('isNoDiffPath applies last-match-wins with !-negation inverting the rule', () => {
+  const rules = parseNoDiffRules('*.gen.go -diff\nkeep.gen.go diff\n').rules;
+  assert.equal(isNoDiffPath(rules, 'svc/a.gen.go'), true);
+  assert.equal(isNoDiffPath(rules, 'svc/keep.gen.go'), false);
+  assert.equal(isNoDiffPath(rules, 'svc/a.go'), false);
+  const negated = parseNoDiffRules('*.gen.go -diff\n!keep.gen.go -diff\n').rules;
+  assert.equal(isNoDiffPath(negated, 'svc/other.gen.go'), true);
+  assert.equal(isNoDiffPath(negated, 'svc/keep.gen.go'), false);
+  assert.equal(isNoDiffPath([], 'a.gen.go'), false);
+  assert.equal(isNoDiffPath(null, 'a.gen.go'), false);
+  assert.equal(isNoDiffPath(rules, ''), false);
+  assert.doesNotThrow(() => isNoDiffPath(undefined, undefined));
+});
+
+test('parseDiffStatBadge reads compact, wordy, single-sided, and unicode-minus stats', () => {
+  assert.deepEqual(parseDiffStatBadge('+12 -5'), { added: 12, deleted: 5 });
+  assert.deepEqual(parseDiffStatBadge('+ 12 - 3'), { added: 12, deleted: 3 });
+  assert.deepEqual(parseDiffStatBadge('+12 −5'), { added: 12, deleted: 5 });
+  assert.deepEqual(parseDiffStatBadge('12 additions, 3 deletions'), { added: 12, deleted: 3 });
+  assert.deepEqual(parseDiffStatBadge('1 addition'), { added: 1, deleted: 0 });
+  assert.deepEqual(parseDiffStatBadge('3 deletions'), { added: 0, deleted: 3 });
+  assert.deepEqual(parseDiffStatBadge('+5'), { added: 5, deleted: 0 });
+  assert.deepEqual(parseDiffStatBadge('-4'), { added: 0, deleted: 4 });
+  assert.equal(parseDiffStatBadge('no changes'), null);
+  assert.equal(parseDiffStatBadge(''), null);
+  assert.equal(parseDiffStatBadge(undefined), null);
+  assert.doesNotThrow(() => parseDiffStatBadge(null));
+});
+
+test('parseDiffStatBadge reads split container text ("+ 2840") but never a bare count', () => {
+  assert.deepEqual(parseDiffStatBadge('+ 2840'), { added: 2840, deleted: 0 });
+  assert.deepEqual(parseDiffStatBadge('- 12'), { added: 0, deleted: 12 });
+  assert.equal(parseDiffStatBadge('2840'), null, 'a bare count carries no side info — the shell reads it via its js-file-*-line testid, never this parser');
+});
+
+test('parsePageTotal shares the badge parser', () => {
+  assert.deepEqual(parsePageTotal('Showing 2 changed files +15 -7'), { added: 15, deleted: 7 });
+  assert.equal(parsePageTotal('nothing to parse here'), null);
+});
+
+test('formatNoDiffTotal renders the recalculated remainder, clamped and gated', () => {
+  assert.equal(
+    formatNoDiffTotal({ pageAdded: 10, pageDeleted: 5, hiddenAdded: 4, hiddenDeleted: 2 }),
+    '· zonder -diff: 6+ 3-'
+  );
+  assert.equal(
+    formatNoDiffTotal({ pageAdded: 2, pageDeleted: 1, hiddenAdded: 5, hiddenDeleted: 9 }),
+    '· zonder -diff: 0+ 0-'
+  );
+  assert.equal(formatNoDiffTotal({ pageAdded: 10, pageDeleted: 5, hiddenAdded: 0, hiddenDeleted: 0 }), null);
+  assert.equal(formatNoDiffTotal({ pageAdded: null, pageDeleted: 5, hiddenAdded: 4, hiddenDeleted: 2 }), null);
+  assert.equal(formatNoDiffTotal({}), null);
+  assert.equal(formatNoDiffTotal(), null);
 });
 
 test('shouldShowFullFileButtons gates on enabled and being on a diff page', () => {

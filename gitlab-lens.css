@@ -48,6 +48,14 @@ html.gitlab-lens-review-focus :is(
 [data-golens-generated-file-row],
 [data-golens-generated-folder] { opacity: .5; filter: grayscale(.7); }
 
+/* Recalculated -diff total: sits directly after GitLab's own page total
+   inside a gl-flex row — keep it separated and on one line without ever
+   restyling GitLab's own node. */
+[data-golens-nodiff-stats] {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
 [data-golens-go-test-file-row] { color: #b6e8c4 !important; }
 
 .gitlab-lens-discussion-line-link {
