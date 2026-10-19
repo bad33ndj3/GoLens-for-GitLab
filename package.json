@@ -17,7 +17,7 @@
   "devDependencies": {
     "happy-dom": "20.11.1",
     "tree-sitter-go": "0.25.0",
-    "web-tree-sitter": "0.26.11",
-    "ws": "8.21.1"
+    "web-tree-sitter": "0.27.1",
+    "ws": "8.22.0"
   }
 }
